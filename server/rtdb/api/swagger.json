@@ -1,0 +1,367 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "XACT REST API",
+    "description": "REST API for XACT server",
+    "version": "1.0.0",
+    "contact": {
+      "name": "XACT Team"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Development server"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "description": "Returns server health status",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Server is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "service": { "type": "string" },
+                    "timestamp": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/login": {
+      "post": {
+        "summary": "Login (development)",
+        "description": "Authenticate and receive JWT token. In development mode, any or no credentials are accepted.",
+        "security": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": { "type": "string" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": { "type": "string" },
+                    "token_type": { "type": "string" },
+                    "expires_in": { "type": "integer" },
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "username": { "type": "string" },
+                        "tenant_id": { "type": "string" },
+                        "roles": { "type": "array", "items": { "type": "string" } }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api-docs": {
+      "get": {
+        "summary": "API Documentation",
+        "description": "Returns API documentation overview",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "API documentation"
+          }
+        }
+      }
+    },
+    "/api/v1/nodes/": {
+      "post": {
+        "summary": "Create node",
+        "description": "Creates a new node in the tree",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "description": "Node path (e.g., building/floor1)"
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "Node description"
+                  },
+                  "templateName": {
+                    "type": "string",
+                    "description": "Optional template reference"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Node created successfully"
+          },
+          "400": {
+            "description": "Invalid request"
+          }
+        }
+      }
+    },
+    "/api/v1/nodes/{path}": {
+      "get": {
+        "summary": "Get node",
+        "description": "Retrieves node metadata and children",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Node path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Node data"
+          },
+          "404": {
+            "description": "Node not found"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update node",
+        "description": "Updates node metadata",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "description": { "type": "string" },
+                  "templateName": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Node updated"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete node",
+        "description": "Deletes node and all children (cascade delete)",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Node deleted"
+          }
+        }
+      }
+    },
+    "/api/v1/tags/": {
+      "post": {
+        "summary": "Create tag",
+        "description": "Creates a new tag/leaf in the tree",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["path", "type"],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "description": "Tag path"
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": ["integer", "float", "string", "boolean", "enum"]
+                  },
+                  "config": {
+                    "$ref": "#/components/schemas/TagConfig"
+                  },
+                  "shared": {
+                    "$ref": "#/components/schemas/TagShared"
+                  },
+                  "value": {
+                    "description": "Initial value"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Tag created"
+          }
+        }
+      }
+    },
+    "/api/v1/tags/{path}": {
+      "get": {
+        "summary": "Get tag",
+        "description": "Retrieves tag metadata and value",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tag data"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update tag",
+        "description": "Updates tag metadata and/or value",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "shared": {
+                    "$ref": "#/components/schemas/TagShared"
+                  },
+                  "value": {
+                    "description": "New value"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tag updated"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete tag",
+        "description": "Deletes a tag",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Tag deleted"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "TagConfig": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "type": { "type": "string" },
+          "templateName": { "type": "string" },
+          "enumValues": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
+        }
+      },
+      "TagShared": {
+        "type": "object",
+        "properties": {
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  }
+}

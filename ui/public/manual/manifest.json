@@ -1,0 +1,21 @@
+{
+  "title": "XACT User Manual",
+  "chapters": [
+    { "id": "getting-started",   "file": "01-getting-started.md",   "title": "Getting Started" },
+    { "id": "preparing-production", "file": "02-preparing-for-production.md", "title": "Preparing for Production" },
+    { "id": "organisations",     "file": "02-organisations.md",     "title": "Organisations" },
+    { "id": "users-permissions", "file": "03-users-permissions.md", "title": "Users & Permissions" },
+    { "id": "dashboards",        "file": "04-dashboards.md",        "title": "Dashboards" },
+    { "id": "widgets",           "file": "05-widgets.md",           "title": "Widgets" },
+    { "id": "tags",              "file": "06-tags.md",              "title": "Tags & Real-Time Data" },
+    { "id": "device-control",    "file": "15-device-control.md",    "title": "Device Control" },
+    { "id": "tag-calcs",         "file": "07-tag-calcs.md",         "title": "Tag Calcs" },
+    { "id": "historical-data",   "file": "08-historical-data.md",   "title": "Historical Data" },
+    { "id": "events",            "file": "09-events.md",            "title": "Events" },
+    { "id": "notifications",     "file": "10-notifications.md",     "title": "Notifications" },
+    { "id": "reports",           "file": "11-reports.md",           "title": "PDF Reports" },
+    { "id": "scheduler",         "file": "12-scheduler.md",         "title": "Scheduler" },
+    { "id": "data-ingest",       "file": "13-data-ingest.md",       "title": "Data Ingest Methods" },
+    { "id": "plugins",           "file": "14-plugins.md",           "title": "Plugins" }
+  ]
+}

@@ -1,0 +1,1453 @@
+{
+  "name": "Air Quality Fleet Operations Report",
+  "description": "Professional PDF report template for the Los Angeles - Long Beach AirQuality simulation. The payload is compatible with the PDF reports API/widget template model: save name, description, templateJson, and variables together.",
+  "templateJson": {
+    "config": {
+      "pageSize": "A4",
+      "orientation": "P",
+      "documentTitle": "{{report_name}}",
+      "watermark": "",
+      "margins": {
+        "left": 54,
+        "top": 54,
+        "right": 54,
+        "bottom": 54
+      }
+    },
+    "elements": [
+      {
+        "id": "aq-title",
+        "type": "title",
+        "rows": [
+          [
+            {
+              "text": "Air Quality Fleet Operations Report",
+              "bold": true,
+              "size": 22,
+              "align": "L",
+              "bgColor": "#164e63",
+              "textColor": "#ffffff"
+            }
+          ],
+          [
+            {
+              "text": "Los Angeles - Long Beach roadside sensor network",
+              "size": 11,
+              "align": "L",
+              "bgColor": "#164e63",
+              "textColor": "#dff7fb"
+            }
+          ]
+        ],
+        "colWidths": [
+          1
+        ],
+        "rowHeights": [
+          1.6,
+          1
+        ],
+        "noBorders": true
+      },
+      {
+        "id": "aq-cover-meta",
+        "type": "table",
+        "rows": [
+          [
+            {
+              "text": "Organisation",
+              "bold": true,
+              "bgColor": "#e0f2fe",
+              "textColor": "#0f172a"
+            },
+            {
+              "text": "{{org_name}}"
+            },
+            {
+              "text": "Generated",
+              "bold": true,
+              "bgColor": "#e0f2fe",
+              "textColor": "#0f172a"
+            },
+            {
+              "text": "{{generated_at}}"
+            }
+          ],
+          [
+            {
+              "text": "Report Scope",
+              "bold": true,
+              "bgColor": "#f8fafc"
+            },
+            {
+              "text": "LA_LongBeach.AirQuality"
+            },
+            {
+              "text": "Fleet Design",
+              "bold": true,
+              "bgColor": "#f8fafc"
+            },
+            {
+              "text": "250 standard, 250 battery backup"
+            }
+          ],
+          [
+            {
+              "text": "Primary Pollutants",
+              "bold": true,
+              "bgColor": "#f8fafc"
+            },
+            {
+              "text": "PM1 PM2.5 PM10 NO2 O3 CO CO2"
+            },
+            {
+              "text": "Sample Interval",
+              "bold": true,
+              "bgColor": "#f8fafc"
+            },
+            {
+              "text": "5 minute simulation period"
+            }
+          ]
+        ],
+        "colWidths": [
+          1.1,
+          2.4,
+          1.1,
+          2.4
+        ],
+        "rowHeights": [
+          1.15,
+          1.15,
+          1.15
+        ],
+        "allBorders": true,
+        "bgColor": "#ffffff",
+        "textColor": "#111827"
+      },
+      {
+        "id": "aq-spacer-1",
+        "type": "spacer",
+        "height": 18
+      },
+      {
+        "id": "aq-summary-heading",
+        "type": "title",
+        "rows": [
+          [
+            {
+              "text": "Executive Summary",
+              "bold": true,
+              "size": 15,
+              "align": "L",
+              "bgColor": "#0f766e",
+              "textColor": "#ffffff"
+            }
+          ]
+        ],
+        "colWidths": [
+          1
+        ],
+        "rowHeights": [
+          1.05
+        ],
+        "noBorders": true
+      },
+      {
+        "id": "aq-summary-table",
+        "type": "table",
+        "rows": [
+          [
+            {
+              "text": "Metric",
+              "bold": true,
+              "bgColor": "#ccfbf1"
+            },
+            {
+              "text": "Value",
+              "bold": true,
+              "bgColor": "#ccfbf1"
+            },
+            {
+              "text": "Status",
+              "bold": true,
+              "bgColor": "#ccfbf1"
+            }
+          ],
+          [
+            {
+              "text": "AQ-S-0001 AQI"
+            },
+            {
+              "text": "{{std_0001_aqi}}"
+            },
+            {
+              "text": "{{std_0001_category}}",
+              "bold": true,
+              "textColor": "#b45309"
+            }
+          ],
+          [
+            {
+              "text": "AQ-B-0001 AQI"
+            },
+            {
+              "text": "{{bbu_0001_aqi}}"
+            },
+            {
+              "text": "{{bbu_0001_category}}",
+              "bold": true,
+              "textColor": "#b45309"
+            }
+          ],
+          [
+            {
+              "text": "Representative PM2.5"
+            },
+            {
+              "text": "{{std_0001_pm25}} ug/m3"
+            },
+            {
+              "text": "Track 24h trend"
+            }
+          ],
+          [
+            {
+              "text": "Backup Power Health"
+            },
+            {
+              "text": "{{bbu_0001_battery_percent}}%"
+            },
+            {
+              "text": "Mains fail: {{bbu_0001_mains_fail}}"
+            }
+          ],
+          [
+            {
+              "text": "Sensor Fault Flag"
+            },
+            {
+              "text": "AQ-S-0001 {{std_0001_sensor_fault}}"
+            },
+            {
+              "text": "AQ-B-0001 {{bbu_0001_sensor_fault}}"
+            }
+          ]
+        ],
+        "colWidths": [
+          2.1,
+          1.35,
+          2.2
+        ],
+        "rowHeights": [
+          1.05,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "allBorders": true,
+        "bgColor": "#ffffff",
+        "textColor": "#111827"
+      },
+      {
+        "id": "aq-spacer-2",
+        "type": "spacer",
+        "height": 16
+      },
+      {
+        "id": "aq-section-1",
+        "type": "title",
+        "rows": [
+          [
+            {
+              "text": "1. AQI Trend Comparisons",
+              "bold": true,
+              "size": 14,
+              "align": "L",
+              "bgColor": "#1d4ed8",
+              "textColor": "#ffffff"
+            }
+          ]
+        ],
+        "colWidths": [
+          1
+        ],
+        "rowHeights": [
+          1
+        ],
+        "noBorders": true
+      },
+      {
+        "id": "aq-aqi-trend-chart",
+        "type": "chart",
+        "height": 180,
+        "chartConfig": {
+          "metrics": [
+            "LA_LongBeach.AirQuality.AQ-S-0001.air.aqi",
+            "LA_LongBeach.AirQuality.AQ-S-0140.air.aqi",
+            "LA_LongBeach.AirQuality.AQ-B-0001.air.aqi",
+            "LA_LongBeach.AirQuality.AQ-B-0149.air.aqi"
+          ],
+          "lookback": "24h",
+          "title": "AQI by Representative Monitors - Last 24 Hours",
+          "yLabel": "AQI",
+          "yMin": 0,
+          "yMax": 500,
+          "colors": [
+            "#2563eb",
+            "#0f766e",
+            "#dc2626",
+            "#f59e0b"
+          ],
+          "smooth": true,
+          "showLegend": true,
+          "fillArea": false
+        }
+      },
+      {
+        "id": "aq-spacer-3",
+        "type": "spacer",
+        "height": 14
+      },
+      {
+        "id": "aq-section-2",
+        "type": "title",
+        "rows": [
+          [
+            {
+              "text": "2. Particulate Analysis",
+              "bold": true,
+              "size": 14,
+              "align": "L",
+              "bgColor": "#7c2d12",
+              "textColor": "#ffffff"
+            }
+          ]
+        ],
+        "colWidths": [
+          1
+        ],
+        "rowHeights": [
+          1
+        ],
+        "noBorders": true
+      },
+      {
+        "id": "aq-particulate-table",
+        "type": "table",
+        "rows": [
+          [
+            {
+              "text": "Monitor",
+              "bold": true,
+              "bgColor": "#ffedd5"
+            },
+            {
+              "text": "PM1 ug/m3",
+              "bold": true,
+              "bgColor": "#ffedd5"
+            },
+            {
+              "text": "PM2.5 ug/m3",
+              "bold": true,
+              "bgColor": "#ffedd5"
+            },
+            {
+              "text": "PM10 ug/m3",
+              "bold": true,
+              "bgColor": "#ffedd5"
+            },
+            {
+              "text": "AQI Category",
+              "bold": true,
+              "bgColor": "#ffedd5"
+            }
+          ],
+          [
+            {
+              "text": "AQ-S-0001"
+            },
+            {
+              "text": "{{std_0001_pm1}}"
+            },
+            {
+              "text": "{{std_0001_pm25}}"
+            },
+            {
+              "text": "{{std_0001_pm10}}"
+            },
+            {
+              "text": "{{std_0001_category}}"
+            }
+          ],
+          [
+            {
+              "text": "AQ-S-0140"
+            },
+            {
+              "text": "{{std_0140_pm1}}"
+            },
+            {
+              "text": "{{std_0140_pm25}}"
+            },
+            {
+              "text": "{{std_0140_pm10}}"
+            },
+            {
+              "text": "{{std_0140_category}}"
+            }
+          ],
+          [
+            {
+              "text": "AQ-B-0001"
+            },
+            {
+              "text": "{{bbu_0001_pm1}}"
+            },
+            {
+              "text": "{{bbu_0001_pm25}}"
+            },
+            {
+              "text": "{{bbu_0001_pm10}}"
+            },
+            {
+              "text": "{{bbu_0001_category}}"
+            }
+          ],
+          [
+            {
+              "text": "AQ-B-0149"
+            },
+            {
+              "text": "{{bbu_0149_pm1}}"
+            },
+            {
+              "text": "{{bbu_0149_pm25}}"
+            },
+            {
+              "text": "{{bbu_0149_pm10}}"
+            },
+            {
+              "text": "{{bbu_0149_category}}"
+            }
+          ]
+        ],
+        "colWidths": [
+          1.35,
+          1,
+          1.1,
+          1.1,
+          1.5
+        ],
+        "rowHeights": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "allBorders": true,
+        "bgColor": "#ffffff",
+        "textColor": "#111827"
+      },
+      {
+        "id": "aq-particulate-chart",
+        "type": "chart",
+        "height": 165,
+        "chartConfig": {
+          "metrics": [
+            "LA_LongBeach.AirQuality.AQ-S-0001.particulate.pm1",
+            "LA_LongBeach.AirQuality.AQ-S-0001.particulate.pm25",
+            "LA_LongBeach.AirQuality.AQ-S-0001.particulate.pm10"
+          ],
+          "lookback": "24h",
+          "title": "AQ-S-0001 Particulate Concentration - Last 24 Hours",
+          "yLabel": "ug/m3",
+          "yMin": 0,
+          "colors": [
+            "#0ea5e9",
+            "#ea580c",
+            "#991b1b"
+          ],
+          "smooth": true,
+          "showLegend": true,
+          "fillArea": false
+        }
+      },
+      {
+        "id": "aq-spacer-4",
+        "type": "spacer",
+        "height": 14
+      },
+      {
+        "id": "aq-section-3",
+        "type": "title",
+        "rows": [
+          [
+            {
+              "text": "3. Gas and Environmental Profile",
+              "bold": true,
+              "size": 14,
+              "align": "L",
+              "bgColor": "#4338ca",
+              "textColor": "#ffffff"
+            }
+          ]
+        ],
+        "colWidths": [
+          1
+        ],
+        "rowHeights": [
+          1
+        ],
+        "noBorders": true
+      },
+      {
+        "id": "aq-gas-env-table",
+        "type": "table",
+        "rows": [
+          [
+            {
+              "text": "Monitor",
+              "bold": true,
+              "bgColor": "#e0e7ff"
+            },
+            {
+              "text": "NO2 ppb",
+              "bold": true,
+              "bgColor": "#e0e7ff"
+            },
+            {
+              "text": "O3 ppb",
+              "bold": true,
+              "bgColor": "#e0e7ff"
+            },
+            {
+              "text": "CO ppm",
+              "bold": true,
+              "bgColor": "#e0e7ff"
+            },
+            {
+              "text": "Temp C",
+              "bold": true,
+              "bgColor": "#e0e7ff"
+            },
+            {
+              "text": "Humidity %",
+              "bold": true,
+              "bgColor": "#e0e7ff"
+            }
+          ],
+          [
+            {
+              "text": "AQ-S-0001"
+            },
+            {
+              "text": "{{std_0001_no2}}"
+            },
+            {
+              "text": "{{std_0001_o3}}"
+            },
+            {
+              "text": "{{std_0001_co}}"
+            },
+            {
+              "text": "{{std_0001_temp}}"
+            },
+            {
+              "text": "{{std_0001_humidity}}"
+            }
+          ],
+          [
+            {
+              "text": "AQ-B-0001"
+            },
+            {
+              "text": "{{bbu_0001_no2}}"
+            },
+            {
+              "text": "{{bbu_0001_o3}}"
+            },
+            {
+              "text": "{{bbu_0001_co}}"
+            },
+            {
+              "text": "{{bbu_0001_temp}}"
+            },
+            {
+              "text": "{{bbu_0001_humidity}}"
+            }
+          ]
+        ],
+        "colWidths": [
+          1.4,
+          1,
+          1,
+          1,
+          1,
+          1.1
+        ],
+        "rowHeights": [
+          1,
+          1,
+          1
+        ],
+        "allBorders": true,
+        "bgColor": "#ffffff",
+        "textColor": "#111827"
+      },
+      {
+        "id": "aq-gas-chart",
+        "type": "chart",
+        "height": 165,
+        "chartConfig": {
+          "metrics": [
+            "LA_LongBeach.AirQuality.AQ-S-0001.gas.no2",
+            "LA_LongBeach.AirQuality.AQ-S-0001.gas.o3",
+            "LA_LongBeach.AirQuality.AQ-S-0001.gas.so2"
+          ],
+          "lookback": "24h",
+          "title": "AQ-S-0001 Gas Profile - Last 24 Hours",
+          "yLabel": "ppb",
+          "yMin": 0,
+          "colors": [
+            "#4338ca",
+            "#16a34a",
+            "#be123c"
+          ],
+          "smooth": true,
+          "showLegend": true,
+          "fillArea": false
+        }
+      },
+      {
+        "id": "aq-spacer-5",
+        "type": "spacer",
+        "height": 14
+      },
+      {
+        "id": "aq-section-4",
+        "type": "title",
+        "rows": [
+          [
+            {
+              "text": "4. Operating Status and Backup Power",
+              "bold": true,
+              "size": 14,
+              "align": "L",
+              "bgColor": "#374151",
+              "textColor": "#ffffff"
+            }
+          ]
+        ],
+        "colWidths": [
+          1
+        ],
+        "rowHeights": [
+          1
+        ],
+        "noBorders": true
+      },
+      {
+        "id": "aq-status-table",
+        "type": "table",
+        "rows": [
+          [
+            {
+              "text": "Device",
+              "bold": true,
+              "bgColor": "#f3f4f6"
+            },
+            {
+              "text": "Intersection",
+              "size": 8,
+              "bold": true,
+              "bgColor": "#f3f4f6"
+            },
+            {
+              "text": "Online",
+              "bold": true,
+              "bgColor": "#f3f4f6"
+            },
+            {
+              "text": "Sample Flow",
+              "bold": true,
+              "bgColor": "#f3f4f6"
+            },
+            {
+              "text": "Cal Due",
+              "bold": true,
+              "bgColor": "#f3f4f6"
+            },
+            {
+              "text": "Power"
+            }
+          ],
+          [
+            {
+              "text": "AQ-S-0001"
+            },
+            {
+              "text": "{{std_0001_intersection}}",
+              "size": 8
+            },
+            {
+              "text": "{{std_0001_online}}"
+            },
+            {
+              "text": "{{std_0001_sample_flow}} L/min"
+            },
+            {
+              "text": "{{std_0001_cal_due}} d"
+            },
+            {
+              "text": "Standard"
+            }
+          ],
+          [
+            {
+              "text": "AQ-B-0001"
+            },
+            {
+              "text": "{{bbu_0001_intersection}}",
+              "size": 8
+            },
+            {
+              "text": "{{bbu_0001_online}}"
+            },
+            {
+              "text": "{{bbu_0001_sample_flow}} L/min"
+            },
+            {
+              "text": "{{bbu_0001_cal_due}} d"
+            },
+            {
+              "text": "{{bbu_0001_battery_percent}}% battery"
+            }
+          ],
+          [
+            {
+              "text": "AQ-B-0149"
+            },
+            {
+              "text": "{{bbu_0149_intersection}}",
+              "size": 7
+            },
+            {
+              "text": "{{bbu_0149_online}}"
+            },
+            {
+              "text": "{{bbu_0149_sample_flow}} L/min"
+            },
+            {
+              "text": "{{bbu_0149_cal_due}} d"
+            },
+            {
+              "text": "{{bbu_0149_battery_percent}}% battery"
+            }
+          ]
+        ],
+        "colWidths": [
+          1.1,
+          2.8,
+          0.8,
+          1.1,
+          0.9,
+          1.1
+        ],
+        "rowHeights": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "allBorders": true,
+        "bgColor": "#ffffff",
+        "textColor": "#111827"
+      },
+      {
+        "id": "aq-power-chart",
+        "type": "chart",
+        "height": 150,
+        "chartConfig": {
+          "metrics": [
+            "LA_LongBeach.AirQuality.AQ-B-0001.power.batteryPercent",
+            "LA_LongBeach.AirQuality.AQ-B-0149.power.batteryPercent",
+            "LA_LongBeach.AirQuality.AQ-B-0250.power.batteryPercent"
+          ],
+          "lookback": "24h",
+          "title": "Backup Battery State of Charge - Last 24 Hours",
+          "yLabel": "%",
+          "yMin": 0,
+          "yMax": 100,
+          "colors": [
+            "#16a34a",
+            "#2563eb",
+            "#f59e0b"
+          ],
+          "smooth": true,
+          "showLegend": true,
+          "fillArea": false
+        }
+      },
+      {
+        "id": "aq-spacer-6",
+        "type": "spacer",
+        "height": 14
+      },
+      {
+        "id": "aq-section-5",
+        "type": "title",
+        "rows": [
+          [
+            {
+              "text": "5. Highest Attention Monitor Snapshot",
+              "bold": true,
+              "size": 14,
+              "align": "L",
+              "bgColor": "#b91c1c",
+              "textColor": "#ffffff"
+            }
+          ]
+        ],
+        "colWidths": [
+          1
+        ],
+        "rowHeights": [
+          1
+        ],
+        "noBorders": true
+      },
+      {
+        "id": "aq-attention-table",
+        "type": "table",
+        "rows": [
+          [
+            {
+              "text": "Device",
+              "bold": true,
+              "bgColor": "#fee2e2"
+            },
+            {
+              "text": "AQI",
+              "bold": true,
+              "bgColor": "#fee2e2"
+            },
+            {
+              "text": "PM2.5",
+              "bold": true,
+              "bgColor": "#fee2e2"
+            },
+            {
+              "text": "Category",
+              "bold": true,
+              "bgColor": "#fee2e2"
+            },
+            {
+              "text": "Operator Note",
+              "bold": true,
+              "bgColor": "#fee2e2"
+            }
+          ],
+          [
+            {
+              "text": "AQ-S-0001"
+            },
+            {
+              "text": "{{std_0001_aqi}}"
+            },
+            {
+              "text": "{{std_0001_pm25}}"
+            },
+            {
+              "text": "{{std_0001_category}}"
+            },
+            {
+              "text": "Baseline downtown comparison"
+            }
+          ],
+          [
+            {
+              "text": "AQ-S-0140"
+            },
+            {
+              "text": "{{std_0140_aqi}}"
+            },
+            {
+              "text": "{{std_0140_pm25}}"
+            },
+            {
+              "text": "{{std_0140_category}}"
+            },
+            {
+              "text": "Standard fleet comparison"
+            }
+          ],
+          [
+            {
+              "text": "AQ-B-0001"
+            },
+            {
+              "text": "{{bbu_0001_aqi}}"
+            },
+            {
+              "text": "{{bbu_0001_pm25}}"
+            },
+            {
+              "text": "{{bbu_0001_category}}"
+            },
+            {
+              "text": "Backup power baseline"
+            }
+          ],
+          [
+            {
+              "text": "AQ-B-0149"
+            },
+            {
+              "text": "{{bbu_0149_aqi}}"
+            },
+            {
+              "text": "{{bbu_0149_pm25}}"
+            },
+            {
+              "text": "{{bbu_0149_category}}"
+            },
+            {
+              "text": "Backup fleet comparison"
+            }
+          ]
+        ],
+        "colWidths": [
+          1.2,
+          0.7,
+          0.8,
+          1.3,
+          2.4
+        ],
+        "rowHeights": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "allBorders": true,
+        "bgColor": "#ffffff",
+        "textColor": "#111827"
+      },
+      {
+        "id": "aq-spacer-7",
+        "type": "spacer",
+        "height": 14
+      },
+      {
+        "id": "aq-section-6",
+        "type": "title",
+        "rows": [
+          [
+            {
+              "text": "6. Fleet Quality Summary",
+              "bold": true,
+              "size": 14,
+              "align": "L",
+              "bgColor": "#0f766e",
+              "textColor": "#ffffff"
+            }
+          ]
+        ],
+        "colWidths": [
+          1
+        ],
+        "rowHeights": [
+          1
+        ],
+        "noBorders": true
+      },
+      {
+        "id": "aq-quality-summary",
+        "type": "table",
+        "rows": [
+          [
+            {
+              "text": "Signal Group",
+              "bold": true,
+              "bgColor": "#ccfbf1"
+            },
+            {
+              "text": "Tags per Device",
+              "bold": true,
+              "bgColor": "#ccfbf1"
+            },
+            {
+              "text": "Fleet Coverage",
+              "bold": true,
+              "bgColor": "#ccfbf1"
+            },
+            {
+              "text": "Report Use"
+            }
+          ],
+          [
+            {
+              "text": "Particulate"
+            },
+            {
+              "text": "3"
+            },
+            {
+              "text": "All 500 monitors"
+            },
+            {
+              "text": "PM trend and high-limit review"
+            }
+          ],
+          [
+            {
+              "text": "Gas"
+            },
+            {
+              "text": "5"
+            },
+            {
+              "text": "All 500 monitors"
+            },
+            {
+              "text": "Traffic and ozone profile"
+            }
+          ],
+          [
+            {
+              "text": "Environment"
+            },
+            {
+              "text": "4"
+            },
+            {
+              "text": "All 500 monitors"
+            },
+            {
+              "text": "Operating context"
+            }
+          ],
+          [
+            {
+              "text": "Backup Power"
+            },
+            {
+              "text": "5"
+            },
+            {
+              "text": "250 backup monitors"
+            },
+            {
+              "text": "Runtime and mains-fail status"
+            }
+          ]
+        ],
+        "colWidths": [
+          1.4,
+          1,
+          1.6,
+          2.4
+        ],
+        "rowHeights": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "allBorders": true,
+        "bgColor": "#ffffff",
+        "textColor": "#111827"
+      },
+      {
+        "id": "aq-spacer-8",
+        "type": "spacer",
+        "height": 14
+      },
+      {
+        "id": "aq-section-7",
+        "type": "title",
+        "rows": [
+          [
+            {
+              "text": "7. Recent Warning Events",
+              "bold": true,
+              "size": 14,
+              "align": "L",
+              "bgColor": "#92400e",
+              "textColor": "#ffffff"
+            }
+          ]
+        ],
+        "colWidths": [
+          1
+        ],
+        "rowHeights": [
+          1
+        ],
+        "noBorders": true
+      },
+      {
+        "id": "aq-events",
+        "type": "events",
+        "size": 7,
+        "bgColor": "#92400e",
+        "textColor": "#ffffff",
+        "eventsConfig": {
+          "severity": "WARN",
+          "device": "",
+          "search": "",
+          "lookback": "24h",
+          "limit": 25,
+          "columns": [
+            "timestamp",
+            "severity",
+            "device",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "aq-footer",
+        "type": "footer",
+        "text": "XACT Air Quality Report - {{generated_date}} - Page {{page_no}} of {{page_count}}",
+        "font": "Helvetica",
+        "size": 8,
+        "align": "C",
+        "textColor2": "#475569",
+        "footerBorders": {
+          "left": 0,
+          "right": 0,
+          "top": 1,
+          "bottom": 0
+        }
+      }
+    ]
+  },
+  "variables": [
+    {
+      "name": "report_name",
+      "label": "Report Name",
+      "type": "builtin",
+      "source": "report_name"
+    },
+    {
+      "name": "org_name",
+      "label": "Organisation",
+      "type": "builtin",
+      "source": "org_name"
+    },
+    {
+      "name": "generated_at",
+      "label": "Generated At",
+      "type": "builtin",
+      "source": "now",
+      "format": "2006-01-02 15:04"
+    },
+    {
+      "name": "generated_date",
+      "label": "Generated Date",
+      "type": "builtin",
+      "source": "now",
+      "format": "January 02, 2006"
+    },
+    {
+      "name": "page_no",
+      "label": "Page Number",
+      "type": "builtin",
+      "source": "page_no"
+    },
+    {
+      "name": "page_count",
+      "label": "Page Count",
+      "type": "builtin",
+      "source": "page_count"
+    },
+    {
+      "name": "std_0001_intersection",
+      "label": "AQ-S-0001 Intersection",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0001.meta.intersection"
+    },
+    {
+      "name": "std_0001_online",
+      "label": "AQ-S-0001 Online",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0001.meta.online"
+    },
+    {
+      "name": "std_0001_aqi",
+      "label": "AQ-S-0001 AQI",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0001.air.aqi"
+    },
+    {
+      "name": "std_0001_category",
+      "label": "AQ-S-0001 AQI Category",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0001.air.category"
+    },
+    {
+      "name": "std_0001_pm1",
+      "label": "AQ-S-0001 PM1",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0001.particulate.pm1"
+    },
+    {
+      "name": "std_0001_pm25",
+      "label": "AQ-S-0001 PM2.5",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0001.particulate.pm25"
+    },
+    {
+      "name": "std_0001_pm10",
+      "label": "AQ-S-0001 PM10",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0001.particulate.pm10"
+    },
+    {
+      "name": "std_0001_no2",
+      "label": "AQ-S-0001 NO2",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0001.gas.no2"
+    },
+    {
+      "name": "std_0001_o3",
+      "label": "AQ-S-0001 O3",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0001.gas.o3"
+    },
+    {
+      "name": "std_0001_co",
+      "label": "AQ-S-0001 CO",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0001.gas.co"
+    },
+    {
+      "name": "std_0001_temp",
+      "label": "AQ-S-0001 Temperature",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0001.env.temperature"
+    },
+    {
+      "name": "std_0001_humidity",
+      "label": "AQ-S-0001 Humidity",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0001.env.humidity"
+    },
+    {
+      "name": "std_0001_sample_flow",
+      "label": "AQ-S-0001 Sample Flow",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0001.status.sampleFlow"
+    },
+    {
+      "name": "std_0001_sensor_fault",
+      "label": "AQ-S-0001 Sensor Fault",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0001.status.sensorFault"
+    },
+    {
+      "name": "std_0001_cal_due",
+      "label": "AQ-S-0001 Calibration Due",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0001.status.calibrationDueDays"
+    },
+    {
+      "name": "std_0140_aqi",
+      "label": "AQ-S-0140 AQI",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0140.air.aqi"
+    },
+    {
+      "name": "std_0140_category",
+      "label": "AQ-S-0140 AQI Category",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0140.air.category"
+    },
+    {
+      "name": "std_0140_pm1",
+      "label": "AQ-S-0140 PM1",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0140.particulate.pm1"
+    },
+    {
+      "name": "std_0140_pm25",
+      "label": "AQ-S-0140 PM2.5",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0140.particulate.pm25"
+    },
+    {
+      "name": "std_0140_pm10",
+      "label": "AQ-S-0140 PM10",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-S-0140.particulate.pm10"
+    },
+    {
+      "name": "bbu_0001_intersection",
+      "label": "AQ-B-0001 Intersection",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0001.meta.intersection"
+    },
+    {
+      "name": "bbu_0001_online",
+      "label": "AQ-B-0001 Online",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0001.meta.online"
+    },
+    {
+      "name": "bbu_0001_aqi",
+      "label": "AQ-B-0001 AQI",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0001.air.aqi"
+    },
+    {
+      "name": "bbu_0001_category",
+      "label": "AQ-B-0001 AQI Category",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0001.air.category"
+    },
+    {
+      "name": "bbu_0001_pm1",
+      "label": "AQ-B-0001 PM1",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0001.particulate.pm1"
+    },
+    {
+      "name": "bbu_0001_pm25",
+      "label": "AQ-B-0001 PM2.5",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0001.particulate.pm25"
+    },
+    {
+      "name": "bbu_0001_pm10",
+      "label": "AQ-B-0001 PM10",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0001.particulate.pm10"
+    },
+    {
+      "name": "bbu_0001_no2",
+      "label": "AQ-B-0001 NO2",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0001.gas.no2"
+    },
+    {
+      "name": "bbu_0001_o3",
+      "label": "AQ-B-0001 O3",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0001.gas.o3"
+    },
+    {
+      "name": "bbu_0001_co",
+      "label": "AQ-B-0001 CO",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0001.gas.co"
+    },
+    {
+      "name": "bbu_0001_temp",
+      "label": "AQ-B-0001 Temperature",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0001.env.temperature"
+    },
+    {
+      "name": "bbu_0001_humidity",
+      "label": "AQ-B-0001 Humidity",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0001.env.humidity"
+    },
+    {
+      "name": "bbu_0001_sample_flow",
+      "label": "AQ-B-0001 Sample Flow",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0001.status.sampleFlow"
+    },
+    {
+      "name": "bbu_0001_sensor_fault",
+      "label": "AQ-B-0001 Sensor Fault",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0001.status.sensorFault"
+    },
+    {
+      "name": "bbu_0001_cal_due",
+      "label": "AQ-B-0001 Calibration Due",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0001.status.calibrationDueDays"
+    },
+    {
+      "name": "bbu_0001_battery_percent",
+      "label": "AQ-B-0001 Battery Percent",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0001.power.batteryPercent"
+    },
+    {
+      "name": "bbu_0001_mains_fail",
+      "label": "AQ-B-0001 Mains Fail",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0001.power.mainsFail"
+    },
+    {
+      "name": "bbu_0149_intersection",
+      "label": "AQ-B-0149 Intersection",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0149.meta.intersection"
+    },
+    {
+      "name": "bbu_0149_online",
+      "label": "AQ-B-0149 Online",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0149.meta.online"
+    },
+    {
+      "name": "bbu_0149_aqi",
+      "label": "AQ-B-0149 AQI",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0149.air.aqi"
+    },
+    {
+      "name": "bbu_0149_category",
+      "label": "AQ-B-0149 AQI Category",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0149.air.category"
+    },
+    {
+      "name": "bbu_0149_pm1",
+      "label": "AQ-B-0149 PM1",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0149.particulate.pm1"
+    },
+    {
+      "name": "bbu_0149_pm25",
+      "label": "AQ-B-0149 PM2.5",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0149.particulate.pm25"
+    },
+    {
+      "name": "bbu_0149_pm10",
+      "label": "AQ-B-0149 PM10",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0149.particulate.pm10"
+    },
+    {
+      "name": "bbu_0149_sample_flow",
+      "label": "AQ-B-0149 Sample Flow",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0149.status.sampleFlow"
+    },
+    {
+      "name": "bbu_0149_cal_due",
+      "label": "AQ-B-0149 Calibration Due",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0149.status.calibrationDueDays"
+    },
+    {
+      "name": "bbu_0149_battery_percent",
+      "label": "AQ-B-0149 Battery Percent",
+      "type": "rtdb",
+      "path": "default.LA_LongBeach.AirQuality.AQ-B-0149.power.batteryPercent"
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+package iss_driver
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"time"
+
+	mqtt "github.com/eclipse/paho.mqtt.golang"
+)
+
+const mqttTopic = "xact/default/data/NASA/ISS"
+
+type mqttPublisher struct {
+	client mqtt.Client
+}
+
+func newMQTTPublisher(broker, password string) (*mqttPublisher, error) {
+	opts := mqtt.NewClientOptions()
+	opts.AddBroker(broker)
+	opts.SetClientID("iss-driver")
+	opts.SetUsername("a")
+	opts.SetPassword(password)
+	opts.SetAutoReconnect(true)
+	opts.SetConnectRetry(true)
+	opts.SetConnectRetryInterval(5 * time.Second)
+	opts.SetMaxReconnectInterval(30 * time.Second)
+	opts.SetConnectionLostHandler(func(_ mqtt.Client, err error) {
+		log.Printf("[ISS] MQTT connection lost: %v", err)
+	})
+
+	client := mqtt.NewClient(opts)
+	token := client.Connect()
+	token.Wait()
+	if err := token.Error(); err != nil {
+		return nil, fmt.Errorf("MQTT connect: %w", err)
+	}
+	return &mqttPublisher{client: client}, nil
+}
+
+func (p *mqttPublisher) publish(groups map[string]map[string]any) error {
+	// Stamp the meta group with current time and mark device online
+	if meta, ok := groups["meta"]; ok {
+		meta["ts"] = time.Now().UnixMilli()
+		meta["online"] = true
+	}
+
+	payload, err := json.Marshal(groups)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	token := p.client.Publish(mqttTopic, 1, false, payload)
+	token.Wait()
+	return token.Error()
+}
+
+func (p *mqttPublisher) disconnect() {
+	if p.client != nil && p.client.IsConnected() {
+		p.client.Disconnect(250)
+	}
+}

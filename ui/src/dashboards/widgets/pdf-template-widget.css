@@ -1,0 +1,211 @@
+pdf-template-widget {
+  --pdf-template-font-size-xs: 12px;
+  --pdf-template-font-size-sm: 14px;
+  --pdf-template-font-size-md: 16px;
+}
+
+.prop-input {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 3px 6px;
+  outline: none;
+  color: inherit;
+  font-size: var(--pdf-template-font-size-sm);
+}
+
+.prop-select {
+  background: color-mix(in srgb, var(--panel-bg, var(--widget-bg)) 80%, transparent);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 3px 4px;
+  outline: none;
+  color: inherit;
+  font-size: var(--pdf-template-font-size-sm);
+  width: 100%;
+}
+
+.prop-btn {
+  padding: 4px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: var(--pdf-template-font-size-sm);
+  text-align: center;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: inherit;
+  width: 100%;
+  transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+}
+
+.prop-flex-1 {
+  flex: 1;
+}
+
+.prop-font-mono {
+  font-family: monospace;
+}
+
+.prop-text-10 {
+  font-size: var(--pdf-template-font-size-xs);
+}
+
+.prop-text-11 {
+  font-size: var(--pdf-template-font-size-sm);
+}
+
+.prop-w-28 {
+  width: 28px;
+}
+
+.prop-w-68 {
+  width: 68px;
+}
+
+.prop-w-120 {
+  width: 120px;
+}
+
+.prop-mt-6 {
+  margin-top: 6px;
+}
+
+.prop-py-0_5 {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.prop-min-h-60 {
+  min-height: 60px;
+}
+
+.prop-textarea {
+  resize: vertical;
+}
+
+.prop-btn:hover {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+}
+
+.prop-btn-active,
+.prop-btn.is-active {
+  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+  color: var(--accent-color);
+}
+
+.prop-btn-toggle {
+  width: auto;
+}
+
+.prop-btn-sm {
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  border: 1px solid var(--border-color);
+  font-size: var(--pdf-template-font-size-md);
+  cursor: pointer;
+  background: transparent;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.prop-btn-sm:hover {
+  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+}
+
+.prop-btn-icon {
+  flex-shrink: 0;
+  font-size: var(--pdf-template-font-size-sm);
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 40%, transparent);
+  color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.prop-btn-icon:hover {
+  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 16%, transparent);
+}
+
+.prop-btn-remove {
+  font-size: var(--pdf-template-font-size-xs);
+  opacity: 0.5;
+  cursor: pointer;
+  background: none;
+  border: none;
+  color: inherit;
+  padding: 2px 4px;
+  border-radius: 2px;
+  transition: opacity 0.15s;
+}
+
+.prop-btn-remove:hover {
+  opacity: 1;
+}
+
+.prop-color-picker {
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  cursor: pointer;
+  background: none;
+}
+
+.prop-color-picker-lg {
+  width: 28px;
+  height: 24px;
+}
+
+.prop-color-hex {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 3px 6px;
+  outline: none;
+  color: inherit;
+  font-size: var(--pdf-template-font-size-sm);
+  flex: 1;
+  font-family: monospace;
+}
+
+.prop-color-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+  cursor: pointer;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  padding: 0;
+  display: inline-block;
+}
+
+.prop-btn-clear {
+  font-size: var(--pdf-template-font-size-xs);
+  opacity: 0.5;
+  cursor: pointer;
+  background: none;
+  border: none;
+  color: inherit;
+  padding: 2px 4px;
+  border-radius: 2px;
+  transition: opacity 0.15s;
+}
+
+.prop-btn-clear:hover {
+  opacity: 1;
+}

@@ -1,0 +1,14 @@
+{
+  "dashboardName": "Air Quality Reports",
+  "widgets": [
+    {
+      "id": "air-quality-pdf-reports",
+      "type": "pdf-template-widget",
+      "x": 0,
+      "y": 0,
+      "w": 24,
+      "h": 28,
+      "config": {}
+    }
+  ]
+}

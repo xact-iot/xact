@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1320" height="900" viewBox="0 0 1320 900" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f7f7f7"/>
+      <stop offset="1" stop-color="#e7e7e7"/>
+    </linearGradient>
+    <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#78b9ff"/>
+      <stop offset="1" stop-color="#1370c7"/>
+    </linearGradient>
+    <linearGradient id="tank" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fafafa"/>
+      <stop offset="1" stop-color="#c9c9c9"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="1.5" dy="2" stdDeviation="2" flood-color="#777" flood-opacity=".35"/>
+    </filter>
+    <style>
+      .pipe { fill:none; stroke:#9db5c7; stroke-width:8; stroke-linecap:round; stroke-linejoin:round; }
+      .pipe-line { fill:none; stroke:#24475c; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+      .thin { stroke-width:5; }
+      .box { fill:#efefef; stroke:#777; stroke-width:1; filter:url(#shadow); }
+      .label { font-family:Arial, Helvetica, sans-serif; font-weight:bold; font-size:14px; fill:#111; }
+      .small { font-family:Arial, Helvetica, sans-serif; font-size:12px; fill:#111; }
+      .metric { font-family:Arial, Helvetica, sans-serif; font-weight:bold; font-size:13px; fill:#126018; }
+      .panel { fill:#f8f8f8; stroke:#a9a9a9; }
+      .sensor { fill:#c8f0c6; stroke:#176b1e; stroke-width:2; }
+      .pump { fill:#2d82da; stroke:#0f4b93; stroke-width:2; }
+      .pumpText { font-family:Arial, Helvetica, sans-serif; font-weight:bold; font-size:16px; fill:#fff; text-anchor:middle; dominant-baseline:middle; }
+      .suburb { fill:#f5f5f5; stroke:#9a9a9a; filter:url(#shadow); }
+      .arrow { fill:#111; }
+      .valveRed { fill:#d71920; stroke:#8b0f14; stroke-width:1.5; }
+      .valveGreen { fill:#37a745; stroke:#1b6729; stroke-width:1.5; }
+      .metal { fill:#bdbdbd; stroke:#555; stroke-width:1.2; }
+    </style>
+    <g id="pumpIcon">
+      <circle r="13" class="pump"/>
+      <text class="pumpText" y="1">P</text>
+    </g>
+    <g id="boosterIcon">
+      <circle r="13" class="pump"/>
+      <text class="pumpText" y="1">B</text>
+    </g>
+    <g id="flowIcon">
+      <circle r="12" class="sensor"/>
+      <text x="0" y="4" font-family="Arial" font-weight="bold" font-size="14" fill="#176b1e" text-anchor="middle">F</text>
+    </g>
+    <g id="pressureIcon">
+      <circle r="12" class="sensor"/>
+      <text x="0" y="4" font-family="Arial" font-weight="bold" font-size="14" fill="#176b1e" text-anchor="middle">P</text>
+    </g>
+    <g id="levelIcon">
+      <circle r="12" class="sensor"/>
+      <text x="0" y="4" font-family="Arial" font-weight="bold" font-size="14" fill="#176b1e" text-anchor="middle">L</text>
+    </g>
+    <g id="redValve">
+      <rect x="-2" y="-14" width="4" height="28" fill="#9b1a1a"/>
+      <polygon points="-17,-8 -3,0 -17,8" class="valveRed"/>
+      <polygon points="17,-8 3,0 17,8" class="valveRed"/>
+    </g>
+    <g id="greenValve">
+      <rect x="-2" y="-14" width="4" height="28" fill="#1d6e2d"/>
+      <polygon points="-17,-8 -3,0 -17,8" class="valveGreen"/>
+      <polygon points="17,-8 3,0 17,8" class="valveGreen"/>
+    </g>
+    <marker id="arrowHead" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 Z" class="arrow"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1320" height="900" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1320" height="38" fill="#064a7b"/>
+  <text x="660" y="25" font-family="Arial" font-size="22" font-weight="bold" fill="#fff" text-anchor="middle">TOWN WATER RETICULATION SYSTEM</text>
+  <text x="1210" y="24" font-family="Arial" font-size="14" font-weight="bold" fill="#fff">SCADA OVERVIEW</text>
+
+  <!-- Dams -->
+  <g transform="translate(60,110)">
+    <text x="80" y="-20" class="label" text-anchor="middle">UPPER DAM</text>
+    <rect x="32" y="-12" width="98" height="18" class="panel"/>
+    <text x="42" y="1" class="small" font-weight="bold" fill="#176b1e">Level</text>
+    <text x="88" y="1" class="metric">90.2 %</text>
+    <polygon points="0,70 18,5 32,5 37,63 136,63 142,5 156,5 174,70" class="metal"/>
+    <path d="M35,20 L140,20 L134,64 Q88,79 41,64 Z" fill="url(#water)" stroke="#1e5d94"/>
+  </g>
+  <g transform="translate(60,285)">
+    <text x="80" y="-20" class="label" text-anchor="middle">LOWER DAM</text>
+    <rect x="32" y="-12" width="98" height="18" class="panel"/>
+    <text x="42" y="1" class="small" font-weight="bold" fill="#176b1e">Level</text>
+    <text x="88" y="1" class="metric">78.1 %</text>
+    <polygon points="0,70 18,5 32,5 37,63 136,63 142,5 156,5 174,70" class="metal"/>
+    <path d="M35,20 L140,20 L134,64 Q88,79 41,64 Z" fill="url(#water)" stroke="#1e5d94"/>
+  </g>
+
+  <!-- Pump stations -->
+  <g transform="translate(275,104)">
+    <text x="64" y="-18" class="label" text-anchor="middle">RAW WATER PUMP STATION</text>
+    <rect x="0" y="0" width="128" height="64" class="box"/>
+    <use href="#pumpIcon" x="32" y="24"/><use href="#pumpIcon" x="94" y="24"/>
+    <text x="32" y="54" class="label" text-anchor="middle">P1</text><text x="94" y="54" class="label" text-anchor="middle">P2</text>
+  </g>
+  <g transform="translate(275,278)">
+    <text x="64" y="-18" class="label" text-anchor="middle">LOW LIFT PUMP STATION</text>
+    <rect x="0" y="0" width="128" height="64" class="box"/>
+    <use href="#pumpIcon" x="32" y="24"/><use href="#pumpIcon" x="94" y="24"/>
+    <text x="32" y="54" class="label" text-anchor="middle">P1</text><text x="94" y="54" class="label" text-anchor="middle">P2</text>
+  </g>
+
+  <!-- Water treatment plant -->
+  <g transform="translate(535,190)">
+    <text x="75" y="-18" class="label" text-anchor="middle">WATER TREATMENT PLANT</text>
+    <rect x="0" y="0" width="150" height="82" class="box"/>
+    <rect x="22" y="16" width="24" height="42" rx="3" fill="#e8e8e8" stroke="#777"/>
+    <rect x="58" y="28" width="28" height="30" fill="#d4e4f0" stroke="#555"/>
+    <path d="M60 31 h24 M60 36 h24 M60 41 h24 M60 46 h24 M60 51 h24 M64 28 v30 M70 28 v30 M76 28 v30 M82 28 v30" stroke="#284a63" stroke-width="1"/>
+    <rect x="98" y="28" width="28" height="30" fill="#d4e4f0" stroke="#555"/>
+    <path d="M100 31 h24 M100 36 h24 M100 41 h24 M100 46 h24 M100 51 h24 M104 28 v30 M110 28 v30 M116 28 v30 M122 28 v30" stroke="#284a63" stroke-width="1"/>
+  </g>
+
+  <!-- Main pipes from dams to pump stations to WTP -->
+  <path class="pipe" d="M205 145 H275"/><path class="pipe-line" d="M205 145 H275"/>
+  <path class="pipe" d="M205 320 H275"/><path class="pipe-line" d="M205 320 H275"/>
+  <path class="pipe" d="M403 136 H500 Q510 136 510 146 V210 Q510 220 520 220 H535"/>
+  <path class="pipe-line" d="M403 136 H500 Q510 136 510 146 V210 Q510 220 520 220 H535"/>
+  <path class="pipe" d="M403 310 H500 Q510 310 510 300 V230 Q510 220 520 220 H535"/>
+  <path class="pipe-line" d="M403 310 H500 Q510 310 510 300 V230 Q510 220 520 220 H535"/>
+  <use href="#flowIcon" x="460" y="136"/><text x="433" y="167" class="metric">45.3 ML/h</text>
+  <use href="#flowIcon" x="448" y="310"/><text x="421" y="341" class="metric">38.7 ML/h</text>
+
+  <!-- WTP to main reservoir and trunk -->
+  <path class="pipe" d="M685 231 H780 H833"/><path class="pipe-line" d="M685 231 H780 H833"/>
+  <use href="#flowIcon" x="720" y="231"/><text x="695" y="260" class="metric">84.0 ML/h</text>
+  <use href="#pressureIcon" x="782" y="231"/><text x="765" y="260" class="small">620 kPa</text>
+  <use href="#greenValve" x="837" y="231"/>
+
+  <!-- Main reservoir -->
+  <g transform="translate(875,118)">
+    <text x="62" y="-18" class="label" text-anchor="middle">MAIN RESERVOIR</text>
+    <rect x="20" y="-8" width="102" height="18" class="panel"/>
+    <text x="30" y="5" class="small" font-weight="bold" fill="#176b1e">Level</text>
+    <text x="78" y="5" class="metric">76.5 %</text>
+    <ellipse cx="62" cy="38" rx="47" ry="10" fill="#f4f4f4" stroke="#555"/>
+    <rect x="15" y="38" width="94" height="82" fill="url(#tank)" stroke="#555"/>
+    <rect x="20" y="58" width="84" height="62" fill="url(#water)" opacity=".9"/>
+    <ellipse cx="62" cy="120" rx="47" ry="10" fill="#d7d7d7" stroke="#555"/>
+    <use href="#levelIcon" x="14" y="78"/>
+  </g>
+  <path class="pipe" d="M833 231 H890"/><path class="pipe-line" d="M833 231 H890"/>
+  <path class="pipe" d="M955 240 H1005 Q1015 240 1015 250 V560 Q1015 570 1025 570 H1125"/>
+  <path class="pipe-line" d="M955 240 H1005 Q1015 240 1015 250 V560 Q1015 570 1025 570 H1125"/>
+
+  <!-- Main trunk -->
+  <path class="pipe" d="M814 231 V815"/><path class="pipe-line" d="M814 231 V815"/>
+  <path class="pipe" d="M760 560 H1115" /><path class="pipe-line" d="M760 560 H1115"/>
+  <path class="pipe" d="M814 660 H1115" /><path class="pipe-line" d="M814 660 H1115"/>
+  <path class="pipe" d="M814 790 H1115" /><path class="pipe-line" d="M814 790 H1115"/>
+
+  <!-- West reservoir and west booster -->
+  <g transform="translate(445,420)">
+    <text x="62" y="-18" class="label" text-anchor="middle">WEST RESERVOIR</text>
+    <rect x="20" y="-8" width="102" height="18" class="panel"/>
+    <text x="30" y="5" class="small" font-weight="bold" fill="#176b1e">Level</text>
+    <text x="78" y="5" class="metric">68.7 %</text>
+    <ellipse cx="62" cy="38" rx="45" ry="10" fill="#f4f4f4" stroke="#555"/>
+    <rect x="17" y="38" width="90" height="70" fill="url(#tank)" stroke="#555"/>
+    <rect x="22" y="58" width="80" height="50" fill="url(#water)" opacity=".9"/>
+    <ellipse cx="62" cy="108" rx="45" ry="9" fill="#d7d7d7" stroke="#555"/>
+    <use href="#levelIcon" x="105" y="68"/>
+  </g>
+  <path class="pipe" d="M552 488 H760 Q770 488 770 498 V560"/><path class="pipe-line" d="M552 488 H760 Q770 488 770 498 V560"/>
+  <use href="#redValve" x="710" y="488"/>
+  <path class="pipe" d="M445 488 H420 Q410 488 410 498 V620 Q410 630 400 630 H360"/><path class="pipe-line" d="M445 488 H420 Q410 488 410 498 V620 Q410 630 400 630 H360"/>
+  <use href="#pressureIcon" x="410" y="555"/><text x="390" y="584" class="small">500 kPa</text>
+  <use href="#boosterIcon" x="410" y="620"/>
+  <g transform="translate(270,665)">
+    <text x="64" y="-18" class="label" text-anchor="middle">WEST BOOSTER STATION</text>
+    <rect x="0" y="0" width="128" height="64" class="box"/>
+    <use href="#boosterIcon" x="32" y="30"/><use href="#boosterIcon" x="94" y="30"/>
+    <text x="32" y="16" class="label" text-anchor="middle">B1</text><text x="94" y="16" class="label" text-anchor="middle">B2</text>
+  </g>
+  <path class="pipe" d="M270 697 H200"/><path class="pipe-line" d="M270 697 H200"/>
+  <use href="#redValve" x="235" y="697"/>
+  <line x1="200" y1="697" x2="150" y2="697" stroke="#111" stroke-width="4" marker-end="url(#arrowHead)"/>
+  <g transform="translate(55,665)" class="suburb">
+    <rect x="0" y="0" width="120" height="72"/>
+    <text x="60" y="15" class="label" text-anchor="middle">WESTSIDE</text>
+    <line x1="0" y1="24" x2="120" y2="24" stroke="#aaa"/>
+    <text x="10" y="42" class="small">Flow</text><text x="70" y="42" class="small">26.7 ML/h</text>
+    <text x="10" y="62" class="small">Pressure</text><text x="70" y="62" class="small">515 kPa</text>
+  </g>
+
+  <!-- North booster and north hills -->
+  <path class="pipe" d="M814 360 H1015 Q1025 360 1025 370 V400 Q1025 410 1035 410 H1075"/><path class="pipe-line" d="M814 360 H1015 Q1025 360 1025 370 V400 Q1025 410 1035 410 H1075"/>
+  <use href="#redValve" x="865" y="360"/>
+  <use href="#pressureIcon" x="1005" y="310"/><text x="985" y="339" class="small">550 kPa</text>
+  <use href="#boosterIcon" x="1004" y="360"/><text x="1020" y="353" class="label">B1</text>
+  <g transform="translate(1035,365)">
+    <text x="64" y="-16" class="label" text-anchor="middle">NORTH BOOSTER STATION</text>
+    <rect x="0" y="0" width="128" height="64" class="box"/>
+    <use href="#boosterIcon" x="32" y="30"/><use href="#boosterIcon" x="94" y="30"/>
+    <text x="32" y="15" class="label" text-anchor="middle">B1</text><text x="94" y="15" class="label" text-anchor="middle">B2</text>
+  </g>
+  <path class="pipe" d="M1163 397 H1210"/><path class="pipe-line" d="M1163 397 H1210"/>
+  <use href="#redValve" x="1195" y="397"/>
+  <line x1="1210" y1="397" x2="1245" y2="397" stroke="#111" stroke-width="4" marker-end="url(#arrowHead)"/>
+  <g transform="translate(1222,348)" class="suburb">
+    <rect x="0" y="0" width="116" height="72"/>
+    <text x="58" y="15" class="label" text-anchor="middle">NORTH HILLS</text>
+    <line x1="0" y1="24" x2="116" y2="24" stroke="#aaa"/>
+    <text x="10" y="42" class="small">Flow</text><text x="68" y="42" class="small">32.6 ML/h</text>
+    <text x="10" y="62" class="small">Pressure</text><text x="68" y="62" class="small">540 kPa</text>
+  </g>
+
+  <!-- East and central feeds -->
+  <use href="#pressureIcon" x="875" y="560"/><text x="855" y="589" class="small">560 kPa</text>
+  <use href="#flowIcon" x="1008" y="560"/><text x="980" y="589" class="metric">74.8 ML/h</text>
+  <line x1="1115" y1="560" x2="1220" y2="560" stroke="#111" stroke-width="4" marker-end="url(#arrowHead)"/>
+  <g transform="translate(1222,520)" class="suburb">
+    <rect x="0" y="0" width="116" height="72"/>
+    <text x="58" y="15" class="label" text-anchor="middle">EASTVALE</text>
+    <line x1="0" y1="24" x2="116" y2="24" stroke="#aaa"/>
+    <text x="10" y="42" class="small">Flow</text><text x="68" y="42" class="small">28.4 ML/h</text>
+    <text x="10" y="62" class="small">Pressure</text><text x="68" y="62" class="small">525 kPa</text>
+  </g>
+
+  <use href="#pressureIcon" x="875" y="660"/><text x="855" y="689" class="small">480 kPa</text>
+  <line x1="1115" y1="660" x2="1220" y2="660" stroke="#111" stroke-width="4" marker-end="url(#arrowHead)"/>
+  <g transform="translate(1222,622)" class="suburb">
+    <rect x="0" y="0" width="116" height="72"/>
+    <text x="58" y="15" class="label" text-anchor="middle">CENTRAL HEIGHTS</text>
+    <line x1="0" y1="24" x2="116" y2="24" stroke="#aaa"/>
+    <text x="10" y="42" class="small">Flow</text><text x="68" y="42" class="small">74.8 ML/h</text>
+    <text x="10" y="62" class="small">Pressure</text><text x="68" y="62" class="small">555 kPa</text>
+  </g>
+
+  <!-- South booster and southtown -->
+  <use href="#redValve" x="845" y="760"/>
+  <use href="#boosterIcon" x="902" y="760"/>
+  <g transform="translate(960,725)">
+    <text x="64" y="-16" class="label" text-anchor="middle">SOUTH BOOSTER STATION</text>
+    <rect x="0" y="0" width="128" height="64" class="box"/>
+    <use href="#boosterIcon" x="32" y="30"/><use href="#boosterIcon" x="94" y="30"/>
+    <text x="32" y="15" class="label" text-anchor="middle">B1</text><text x="94" y="15" class="label" text-anchor="middle">B2</text>
+  </g>
+  <path class="pipe" d="M814 760 H960"/><path class="pipe-line" d="M814 760 H960"/>
+  <path class="pipe" d="M1088 760 H1210"/><path class="pipe-line" d="M1088 760 H1210"/>
+  <use href="#redValve" x="1135" y="760"/>
+  <line x1="1210" y1="760" x2="1245" y2="760" stroke="#111" stroke-width="4" marker-end="url(#arrowHead)"/>
+  <g transform="translate(1222,720)" class="suburb">
+    <rect x="0" y="0" width="116" height="72"/>
+    <text x="58" y="15" class="label" text-anchor="middle">SOUTHTOWN</text>
+    <line x1="0" y1="24" x2="116" y2="24" stroke="#aaa"/>
+    <text x="10" y="42" class="small">Flow</text><text x="68" y="42" class="small">41.2 ML/h</text>
+    <text x="10" y="62" class="small">Pressure</text><text x="68" y="62" class="small">505 kPa</text>
+  </g>
+
+  <!-- Riverside feed -->
+  <use href="#pressureIcon" x="850" y="790"/><text x="830" y="819" class="small">450 kPa</text>
+  <use href="#flowIcon" x="1008" y="790"/><text x="980" y="819" class="metric">50.8 ML/h</text>
+  <line x1="1115" y1="790" x2="1220" y2="790" stroke="#111" stroke-width="4" marker-end="url(#arrowHead)"/>
+  <g transform="translate(1222,820)" class="suburb">
+    <rect x="0" y="-72" width="116" height="72"/>
+    <text x="58" y="-57" class="label" text-anchor="middle">RIVERSIDE</text>
+    <line x1="0" y1="-48" x2="116" y2="-48" stroke="#aaa"/>
+    <text x="10" y="-30" class="small">Flow</text><text x="68" y="-30" class="small">50.8 ML/h</text>
+    <text x="10" y="-10" class="small">Pressure</text><text x="68" y="-10" class="small">475 kPa</text>
+  </g>
+</svg>

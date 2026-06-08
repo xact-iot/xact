@@ -1,0 +1,23 @@
+// Authentication plugin for XACT.
+//
+// To activate: rename this file to authenticate.go
+// The server loads this file at startup. If present it replaces the built-in
+// bcrypt password check. The user must still exist in the XACT database
+// (for role and session information); only credential verification is delegated
+// here.
+//
+// The function receives the username (or email) and plaintext password exactly
+// as supplied by the client. Return true to grant access, false to deny.
+//
+// The package name MUST be "authenticate".
+package authenticate
+
+import "fmt"
+
+// Authenticate is called by the XACT server to verify a login attempt.
+// Replace the body with your own logic (LDAP, OAuth introspection, etc.).
+func Authenticate(user, password string) bool {
+	fmt.Printf("[auth plugin] verifying user %q\n", user)
+	// Example: accept any non-empty password (replace with real logic)
+	return user != "" && password != ""
+}

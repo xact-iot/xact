@@ -1,0 +1,42 @@
+{
+  "name": "xact-ui",
+  "version": "0.1.0",
+  "description": "XACT Web Interface",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:run": "vitest run",
+    "test:e2e": "playwright test",
+    "copy-icons": "node -e \"const fs=require('fs');const path=require('path');const sets=['mdi','material-symbols','carbon','tabler','ph','lucide'];const src=path.join('node_modules','@iconify','json','json');const dst=path.join('public','icons');fs.mkdirSync(dst,{recursive:true});sets.forEach(s=>{fs.copyFileSync(path.join(src,s+'.json'),path.join(dst,s+'.json'));console.log('Copied',s+'.json');});\"",
+    "postinstall": "npm run copy-icons",
+    "prebuild": "npm run copy-icons"
+  },
+  "devDependencies": {
+    "@iconify/json": "^2.2.0",
+    "@playwright/test": "^1.60.0",
+    "@types/node": "^20.11.0",
+    "@vitest/ui": "^4.0.18",
+    "autoprefixer": "^10.4.17",
+    "happy-dom": "^20.5.0",
+    "jsdom": "^28.0.0",
+    "postcss": "^8.4.33",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.11",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "@nats-io/jetstream": "npm:@jsr/nats-io__jetstream@^3.0.0",
+    "@nats-io/kv": "npm:@jsr/nats-io__kv@^3.3.0",
+    "@nats-io/transport-node": "^3.3.0",
+    "echarts": "^6.0.0",
+    "gridstack": "^12.4.2",
+    "marked": "^17.0.5",
+    "nanostores": "^0.10.3",
+    "nats.ws": "^1.30.3"
+  }
+}
