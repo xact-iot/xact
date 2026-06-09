@@ -47,7 +47,7 @@ XACT is a modern industrial IoT platform designed for real-time monitoring, data
 ## 1. Preview
 
 - **Screen shots:** [View screenshots](screenshots/README.md)
-- **Demo Website:** [xact.io](https://......)  WIP
+- **Demo Website:** [XACT demo](https://xact.dedyn.io)
 
 
 ## 2. Installation

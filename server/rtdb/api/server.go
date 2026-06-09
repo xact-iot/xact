@@ -740,7 +740,7 @@ func (s *Server) handleNATSConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := s.natsBrowserConfig
 	s.natsCfgMu.RUnlock()
 
-	if cfg.NATSWSURL == "" && s.config.StaticServeMode != "proxy" {
+	if cfg.NATSWSURL == "" && cfg.NATSWSPath == "" && s.config.StaticServeMode != "proxy" {
 		cfg.NATSWSURL = s.directNATSWebSocketURL(r)
 	}
 
@@ -757,7 +757,7 @@ func (s *Server) directNATSWebSocketURL(r *http.Request) string {
 		hostname = host
 	}
 	scheme := "ws"
-	if s.config.TLS.Enabled {
+	if r.Header.Get("X-Forwarded-Proto") == "https" || s.config.TLS.Enabled {
 		scheme = "wss"
 	}
 	port := os.Getenv("NATS_WS_PORT")

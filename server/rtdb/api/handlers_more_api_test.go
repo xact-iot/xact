@@ -200,14 +200,23 @@ func TestNATSBrowserConfigAndTimezone(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &cfg); err != nil {
 		t.Fatalf("decode nats cfg: %v", err)
 	}
-	if cfg.NATSWSURL != "ws://example.test:9222" {
+	if cfg.NATSWSURL != "" {
 		t.Fatalf("NATSWSURL = %q", cfg.NATSWSURL)
+	}
+	if cfg.NATSWSPath != "/ws" {
+		t.Fatalf("NATSWSPath = %q", cfg.NATSWSPath)
 	}
 
 	t.Setenv("NATS_WS_PORT", "9443")
 	s.config.TLS.Enabled = true
 	if got := s.directNATSWebSocketURL(req); got != "wss://example.test:9443" {
 		t.Fatalf("direct url = %q", got)
+	}
+
+	s.config.TLS.Enabled = false
+	req.Header.Set("X-Forwarded-Proto", "https")
+	if got := s.directNATSWebSocketURL(req); got != "wss://example.test:9443" {
+		t.Fatalf("forwarded direct url = %q", got)
 	}
 
 	t.Setenv("TZ", "America/New_York")

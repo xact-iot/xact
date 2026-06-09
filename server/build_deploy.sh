@@ -173,6 +173,7 @@ create_package() {
     local ARCH="$2"
     local OUTPUT_DIR="$DEPLOY_DIR/$OS"
     local PLATFORM_DIR="$OUTPUT_DIR/xact-$OS-$ARCH"
+    local ARCHIVE_DIR="$DEPLOY_DIR"
     local XACT_BIN="xact_${OS}_${ARCH}"
     local RESTORE_BIN="restore_${OS}_${ARCH}"
     local SUFFIX=""
@@ -190,6 +191,7 @@ create_package() {
 
     echo -e "${YELLOW}Creating $OS-$ARCH package...${NC}"
 
+    rm -rf "$PLATFORM_DIR"
     mkdir -p "$PLATFORM_DIR"/{plugins,data,certs,logs,web}
 
     local MQTT_SECRET
@@ -482,7 +484,7 @@ if grep -Eq '^START_NGINX=yes$' .env 2>/dev/null; then
         echo "Warning: nginx not found; browser HTTPS proxy will not be started"
     fi
 else
-    echo "Starting HTTP evaluation server"
+    echo "Starting HTTP server"
 fi
 
 exec ./xact
@@ -505,11 +507,13 @@ SHEOF
     fi
 
     if [ "$OS" = "windows" ]; then
-        ARCHIVE="$OUTPUT_DIR/xact-$OS-$ARCH-$VERSION.zip"
+        ARCHIVE="$ARCHIVE_DIR/xact-$OS-$ARCH-$VERSION.zip"
+        rm -f "$ARCHIVE"
         (cd "$PLATFORM_DIR" && zip -q -r "$ARCHIVE" "${PACKAGE_ENTRIES[@]}")
         echo -e "${GREEN}Created xact-$OS-$ARCH-$VERSION.zip${NC}"
     else
-        ARCHIVE="$OUTPUT_DIR/xact-$OS-$ARCH-$VERSION.tar.gz"
+        ARCHIVE="$ARCHIVE_DIR/xact-$OS-$ARCH-$VERSION.tar.gz"
+        rm -f "$ARCHIVE"
         tar -czf "$ARCHIVE" -C "$PLATFORM_DIR" "${PACKAGE_ENTRIES[@]}"
         verify_tar_extracts_to_current_dir "$ARCHIVE" "xact-$OS-$ARCH"
         echo -e "${GREEN}Created xact-$OS-$ARCH-$VERSION.tar.gz${NC}"
@@ -533,12 +537,12 @@ echo -e "${GREEN}Build complete!${NC}"
 echo "Output files:"
 if [ "$BUILD_TARGET" = "single" ]; then
     if [ "$TARGET_OS" = "windows" ]; then
-        ls -lh "$DEPLOY_DIR/$TARGET_OS/xact-$TARGET_OS-$TARGET_ARCH-$VERSION.zip" 2>/dev/null || true
+        ls -lh "$DEPLOY_DIR/xact-$TARGET_OS-$TARGET_ARCH-$VERSION.zip" 2>/dev/null || true
     else
-        ls -lh "$DEPLOY_DIR/$TARGET_OS/xact-$TARGET_OS-$TARGET_ARCH-$VERSION.tar.gz" 2>/dev/null || true
+        ls -lh "$DEPLOY_DIR/xact-$TARGET_OS-$TARGET_ARCH-$VERSION.tar.gz" 2>/dev/null || true
     fi
 else
-    ls -lh "$DEPLOY_DIR"/linux/*.tar.gz "$DEPLOY_DIR"/darwin/*.tar.gz "$DEPLOY_DIR"/windows/*.zip 2>/dev/null || true
+    ls -lh "$DEPLOY_DIR"/*.tar.gz "$DEPLOY_DIR"/*.zip 2>/dev/null || true
 fi
 echo ""
 echo "Build artifacts located at: $DEPLOY_DIR"
