@@ -17,14 +17,18 @@ func (f fakeSource) FetchTrafficIncidents() ([]TrafficIncident, error) {
 }
 
 type fakeSink struct {
-	existing map[string]string
-	ingests  []TrafficIncident
-	resolved map[string]TrafficIncident
-	deletes  []string
-	events   []string
+	existing    map[string]string
+	existingErr error
+	ingests     []TrafficIncident
+	resolved    map[string]TrafficIncident
+	deletes     []string
+	events      []string
 }
 
 func (f *fakeSink) ExistingIncidents(string, string) (map[string]string, error) {
+	if f.existingErr != nil {
+		return nil, f.existingErr
+	}
 	return f.existing, nil
 }
 
@@ -93,6 +97,36 @@ func TestPollOnceCreatesUpdatesAndRemovesByCoordinate(t *testing.T) {
 	wantEvents := []string{"LTA incident created: Vehicle breakdown", "LTA incident resolved: Vehicle breakdown"}
 	if !reflect.DeepEqual(sink.events, wantEvents) {
 		t.Fatalf("events = %#v, want %#v", sink.events, wantEvents)
+	}
+}
+
+func TestPollOnceContinuesInIngestOnlyModeWhenLoginUnauthorized(t *testing.T) {
+	active := TrafficIncident{
+		Type:      "Accident",
+		Latitude:  1.30398068448214,
+		Longitude: 103.919182834377,
+		Message:   "Accident on expressway",
+	}
+	sink := &fakeSink{
+		existingErr: ErrXACTLoginUnauthorized,
+		existing: map[string]string{
+			coordinateKey(1.300000001, 103.900000001): "INC_STALE",
+		},
+	}
+
+	driver := NewDriver(DefaultTenant, DefaultZone, fakeSource{incidents: []TrafficIncident{active}}, sink)
+	if err := driver.PollOnce(context.Background()); err != nil {
+		t.Fatalf("PollOnce() error = %v", err)
+	}
+
+	if len(sink.ingests) != 1 || sink.ingests[0] != active {
+		t.Fatalf("ingests = %#v, want active incident", sink.ingests)
+	}
+	if len(sink.events) != 0 {
+		t.Fatalf("events = %#v, want none in ingest-only mode", sink.events)
+	}
+	if len(sink.deletes) != 0 {
+		t.Fatalf("deletes = %#v, want none in ingest-only mode", sink.deletes)
 	}
 }
 

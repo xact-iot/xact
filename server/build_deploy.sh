@@ -301,7 +301,7 @@ ENVEOF
 worker_processes 1;
 daemon on;
 
-pid data/nginx.pid;
+pid /run/nginx.pid;
 error_log logs/nginx-error.log info;
 
 events {
@@ -452,9 +452,11 @@ if [ ! -d "logs" ]; then
 fi
 
 if grep -Eq '^START_NGINX=yes$' .env 2>/dev/null; then
+    nginx_pid_file="/run/nginx.pid"
+
     find_nginx_master() {
-        if [ -s "data/nginx.pid" ] && kill -0 "$(cat data/nginx.pid)" 2>/dev/null; then
-            cat data/nginx.pid
+        if [ -s "$nginx_pid_file" ] && kill -0 "$(cat "$nginx_pid_file")" 2>/dev/null; then
+            cat "$nginx_pid_file"
             return
         fi
         ps -u "$(id -u)" -o pid=,args= \
@@ -462,8 +464,8 @@ if grep -Eq '^START_NGINX=yes$' .env 2>/dev/null; then
     }
 
     if command -v nginx >/dev/null 2>&1 && [ -f "nginx.conf" ]; then
-        if [ -f "data/nginx.pid" ] && { [ ! -s "data/nginx.pid" ] || ! kill -0 "$(cat data/nginx.pid)" 2>/dev/null; }; then
-            rm -f data/nginx.pid
+        if [ -f "$nginx_pid_file" ] && { [ ! -s "$nginx_pid_file" ] || ! kill -0 "$(cat "$nginx_pid_file")" 2>/dev/null; }; then
+            rm -f "$nginx_pid_file" 2>/dev/null || true
         fi
 
         if nginx -p "$SCRIPT_DIR/" -c "$SCRIPT_DIR/nginx.conf" -t; then

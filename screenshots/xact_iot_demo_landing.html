@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>XACT IoT Server Demo Login</title>
+  <style>
+    :root{
+      --bg:#04101f; --panel:#071a31cc; --cyan:#00d9ff; --violet:#9d5cff;
+      --green:#00d084; --orange:#ff9800; --text:#f4f8ff; --muted:#a9bed8;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; font-family:Inter,Segoe UI,Arial,sans-serif; color:var(--text);
+      background:
+        radial-gradient(circle at 70% 15%, #153e74 0, transparent 32%),
+        radial-gradient(circle at 20% 75%, #2b1458 0, transparent 28%),
+        linear-gradient(135deg,#020814,#061a2c 60%,#020814);
+      min-height:100vh; overflow-x:hidden;
+    }
+    body:before{
+      content:""; position:fixed; inset:0; pointer-events:none; opacity:.25;
+      background-image:linear-gradient(#0b3153 1px,transparent 1px),linear-gradient(90deg,#0b3153 1px,transparent 1px);
+      background-size:42px 42px;
+    }
+    .wrap{width:min(1180px,92vw); margin:auto; position:relative; z-index:1}
+    header{padding:34px 0 18px; display:flex; justify-content:space-between; align-items:center; gap:20px}
+    .brand{display:flex; align-items:center; gap:16px}
+    .x{font-size:64px; font-weight:900; line-height:.7; letter-spacing:-8px;
+       background:linear-gradient(135deg,var(--violet),var(--cyan)); -webkit-background-clip:text; color:transparent}
+    .brand h1{margin:0; font-size:36px; letter-spacing:10px}
+    .brand span{display:block; color:var(--cyan); letter-spacing:8px; font-weight:700}
+    .pill{border:1px solid var(--cyan); border-radius:999px; padding:10px 16px; color:var(--cyan); background:#00182699}
+    .hero{display:grid; grid-template-columns:1.1fr .9fr; gap:28px; align-items:center; padding:32px 0}
+    .copy h2{font-size:clamp(40px,6vw,72px); line-height:1; margin:0 0 18px}
+    .copy p{font-size:21px; color:var(--muted); max-width:680px; line-height:1.45}
+    .cta{display:flex; gap:14px; flex-wrap:wrap; margin-top:28px}
+    .btn{padding:15px 22px; border-radius:12px; text-decoration:none; font-weight:800}
+    .primary{background:linear-gradient(135deg,var(--cyan),var(--violet)); color:#00101f}
+    .secondary{border:1px solid #2c84a6; color:var(--text); background:#071a31aa}
+    .login-card{
+      border:1px solid var(--cyan); border-radius:24px; padding:26px;
+      background:linear-gradient(180deg,#08213dcc,#04101fcc);
+      box-shadow:0 0 45px #00d9ff33, inset 0 0 30px #00d9ff12;
+    }
+    .login-card h3{margin:0 0 8px; font-size:28px}
+    .steps{counter-reset:s; margin:22px 0 0; padding:0; list-style:none}
+    .steps li{counter-increment:s; display:grid; grid-template-columns:44px 1fr; gap:14px; margin:18px 0}
+    .steps li:before{
+      content:counter(s); width:44px; height:44px; border-radius:12px; display:grid; place-items:center;
+      background:#06294b; border:1px solid var(--cyan); color:var(--cyan); font-weight:900;
+    }
+    code{background:#001826; border:1px solid #244c69; padding:3px 7px; border-radius:6px; color:#7ff3ff}
+    .features{padding:24px 0 46px}
+    .section-title{font-size:22px; letter-spacing:2px; color:var(--cyan); margin-bottom:18px}
+    .grid{display:grid; grid-template-columns:repeat(3,1fr); gap:16px}
+    .feature{
+      min-height:145px; border:1px solid #1c5275; border-radius:18px; padding:18px;
+      background:var(--panel); box-shadow:0 10px 30px #0008;
+    }
+    .feature b{display:block; font-size:18px; margin:12px 0 7px}
+    .feature p{margin:0; color:var(--muted); line-height:1.35}
+    .icon{font-size:30px}
+    footer{padding:24px 0 34px; color:var(--muted); text-align:center}
+    @media(max-width:900px){.hero,.grid{grid-template-columns:1fr}.brand h1{font-size:28px}.pill{display:none}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <div class="x">X</div>
+        <div><h1>XACT</h1><span>IoT SERVER</span></div>
+      </div>
+      <div class="pill">Demo Environment</div>
+    </header>
+
+    <main class="hero">
+      <section class="copy">
+        <h2>Connect. Monitor. Scale.</h2>
+        <p>
+          Welcome to the XACT IoT Server demo site. Explore multi-tenant workspaces,
+          live dashboards, maps, alerts, reports, device data processing and plugin-driven extensibility.
+        </p>
+        <div class="cta">
+          <a class="btn primary" href="#login">View login instructions</a>
+          <a class="btn secondary" href="#features">Explore features</a>
+        </div>
+      </section>
+
+      <aside class="login-card" id="login">
+        <h3>How to log in</h3>
+        <ol class="steps">
+          <li><div>Open the demo URL in your browser:<br><a href="https://xact.dedyn.io/xact"><code>https://xact.dedyn.io/xact</code></a></div></li>
+          <li><div>Enter the demo user credentials. Username <code>demo</code> and password <code>demo</code>.</div></li>
+          <li><div>The demo user can view all dashboards and settings, but cannot edit or change anything.</div></li>
+          <li><div>Select the dashboards on the left.</div></li>
+          <li><div>Hover over icons on the maps to see more detail regarding the device under the pointer.</div></li>
+        </ol>
+      </aside>
+    </main>
+
+    <section class="features" id="features">
+      <div class="section-title">SERVER CAPABILITIES</div>
+      <div class="grid">
+        <div class="feature"><div class="icon">👥</div><b>Core Platform</b><p>Multi-tenancy, users, permissions, white labeling, themes and online help.</p></div>
+        <div class="feature"><div class="icon">📊</div><b>Dashboards & Maps</b><p>Real-time widgets, geographic asset views and SVG diagram screens.</p></div>
+        <div class="feature"><div class="icon">🗄️</div><b>Data Processing</b><p>In-memory hierarchical database, pipelines, templates, history and tag calculations.</p></div>
+        <div class="feature"><div class="icon">🔔</div><b>Alerts & Reports</b><p>Multi-channel notifications, scheduled automation and PDF report delivery.</p></div>
+        <div class="feature"><div class="icon">🧩</div><b>Extensibility</b><p>Plugins, control widgets, authentication extensions and processing blocks.</p></div>
+        <div class="feature"><div class="icon">☁️</div><b>Data Ingest</b><p>REST API, MQTT and NATS support for connecting field devices and systems.</p></div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

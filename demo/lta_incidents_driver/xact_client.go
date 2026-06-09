@@ -3,6 +3,7 @@ package lta_incidents_driver
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 )
 
 const incidentAPIKeyName = "LTA Incidents Demo"
+
+var ErrXACTLoginUnauthorized = errors.New("login to XACT unauthorized")
 
 type XACTClient struct {
 	baseURL  string
@@ -284,6 +287,9 @@ func (c *XACTClient) ensureToken() error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("%w: HTTP %d", ErrXACTLoginUnauthorized, resp.StatusCode)
+		}
 		return fmt.Errorf("login to XACT returned HTTP %d", resp.StatusCode)
 	}
 	var login struct {

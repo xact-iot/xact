@@ -2,6 +2,7 @@ package lta_incidents_driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 )
@@ -61,8 +62,14 @@ func (d *Driver) PollOnce(ctx context.Context) error {
 	log.Printf("[LTA Incidents] fetched %d active incidents", len(incidents))
 
 	existing, err := d.sink.ExistingIncidents(d.tenant, d.zone)
+	manageLifecycle := true
 	if err != nil {
-		return err
+		if !errors.Is(err, ErrXACTLoginUnauthorized) {
+			return err
+		}
+		manageLifecycle = false
+		existing = map[string]string{}
+		log.Printf("[LTA Incidents] XACT login failed; continuing in ingest-only mode. Set XACT_USERNAME/XACT_PASSWORD to enable incident cleanup and event logs.")
 	}
 
 	seen := make(map[string]TrafficIncident, len(incidents))
@@ -75,13 +82,17 @@ func (d *Driver) PollOnce(ctx context.Context) error {
 		if err := d.sink.IngestIncident(d.tenant, d.zone, incident); err != nil {
 			return fmt.Errorf("ingest incident %s: %w", key, err)
 		}
-		if !alreadyExists {
+		if manageLifecycle && !alreadyExists {
 			if err := d.sink.CreateIncidentEvent(d.tenant, d.zone, deviceName, "LTA incident created: "+incident.Type, map[string]any{
 				"message": incident.Message,
 			}); err != nil {
 				return fmt.Errorf("write created event for %s: %w", key, err)
 			}
 		}
+	}
+
+	if !manageLifecycle {
+		return nil
 	}
 
 	for key, deviceName := range existing {
