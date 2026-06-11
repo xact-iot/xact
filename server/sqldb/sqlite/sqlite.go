@@ -820,10 +820,12 @@ func (db *SQLiteDB) ListDashboards(ctx context.Context, org string) ([]sqldb.Das
 	var dashboards []sqldb.DashboardMeta
 	for rows.Next() {
 		var p sqldb.DashboardMeta
+		var isCategory sqliteBool
 		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Icon,
-			&p.Variation, &p.DeviceType, &p.Permission, &p.IsCategory, &p.ParentID, &p.SortOrder); err != nil {
+			&p.Variation, &p.DeviceType, &p.Permission, &isCategory, &p.ParentID, &p.SortOrder); err != nil {
 			return nil, fmt.Errorf("scanning dashboard row: %w", err)
 		}
+		p.IsCategory = isCategory.Bool
 		dashboards = append(dashboards, p)
 	}
 	return dashboards, rows.Err()
@@ -832,6 +834,7 @@ func (db *SQLiteDB) ListDashboards(ctx context.Context, org string) ([]sqldb.Das
 // GetDashboard returns a single dashboard with full data including widgets.
 func (db *SQLiteDB) GetDashboard(ctx context.Context, org string, id int) (*sqldb.Dashboard, error) {
 	var p sqldb.Dashboard
+	var isCategory sqliteBool
 	var widgetsStr string
 	err := db.db.QueryRowContext(ctx, `
 		SELECT p.id, p.name, p.description, p.icon, p.variation,
@@ -840,13 +843,14 @@ func (db *SQLiteDB) GetDashboard(ctx context.Context, org string, id int) (*sqld
 		JOIN organisations o ON o.id = p.org_id
 		WHERE o.name = ? AND p.id = ?
 	`, org, id).Scan(&p.ID, &p.Name, &p.Description, &p.Icon,
-		&p.Variation, &p.DeviceType, &p.Permission, &p.IsCategory, &p.ParentID, &p.SortOrder, &widgetsStr)
+		&p.Variation, &p.DeviceType, &p.Permission, &isCategory, &p.ParentID, &p.SortOrder, &widgetsStr)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("getting dashboard %d: %w", id, err)
 	}
+	p.IsCategory = isCategory.Bool
 	p.Widgets = json.RawMessage(widgetsStr)
 	return &p, nil
 }
@@ -1061,7 +1065,7 @@ func (db *SQLiteDB) ListScheduledTasks(ctx context.Context, org string) ([]sqldb
 	for rows.Next() {
 		var t sqldb.ScheduledTask
 		var taskConfig string
-		var enabled int
+		var enabled sqliteBool
 		var createdAt, updatedAt string
 		var lastRunAtPtr *string
 		if err := rows.Scan(&t.ID, &t.OrgName, &t.Name, &t.Description, &t.TaskType,
@@ -1070,7 +1074,7 @@ func (db *SQLiteDB) ListScheduledTasks(ctx context.Context, org string) ([]sqldb
 			return nil, err
 		}
 		t.TaskConfig = json.RawMessage(taskConfig)
-		t.Enabled = enabled != 0
+		t.Enabled = enabled.Bool
 		t.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 		t.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
 		if lastRunAtPtr != nil {
@@ -1086,7 +1090,7 @@ func (db *SQLiteDB) ListScheduledTasks(ctx context.Context, org string) ([]sqldb
 func (db *SQLiteDB) GetScheduledTask(ctx context.Context, org string, id string) (*sqldb.ScheduledTask, error) {
 	var t sqldb.ScheduledTask
 	var taskConfig string
-	var enabled int
+	var enabled sqliteBool
 	var createdAt, updatedAt string
 	var lastRunAtPtr *string
 	err := db.db.QueryRowContext(ctx, `
@@ -1103,7 +1107,7 @@ func (db *SQLiteDB) GetScheduledTask(ctx context.Context, org string, id string)
 	if err != nil {
 		return nil, fmt.Errorf("getting scheduled task: %w", err)
 	}
-	t.Enabled = enabled != 0
+	t.Enabled = enabled.Bool
 	t.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 	t.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
 	if lastRunAtPtr != nil {

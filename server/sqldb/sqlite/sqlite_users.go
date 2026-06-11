@@ -121,16 +121,16 @@ func (db *SQLiteDB) GetUserByID(ctx context.Context, id int) (*sqldb.User, error
 func (db *SQLiteDB) GetUserByLogin(ctx context.Context, login string) (*sqldb.User, string, error) {
 	var u sqldb.User
 	var hash, notifOpts, createdAtStr string
-	var activeInt int
+	var active sqliteBool
 	var lastLoginStr *string
 	err := db.db.QueryRowContext(ctx, `
 		SELECT id, first_name, last_name, login_name, email,
 		       notification_options, active, last_login, token_version, created_at, password_hash
 		FROM users
-		WHERE (login_name = ? OR email = ?) AND active = 1
+		WHERE (login_name = ? OR email = ?) AND (active = 1 OR lower(CAST(active AS TEXT)) IN ('true', 't', 'yes', 'y', 'on'))
 	`, login, login).Scan(
 		&u.ID, &u.FirstName, &u.LastName, &u.LoginName, &u.Email,
-		&notifOpts, &activeInt, &lastLoginStr, &u.TokenVersion, &createdAtStr, &hash,
+		&notifOpts, &active, &lastLoginStr, &u.TokenVersion, &createdAtStr, &hash,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", nil
@@ -138,7 +138,7 @@ func (db *SQLiteDB) GetUserByLogin(ctx context.Context, login string) (*sqldb.Us
 	if err != nil {
 		return nil, "", fmt.Errorf("getting user by login %q: %w", login, err)
 	}
-	u.Active = activeInt != 0
+	u.Active = active.Bool
 	u.NotificationOptions = []byte(notifOpts)
 	u.CreatedAt = parseTimestamp(createdAtStr)
 	if lastLoginStr != nil {
@@ -228,17 +228,18 @@ func (db *SQLiteDB) SetUserPassword(ctx context.Context, id int, passwordHash st
 
 // GetUserAuthState returns the active flag and token version for JWT validation.
 func (db *SQLiteDB) GetUserAuthState(ctx context.Context, id int) (bool, int, error) {
-	var activeInt, tokenVersion int
+	var active sqliteBool
+	var tokenVersion int
 	err := db.db.QueryRowContext(ctx,
 		"SELECT active, token_version FROM users WHERE id = ?", id,
-	).Scan(&activeInt, &tokenVersion)
+	).Scan(&active, &tokenVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, 0, nil
 	}
 	if err != nil {
 		return false, 0, fmt.Errorf("getting auth state for user %d: %w", id, err)
 	}
-	return activeInt != 0, tokenVersion, nil
+	return active.Bool, tokenVersion, nil
 }
 
 // BumpUserTokenVersion invalidates existing JWTs for a user.
@@ -421,15 +422,15 @@ func (db *SQLiteDB) AssignUserToOrg(ctx context.Context, userID int, orgName str
 func scanUserRow(rows *sql.Rows) (*sqldb.User, error) {
 	var u sqldb.User
 	var notifOpts, createdAtStr string
-	var activeInt int
+	var active sqliteBool
 	var lastLoginStr *string
 	if err := rows.Scan(
 		&u.ID, &u.FirstName, &u.LastName, &u.LoginName, &u.Email,
-		&notifOpts, &activeInt, &lastLoginStr, &u.TokenVersion, &createdAtStr,
+		&notifOpts, &active, &lastLoginStr, &u.TokenVersion, &createdAtStr,
 	); err != nil {
 		return nil, fmt.Errorf("scanning user row: %w", err)
 	}
-	u.Active = activeInt != 0
+	u.Active = active.Bool
 	u.NotificationOptions = []byte(notifOpts)
 	u.CreatedAt = parseTimestamp(createdAtStr)
 	if lastLoginStr != nil {

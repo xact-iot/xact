@@ -213,6 +213,135 @@ func TestSQLiteReportTagCalcAndNotificationProfileLifecycle(t *testing.T) {
 	}
 }
 
+func TestSQLiteReadsPostgresTextBooleans(t *testing.T) {
+	ctx := context.Background()
+	db := newSQLiteCRUDTestDB(t)
+
+	if _, err := db.RawDB().ExecContext(ctx, `UPDATE organisations SET active = 'true' WHERE name = 'default'`); err != nil {
+		t.Fatalf("set org text bool: %v", err)
+	}
+	org, err := db.GetOrganisation(ctx, "default")
+	if err != nil {
+		t.Fatalf("GetOrganisation with restored values: %v", err)
+	}
+	if org == nil || !org.Active {
+		t.Fatalf("org active = %#v, want true", org)
+	}
+	if _, err := db.ListOrganisations(ctx); err != nil {
+		t.Fatalf("ListOrganisations with restored values: %v", err)
+	}
+	nullableOrg, err := scanOrganisation(db.RawDB().QueryRowContext(ctx, `SELECT 1, 'restored', NULL, 'true', NULL, NULL, NULL`))
+	if err != nil {
+		t.Fatalf("scanOrganisation with restored nulls: %v", err)
+	}
+	if nullableOrg.DisplayName != "" || nullableOrg.Logo != "" || nullableOrg.Favicon != "" || nullableOrg.Area != nil || !nullableOrg.Active {
+		t.Fatalf("nullable org = %#v, want empty nullable fields and active true", nullableOrg)
+	}
+
+	hash, _ := HashPassword("pw")
+	user := &sqldb.User{FirstName: "Text", LastName: "Bool", LoginName: "textbool", Email: "textbool@example.test", Active: true}
+	if err := db.CreateUser(ctx, user, hash); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := db.AssignUserToOrg(ctx, user.ID, "default", []string{"Operator"}); err != nil {
+		t.Fatalf("AssignUserToOrg: %v", err)
+	}
+	if _, err := db.RawDB().ExecContext(ctx, `UPDATE users SET active = 'true' WHERE id = ?`, user.ID); err != nil {
+		t.Fatalf("set user text bool: %v", err)
+	}
+	if active, _, err := db.GetUserAuthState(ctx, user.ID); err != nil || !active {
+		t.Fatalf("GetUserAuthState active=%v err=%v, want true", active, err)
+	}
+	if byLogin, _, err := db.GetUserByLogin(ctx, "textbool"); err != nil || byLogin == nil {
+		t.Fatalf("GetUserByLogin with text bool = %#v err=%v", byLogin, err)
+	}
+	if _, err := db.ListUsers(ctx); err != nil {
+		t.Fatalf("ListUsers with text bool: %v", err)
+	}
+
+	calc := &sqldb.TagCalc{Name: "Text Bool Calc", OutputTag: "CUSTOM.TextBool", Expression: "1", IntervalSeconds: 30, Enabled: true}
+	if err := db.CreateTagCalc(ctx, "default", calc); err != nil {
+		t.Fatalf("CreateTagCalc: %v", err)
+	}
+	if _, err := db.RawDB().ExecContext(ctx, `UPDATE tag_calcs SET enabled = 'false' WHERE id = ?`, calc.ID); err != nil {
+		t.Fatalf("set tag calc text bool: %v", err)
+	}
+	gotCalc, err := db.GetTagCalc(ctx, "default", calc.ID)
+	if err != nil {
+		t.Fatalf("GetTagCalc with text bool: %v", err)
+	}
+	if gotCalc == nil || gotCalc.Enabled {
+		t.Fatalf("tag calc enabled = %#v, want false", gotCalc)
+	}
+	if _, err := db.ListTagCalcs(ctx, "default"); err != nil {
+		t.Fatalf("ListTagCalcs with text bool: %v", err)
+	}
+
+	profile := &sqldb.NotificationProfile{Name: "Text Bool Profile", Roles: []string{"Operator"}, AckRequired: true}
+	if err := db.CreateNotificationProfile(ctx, "default", profile); err != nil {
+		t.Fatalf("CreateNotificationProfile: %v", err)
+	}
+	if _, err := db.RawDB().ExecContext(ctx, `UPDATE notification_profiles SET ack_required = 'true' WHERE id = ?`, profile.ID); err != nil {
+		t.Fatalf("set notification text bool: %v", err)
+	}
+	gotProfile, err := db.GetNotificationProfile(ctx, "default", profile.ID)
+	if err != nil {
+		t.Fatalf("GetNotificationProfile with text bool: %v", err)
+	}
+	if gotProfile == nil || !gotProfile.AckRequired {
+		t.Fatalf("profile ackRequired = %#v, want true", gotProfile)
+	}
+	if recipients, err := db.GetNotificationRecipients(ctx, "default", profile.ID); err != nil || len(recipients) != 1 {
+		t.Fatalf("GetNotificationRecipients with text bool = %#v err=%v", recipients, err)
+	}
+
+	dashboards, err := db.ListDashboards(ctx, "default")
+	if err != nil {
+		t.Fatalf("ListDashboards before text bool update: %v", err)
+	}
+	categoryID := 0
+	for _, dashboard := range dashboards {
+		if dashboard.IsCategory {
+			categoryID = dashboard.ID
+			break
+		}
+	}
+	if categoryID == 0 {
+		t.Fatal("no seeded category dashboard found")
+	}
+	if _, err := db.RawDB().ExecContext(ctx, `UPDATE dashboards SET is_category = 'true' WHERE id = ?`, categoryID); err != nil {
+		t.Fatalf("set dashboard text bool: %v", err)
+	}
+	dashboard, err := db.GetDashboard(ctx, "default", categoryID)
+	if err != nil {
+		t.Fatalf("GetDashboard with text bool: %v", err)
+	}
+	if dashboard == nil || !dashboard.IsCategory {
+		t.Fatalf("dashboard isCategory = %#v, want true", dashboard)
+	}
+	if _, err := db.ListDashboards(ctx, "default"); err != nil {
+		t.Fatalf("ListDashboards with text bool: %v", err)
+	}
+
+	task := &sqldb.ScheduledTask{Name: "Text Bool Task", TaskType: "report", TaskConfig: json.RawMessage(`{}`), Schedule: "0 0 * * *", Enabled: true}
+	if err := db.CreateScheduledTask(ctx, "default", task); err != nil {
+		t.Fatalf("CreateScheduledTask: %v", err)
+	}
+	if _, err := db.RawDB().ExecContext(ctx, `UPDATE scheduled_tasks SET enabled = 'true' WHERE id = ?`, task.ID); err != nil {
+		t.Fatalf("set task text bool: %v", err)
+	}
+	gotTask, err := db.GetScheduledTask(ctx, "default", task.ID)
+	if err != nil {
+		t.Fatalf("GetScheduledTask with text bool: %v", err)
+	}
+	if gotTask == nil || !gotTask.Enabled {
+		t.Fatalf("task enabled = %#v, want true", gotTask)
+	}
+	if _, err := db.ListScheduledTasks(ctx, "default"); err != nil {
+		t.Fatalf("ListScheduledTasks with text bool: %v", err)
+	}
+}
+
 func TestSQLiteEventsAndMetricQueries(t *testing.T) {
 	ctx := context.Background()
 	db := newSQLiteCRUDTestDB(t)

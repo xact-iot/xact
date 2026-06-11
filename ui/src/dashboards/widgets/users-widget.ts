@@ -23,6 +23,8 @@ registerWidgetType({
   minH: 12,
 });
 
+const USER_DIALOG_Z_INDEX = 19000;
+
 interface DialogState {
   open: boolean;
   mode: 'create' | 'edit';
@@ -50,6 +52,11 @@ export class UsersWidget extends BaseComponent {
   connectedCallback(): void {
     super.connectedCallback();
     this.initWithPermissions();
+  }
+
+  disconnectedCallback(): void {
+    this.applyDialogStacking(false);
+    super.disconnectedCallback();
   }
 
   private async initWithPermissions(): Promise<void> {
@@ -87,6 +94,8 @@ export class UsersWidget extends BaseComponent {
   }
 
   protected render(): void {
+    this.applyDialogStacking(this.dialog.open);
+
     if (this.loading) {
       this.innerHTML = `<div class="p-8 text-center opacity-40 text-sm">Loading users…</div>`;
       return;
@@ -233,7 +242,7 @@ export class UsersWidget extends BaseComponent {
     const disabled = this.canManage ? '' : 'disabled';
 
     return `
-      <div class="fixed inset-0 z-50 flex items-center justify-center" style="background: rgba(0,0,0,0.6);">
+      <div class="fixed inset-0 flex items-center justify-center" style="z-index:${USER_DIALOG_Z_INDEX};background: rgba(0,0,0,0.6);">
         <div class="rounded-lg border shadow-xl w-full max-w-md mx-4"
              style="background: var(--header-bg); border-color: var(--border-color);"
              id="user-dialog">
@@ -458,6 +467,17 @@ export class UsersWidget extends BaseComponent {
         });
       });
     }
+  }
+
+  private applyDialogStacking(open: boolean): void {
+    const stackValue = open ? String(USER_DIALOG_Z_INDEX) : '';
+    const widgetBody = this.closest('widget-card')?.querySelector<HTMLElement>('.widget-body');
+    if (widgetBody) {
+      widgetBody.style.zIndex = stackValue;
+      widgetBody.style.overflow = open ? 'visible' : '';
+    }
+    const gridItem = this.closest<HTMLElement>('.grid-stack-item');
+    if (gridItem) gridItem.style.zIndex = stackValue;
   }
 
   private openCreateDialog(): void {

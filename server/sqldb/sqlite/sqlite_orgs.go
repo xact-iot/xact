@@ -22,15 +22,9 @@ func (db *SQLiteDB) ListOrganisations(ctx context.Context) ([]sqldb.Organisation
 
 	var orgs []sqldb.Organisation
 	for rows.Next() {
-		var o sqldb.Organisation
-		var activeInt int
-		var areaJSON *string
-		if err := rows.Scan(&o.ID, &o.Name, &o.DisplayName, &activeInt, &o.Logo, &o.Favicon, &areaJSON); err != nil {
+		o, err := scanOrganisation(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scanning organisation: %w", err)
-		}
-		o.Active = activeInt != 0
-		if areaJSON != nil {
-			o.Area = parseArea(*areaJSON)
 		}
 		orgs = append(orgs, o)
 	}
@@ -39,23 +33,37 @@ func (db *SQLiteDB) ListOrganisations(ctx context.Context) ([]sqldb.Organisation
 
 // GetOrganisation returns a single organisation by name, or nil if not found.
 func (db *SQLiteDB) GetOrganisation(ctx context.Context, name string) (*sqldb.Organisation, error) {
-	var o sqldb.Organisation
-	var activeInt int
-	var areaJSON *string
-	err := db.db.QueryRowContext(ctx,
+	o, err := scanOrganisation(db.db.QueryRowContext(ctx,
 		"SELECT id, name, display_name, active, logo, favicon, area FROM organisations WHERE name = ?", name,
-	).Scan(&o.ID, &o.Name, &o.DisplayName, &activeInt, &o.Logo, &o.Favicon, &areaJSON)
+	))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("getting organisation %q: %w", name, err)
 	}
-	o.Active = activeInt != 0
-	if areaJSON != nil {
-		o.Area = parseArea(*areaJSON)
-	}
 	return &o, nil
+}
+
+type sqlScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanOrganisation(scanner sqlScanner) (sqldb.Organisation, error) {
+	var o sqldb.Organisation
+	var active sqliteBool
+	var displayName, logo, favicon, areaJSON sql.NullString
+	if err := scanner.Scan(&o.ID, &o.Name, &displayName, &active, &logo, &favicon, &areaJSON); err != nil {
+		return o, err
+	}
+	o.DisplayName = displayName.String
+	o.Active = active.Bool
+	o.Logo = logo.String
+	o.Favicon = favicon.String
+	if areaJSON.Valid {
+		o.Area = parseArea(areaJSON.String)
+	}
+	return o, nil
 }
 
 // CreateOrganisation inserts a new organisation, setting org.ID on success.

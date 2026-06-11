@@ -214,7 +214,7 @@ func (db *SQLiteDB) GetNotificationRecipients(ctx context.Context, org string, p
 
 	query := `SELECT DISTINCT u.id, u.first_name, u.last_name, u.email, u.notification_options
 		FROM users u
-		WHERE u.active = 1 AND (` + strings.Join(whereParts, " OR ") + `)
+		WHERE (u.active = 1 OR lower(CAST(u.active AS TEXT)) IN ('true', 't', 'yes', 'y', 'on')) AND (` + strings.Join(whereParts, " OR ") + `)
 		ORDER BY u.id`
 
 	rows, err := db.db.QueryContext(ctx, query, args...)
@@ -242,12 +242,12 @@ func (db *SQLiteDB) GetNotificationRecipients(ctx context.Context, org string, p
 func scanProfile(rows *sql.Rows) (sqldb.NotificationProfile, error) {
 	var p sqldb.NotificationProfile
 	var rolesStr, usersStr, createdAtStr, updatedAtStr string
-	var ackRequiredInt int
+	var ackRequired sqliteBool
 	if err := rows.Scan(&p.ID, &p.OrgName, &p.Name, &p.Description,
-		&rolesStr, &usersStr, &ackRequiredInt, &createdAtStr, &updatedAtStr); err != nil {
+		&rolesStr, &usersStr, &ackRequired, &createdAtStr, &updatedAtStr); err != nil {
 		return p, fmt.Errorf("scanning notification profile: %w", err)
 	}
-	p.AckRequired = ackRequiredInt != 0
+	p.AckRequired = ackRequired.Bool
 	p.CreatedAt = parseTimestamp(createdAtStr)
 	p.UpdatedAt = parseTimestamp(updatedAtStr)
 	_ = json.Unmarshal([]byte(rolesStr), &p.Roles)

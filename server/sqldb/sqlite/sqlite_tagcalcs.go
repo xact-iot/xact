@@ -116,16 +116,15 @@ func (db *SQLiteDB) DeleteTagCalc(ctx context.Context, org string, id int) error
 // scanTagCalc scans a tag calc from rows.
 func scanTagCalc(rows *sql.Rows) (sqldb.TagCalc, error) {
 	var s sqldb.TagCalc
-	var enabledInt int
+	var enabled sqliteBool
 	var createdAtStr, updatedAtStr string
 	if err := rows.Scan(&s.ID, &s.OrgName, &s.Name, &s.Description,
-		&s.OutputTag, &s.Expression, &s.IntervalSeconds, &enabledInt,
+		&s.OutputTag, &s.Expression, &s.IntervalSeconds, &enabled,
 		&createdAtStr, &updatedAtStr); err != nil {
 		return s, fmt.Errorf("scanning tag calc: %w", err)
 	}
-	s.Enabled = enabledInt != 0
+	s.Enabled = enabled.Bool
 	s.CreatedAt = parseTimestamp(createdAtStr)
 	s.UpdatedAt = parseTimestamp(updatedAtStr)
 	return s, nil
 }
-
