@@ -252,6 +252,17 @@ describe('REST API wrappers', () => {
     await expect(api.getScheduleRunLog('task')).resolves.toEqual({ id: 'tpl' });
   });
 
+  it('handles run-now empty and error responses', async () => {
+    stubFetch(mockResponse('', { text: '' }));
+    await expect(api.runScheduledTaskNow('task')).resolves.toEqual({});
+
+    stubFetch(mockResponse({ error: 'backup failed' }));
+    await expect(api.runScheduledTaskNow('task')).rejects.toThrow('backup failed');
+
+    stubFetch(mockResponse('gateway timeout', { ok: false, status: 504, text: 'gateway timeout' }));
+    await expect(api.runScheduledTaskNow('task')).rejects.toThrow('gateway timeout');
+  });
+
   it('throws useful fallback errors for failed simple wrappers', async () => {
     const fetchMock = stubFetch(mockResponse({}, { ok: false, status: 503 }));
     await expect(api.fetchHealth()).rejects.toThrow('Health check failed: 503');

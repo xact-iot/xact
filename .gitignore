@@ -53,8 +53,11 @@ Thumbs.db
 # Project specific
 server/nats-store/
 server/deploy/
+server/db-backups/
+backup-*.gz
+pre-restore-*.gz
+pre-restore-*.db
 
-server/restore
 demo/demo
 benchmark/main
 build_and_setup.sh

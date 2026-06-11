@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 )
 
 type PostgresAdapter struct {
@@ -14,16 +15,25 @@ type PostgresAdapter struct {
 }
 
 func (p *PostgresAdapter) hypertables(ctx context.Context) (map[string]string, error) {
-
 	rows, err := p.DB.QueryContext(ctx, `
-	SELECT hypertable_name, time_column_name
-	FROM timescaledb_information.hypertables
+	SELECT h.hypertable_name, d.column_name
+	FROM timescaledb_information.hypertables h
+	JOIN timescaledb_information.dimensions d
+	  ON d.hypertable_schema = h.hypertable_schema
+	 AND d.hypertable_name = h.hypertable_name
+	 AND d.dimension_number = 1
+	WHERE h.hypertable_schema = 'public'
 	`)
-
 	if err != nil {
-		return nil, err
+		rows, err = p.DB.QueryContext(ctx, `
+		SELECT hypertable_name, time_column_name
+		FROM timescaledb_information.hypertables
+		WHERE hypertable_schema = 'public'
+		`)
+		if err != nil {
+			return nil, err
+		}
 	}
-
 	defer rows.Close()
 
 	result := map[string]string{}
@@ -80,9 +90,9 @@ func (p *PostgresAdapter) DropPublicTables(ctx context.Context) error {
 	if len(tables) == 0 {
 		return nil
 	}
-	quotedTables, err := quoteIdentList("table", tables)
+	hypertables, err := p.hypertables(ctx)
 	if err != nil {
-		return err
+		hypertables = map[string]string{}
 	}
 
 	tx, err := p.DB.BeginTx(ctx, nil)
@@ -91,13 +101,44 @@ func (p *PostgresAdapter) DropPublicTables(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(
-		`DROP TABLE IF EXISTS %s CASCADE`,
-		strings.Join(quotedTables, ", "),
-	)); err != nil {
-		return err
+	hypertableNames, regularTables := splitHypertables(tables, hypertables)
+
+	for _, table := range hypertableNames {
+		quotedTable, err := quoteIdent(table)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS %s CASCADE`, quotedTable)); err != nil {
+			return err
+		}
+	}
+
+	if len(regularTables) > 0 {
+		quotedTables, err := quoteIdentList("table", regularTables)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(
+			`DROP TABLE IF EXISTS %s CASCADE`,
+			strings.Join(quotedTables, ", "),
+		)); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
+}
+
+func splitHypertables(tables []string, hypertables map[string]string) ([]string, []string) {
+	var hypertableNames []string
+	var regularTables []string
+	for _, table := range tables {
+		if _, ok := hypertables[table]; ok {
+			hypertableNames = append(hypertableNames, table)
+			continue
+		}
+		regularTables = append(regularTables, table)
+	}
+	return hypertableNames, regularTables
 }
 
 func (p *PostgresAdapter) ExportTable(
@@ -174,6 +215,43 @@ func (p *PostgresAdapter) ExportSchema(ctx context.Context) (*Schema, error) {
 		return nil, err
 	}
 
+	indexRows, err := p.DB.QueryContext(ctx, `
+		SELECT
+			t.relname AS table_name,
+			i.indisunique,
+			string_agg(a.attname, ',' ORDER BY ord.n) AS columns
+		FROM pg_index i
+		JOIN pg_class ix ON ix.oid = i.indexrelid
+		JOIN pg_class t ON t.oid = i.indrelid
+		JOIN pg_namespace ns ON ns.oid = t.relnamespace
+		JOIN unnest(i.indkey) WITH ORDINALITY AS ord(attnum, n) ON TRUE
+		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ord.attnum
+		WHERE ns.nspname = 'public'
+		  AND NOT i.indisprimary
+		  AND i.indexprs IS NULL
+		  AND i.indpred IS NULL
+		GROUP BY t.relname, ix.relname, i.indisunique
+		ORDER BY t.relname, ix.relname
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer indexRows.Close()
+	for indexRows.Next() {
+		var tbl string
+		var unique bool
+		var columnsCSV string
+		if err := indexRows.Scan(&tbl, &unique, &columnsCSV); err != nil {
+			return nil, err
+		}
+		t := schema.Tables[tbl]
+		t.Indexes = append(t.Indexes, Index{Columns: strings.Split(columnsCSV, ","), Unique: unique})
+		schema.Tables[tbl] = t
+	}
+	if err := indexRows.Err(); err != nil {
+		return nil, err
+	}
+
 	hypertables, _ := p.hypertables(ctx)
 	for tbl, timeCol := range hypertables {
 		t := schema.Tables[tbl]
@@ -229,6 +307,7 @@ func (p *PostgresAdapter) ImportTable(ctx context.Context, table string, schema 
 		return fmt.Errorf("table %q CSV header is empty", table)
 	}
 	nullable := nullableColumns(schema)
+	columnTypes := columnTypesByName(schema)
 	quotedTable, err := quoteIdent(table)
 	if err != nil {
 		return err
@@ -270,7 +349,11 @@ func (p *PostgresAdapter) ImportTable(ctx context.Context, table string, schema 
 			if v == "" && nullable[header[i]] {
 				vals[i] = nil
 			} else {
-				vals[i] = v
+				value, err := postgresImportValue(columnTypes[header[i]], v)
+				if err != nil {
+					return fmt.Errorf("table %q column %q: %w", table, header[i], err)
+				}
+				vals[i] = value
 			}
 		}
 		if _, err := stmt.ExecContext(ctx, vals...); err != nil {
@@ -280,13 +363,116 @@ func (p *PostgresAdapter) ImportTable(ctx context.Context, table string, schema 
 	return tx.Commit()
 }
 
-// Recreate hypertables
+func columnTypesByName(table Table) map[string]string {
+	types := make(map[string]string, len(table.Columns))
+	for _, column := range table.Columns {
+		types[column.Name] = strings.ToLower(strings.TrimSpace(column.Type))
+	}
+	return types
+}
+
+func postgresImportValue(columnType, value string) (any, error) {
+	switch columnType {
+	case "timestamp with time zone", "timestamp without time zone":
+		return normalizePostgresTimestamp(value)
+	default:
+		return value, nil
+	}
+}
+
+func normalizePostgresTimestamp(value string) (string, error) {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return text, nil
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05.999999999 -0700 MST",
+		"2006-01-02 15:04:05.999999 -0700 MST",
+		"2006-01-02 15:04:05 -0700 MST",
+		"2006-01-02 15:04:05.999999999 -0700",
+		"2006-01-02 15:04:05.999999 -0700",
+		"2006-01-02 15:04:05 -0700",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05.999999",
+		"2006-01-02 15:04:05",
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, text); err == nil {
+			return parsed.Format(time.RFC3339Nano), nil
+		}
+	}
+	return "", fmt.Errorf("invalid timestamp %q", value)
+}
+
+func restorePostgresIDSequence(ctx context.Context, db *sql.DB, tableName string, table Table) error {
+	var idColumn *Column
+	for i := range table.Columns {
+		column := &table.Columns[i]
+		if column.Name != "id" {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(column.Type)) {
+		case "integer", "bigint":
+			idColumn = column
+		}
+		break
+	}
+	if idColumn == nil {
+		return nil
+	}
+
+	quotedTable, err := quoteIdent(tableName)
+	if err != nil {
+		return err
+	}
+	quotedColumn, err := quoteIdent(idColumn.Name)
+	if err != nil {
+		return err
+	}
+	sequenceName := tableName + "_" + idColumn.Name + "_seq"
+	quotedSequence, err := quoteIdent(sequenceName)
+	if err != nil {
+		return err
+	}
+	sequenceLiteral := quoteLiteral(sequenceName)
+
+	if _, err := db.ExecContext(ctx, fmt.Sprintf(`CREATE SEQUENCE IF NOT EXISTS %s`, quotedSequence)); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, fmt.Sprintf(`ALTER SEQUENCE %s OWNED BY %s.%s`, quotedSequence, quotedTable, quotedColumn)); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s SET DEFAULT nextval(%s::regclass)`, quotedTable, quotedColumn, sequenceLiteral)); err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, postgresSequenceSetvalSQL(sequenceLiteral, quotedColumn, quotedTable))
+	return err
+}
+
+func quoteLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func postgresSequenceSetvalSQL(sequenceLiteral, quotedColumn, quotedTable string) string {
+	return fmt.Sprintf(`
+		SELECT setval(%s::regclass,
+			COALESCE((SELECT MAX(%s) FROM %s), 1),
+			(SELECT MAX(%s) FROM %s) IS NOT NULL
+		)
+	`, sequenceLiteral, quotedColumn, quotedTable, quotedColumn, quotedTable)
+}
+
+// Recreate PostgreSQL-specific table behavior.
 func (p *PostgresAdapter) FinalizeTable(
 	ctx context.Context,
 	name string,
 	table Table,
 ) error {
 	if err := ValidateTable(name, table); err != nil {
+		return err
+	}
+	if err := restorePostgresIDSequence(ctx, p.DB, name, table); err != nil {
 		return err
 	}
 
@@ -308,7 +494,7 @@ func (p *PostgresAdapter) FinalizeTable(
 		}
 
 		_, err := p.DB.ExecContext(ctx,
-			`SELECT create_hypertable($1::regclass, $2::name, if_not_exists => TRUE)`,
+			`SELECT create_hypertable($1::regclass, $2::name, if_not_exists => TRUE, migrate_data => TRUE)`,
 			name,
 			timecol,
 		)

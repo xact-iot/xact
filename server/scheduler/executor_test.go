@@ -205,3 +205,60 @@ func TestEngineLifecycleWithSQLiteTasks(t *testing.T) {
 		t.Fatalf("UpdateScheduledTaskStatus: %v", err)
 	}
 }
+
+func TestLoadForOrgMarksInterruptedRuns(t *testing.T) {
+	ctx := context.Background()
+	dbi, err := sqlite.NewSQLiteDB(ctx, filepath.Join(t.TempDir(), "xact.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteDB: %v", err)
+	}
+	defer dbi.Close()
+	if err := dbi.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	task := &sqldb.ScheduledTask{
+		OrgName:    "default",
+		Name:       "Backup",
+		Schedule:   "0 0 * * *",
+		TaskType:   "backup",
+		TaskConfig: json.RawMessage(`{}`),
+		Enabled:    false,
+	}
+	if err := dbi.CreateScheduledTask(ctx, "default", task); err != nil {
+		t.Fatalf("CreateScheduledTask: %v", err)
+	}
+	firedAt := time.Now().Add(-time.Minute)
+	if err := dbi.UpdateScheduledTaskStatus(ctx, task.ID, "running", "Backup exporting table 1/2: alpha", firedAt); err != nil {
+		t.Fatalf("UpdateScheduledTaskStatus: %v", err)
+	}
+	entry := &sqldb.ScheduleRunLog{
+		ScheduleID: task.ID,
+		OrgName:    "default",
+		FiredAt:    firedAt,
+		Status:     "running",
+		Message:    "Backup exporting table 1/2: alpha",
+	}
+	if err := dbi.AppendScheduleRunLog(ctx, entry); err != nil {
+		t.Fatalf("AppendScheduleRunLog: %v", err)
+	}
+
+	e := New(dbi, nil)
+	if err := e.LoadForOrg(ctx, "default"); err != nil {
+		t.Fatalf("LoadForOrg: %v", err)
+	}
+
+	got, err := dbi.GetScheduledTask(ctx, "default", task.ID)
+	if err != nil {
+		t.Fatalf("GetScheduledTask: %v", err)
+	}
+	if got.LastRunStatus != "error" || got.LastRunMessage != "Interrupted by server restart" {
+		t.Fatalf("task status = %q message = %q", got.LastRunStatus, got.LastRunMessage)
+	}
+	history, err := dbi.ListScheduleRunLog(ctx, task.ID, 10)
+	if err != nil {
+		t.Fatalf("ListScheduleRunLog: %v", err)
+	}
+	if len(history) != 1 || history[0].Status != "error" || history[0].CompletedAt == nil {
+		t.Fatalf("history = %#v", history)
+	}
+}

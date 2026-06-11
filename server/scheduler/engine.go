@@ -61,6 +61,7 @@ func (e *Engine) Load(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("scheduler: loading tasks: %w", err)
 	}
+	e.markInterruptedRuns(ctx, tasks)
 	e.cr.Start()
 	for _, t := range tasks {
 		if err := e.register(t); err != nil {
@@ -77,6 +78,7 @@ func (e *Engine) LoadForOrg(ctx context.Context, org string) error {
 	if err != nil {
 		return fmt.Errorf("scheduler: loading tasks for org %q: %w", org, err)
 	}
+	e.markInterruptedRuns(ctx, tasks)
 	for _, t := range tasks {
 		if !t.Enabled {
 			continue
@@ -86,6 +88,36 @@ func (e *Engine) LoadForOrg(ctx context.Context, org string) error {
 		}
 	}
 	return nil
+}
+
+func (e *Engine) markInterruptedRuns(ctx context.Context, tasks []sqldb.ScheduledTask) {
+	const message = "Interrupted by server restart"
+	now := time.Now()
+	for _, task := range tasks {
+		if task.LastRunStatus != "running" {
+			continue
+		}
+		runAt := now
+		if task.LastRunAt != nil {
+			runAt = *task.LastRunAt
+		}
+		if err := e.db.UpdateScheduledTaskStatus(ctx, task.ID, "error", message, runAt); err != nil {
+			log.Printf("scheduler: failed to mark interrupted task %q (%s): %v", task.Name, task.ID, err)
+		}
+		entries, err := e.db.ListScheduleRunLog(ctx, task.ID, 1000)
+		if err != nil {
+			log.Printf("scheduler: failed to load run history for interrupted task %q (%s): %v", task.Name, task.ID, err)
+			continue
+		}
+		for _, entry := range entries {
+			if entry.Status != "running" {
+				continue
+			}
+			if err := e.db.UpdateScheduleRunLog(ctx, entry.ID, now, "error", message, entry.OutputPath); err != nil {
+				log.Printf("scheduler: failed to mark interrupted run log %d for task %q (%s): %v", entry.ID, task.Name, task.ID, err)
+			}
+		}
+	}
 }
 
 // Reload removes and re-adds a single task by ID. Call after create or update.
@@ -125,6 +157,23 @@ func (e *Engine) RunNow(ctx context.Context, org, id string) (string, error) {
 		return "", fmt.Errorf("task %q not found", id)
 	}
 	return e.execute(ctx, *t, time.Now())
+}
+
+// StartNow starts a task immediately in the background, bypassing the de-dup lock.
+func (e *Engine) StartNow(ctx context.Context, org, id string) error {
+	t, err := e.db.GetScheduledTask(ctx, org, id)
+	if err != nil {
+		return err
+	}
+	if t == nil {
+		return fmt.Errorf("task %q not found", id)
+	}
+	go func(task sqldb.ScheduledTask) {
+		if _, err := e.execute(context.Background(), task, time.Now()); err != nil {
+			log.Printf("scheduler: manual task %q (%s) failed: %v", task.Name, task.ID, err)
+		}
+	}(*t)
+	return nil
 }
 
 // Stop gracefully shuts down the cron runner.
@@ -181,6 +230,9 @@ func (e *Engine) execute(ctx context.Context, t sqldb.ScheduledTask, firedAt tim
 		Task:             t,
 		FiredAt:          firedAt,
 		AllowUnsafeTasks: e.allowUnsafeTasks,
+		Progress: func(message string) {
+			_ = e.db.UpdateScheduledTaskStatus(ctx, t.ID, "running", message, firedAt)
+		},
 	})
 
 	completedAt := time.Now()

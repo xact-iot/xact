@@ -60,15 +60,29 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			name TEXT NOT NULL UNIQUE
 		);
 
-		INSERT INTO organisations (name) VALUES ('default') ON CONFLICT DO NOTHING;
-
 		-- New organisation columns (idempotent)
 		ALTER TABLE organisations ADD COLUMN IF NOT EXISTS area         BOX;
 		ALTER TABLE organisations ADD COLUMN IF NOT EXISTS logo         BYTEA;
-		ALTER TABLE organisations ADD COLUMN IF NOT EXISTS logo_data    TEXT    NOT NULL DEFAULT '';
-		ALTER TABLE organisations ADD COLUMN IF NOT EXISTS favicon      TEXT    NOT NULL DEFAULT '';
-		ALTER TABLE organisations ADD COLUMN IF NOT EXISTS active       BOOLEAN NOT NULL DEFAULT TRUE;
-		ALTER TABLE organisations ADD COLUMN IF NOT EXISTS display_name TEXT    NOT NULL DEFAULT '';
+		ALTER TABLE organisations ADD COLUMN IF NOT EXISTS logo_data    TEXT DEFAULT '';
+		ALTER TABLE organisations ADD COLUMN IF NOT EXISTS favicon      TEXT DEFAULT '';
+		ALTER TABLE organisations ADD COLUMN IF NOT EXISTS active       BOOLEAN DEFAULT TRUE;
+		ALTER TABLE organisations ADD COLUMN IF NOT EXISTS display_name TEXT DEFAULT '';
+		ALTER TABLE organisations ALTER COLUMN logo_data SET DEFAULT '';
+		ALTER TABLE organisations ALTER COLUMN favicon SET DEFAULT '';
+		ALTER TABLE organisations ALTER COLUMN active SET DEFAULT TRUE;
+		ALTER TABLE organisations ALTER COLUMN display_name SET DEFAULT '';
+		UPDATE organisations SET logo_data = '' WHERE logo_data IS NULL;
+		UPDATE organisations SET favicon = '' WHERE favicon IS NULL;
+		UPDATE organisations SET active = TRUE WHERE active IS NULL;
+		UPDATE organisations SET display_name = '' WHERE display_name IS NULL;
+		ALTER TABLE organisations ALTER COLUMN logo_data SET NOT NULL;
+		ALTER TABLE organisations ALTER COLUMN favicon SET NOT NULL;
+		ALTER TABLE organisations ALTER COLUMN active SET NOT NULL;
+		ALTER TABLE organisations ALTER COLUMN display_name SET NOT NULL;
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_organisations_name_unique
+			ON organisations(name);
+
+		INSERT INTO organisations (name) VALUES ('default') ON CONFLICT DO NOTHING;
 
 		DO $$
 		BEGIN
@@ -102,6 +116,26 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		DROP INDEX IF EXISTS idx_panels_org_name;
 		DROP INDEX IF EXISTS idx_dashboards_org_name;
 		CREATE INDEX IF NOT EXISTS idx_dashboards_org_name ON dashboards(org_id, name);
+		ALTER TABLE dashboards ALTER COLUMN description SET DEFAULT '';
+		ALTER TABLE dashboards ALTER COLUMN icon SET DEFAULT '';
+		ALTER TABLE dashboards ALTER COLUMN variation SET DEFAULT '';
+		ALTER TABLE dashboards ALTER COLUMN device_type SET DEFAULT '';
+		ALTER TABLE dashboards ALTER COLUMN permission SET DEFAULT '';
+		ALTER TABLE dashboards ALTER COLUMN is_category SET DEFAULT FALSE;
+		ALTER TABLE dashboards ALTER COLUMN sort_order SET DEFAULT 0;
+		ALTER TABLE dashboards ALTER COLUMN widgets SET DEFAULT '[]';
+		ALTER TABLE dashboards ALTER COLUMN created_at SET DEFAULT NOW();
+		ALTER TABLE dashboards ALTER COLUMN updated_at SET DEFAULT NOW();
+		UPDATE dashboards SET description = '' WHERE description IS NULL;
+		UPDATE dashboards SET icon = '' WHERE icon IS NULL;
+		UPDATE dashboards SET variation = '' WHERE variation IS NULL;
+		UPDATE dashboards SET device_type = '' WHERE device_type IS NULL;
+		UPDATE dashboards SET permission = '' WHERE permission IS NULL;
+		UPDATE dashboards SET is_category = FALSE WHERE is_category IS NULL;
+		UPDATE dashboards SET sort_order = 0 WHERE sort_order IS NULL;
+		UPDATE dashboards SET widgets = '[]' WHERE widgets IS NULL;
+		UPDATE dashboards SET created_at = NOW() WHERE created_at IS NULL;
+		UPDATE dashboards SET updated_at = NOW() WHERE updated_at IS NULL;
 
 		-- Roles table (must exist before permissions FK)
 		CREATE TABLE IF NOT EXISTS roles (
@@ -109,6 +143,10 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			name        TEXT NOT NULL UNIQUE,
 			description TEXT NOT NULL DEFAULT ''
 		);
+		ALTER TABLE roles ALTER COLUMN description SET DEFAULT '';
+		UPDATE roles SET description = '' WHERE description IS NULL;
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_roles_name_unique
+			ON roles(name);
 
 		INSERT INTO roles (name, description) VALUES
 			('SystemAdmin', 'Has unrestricted access to all features and organisations'),
@@ -129,6 +167,20 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE(org_id, role)
 		);
+		ALTER TABLE permissions ALTER COLUMN ui SET DEFAULT '{}';
+		ALTER TABLE permissions ALTER COLUMN server SET DEFAULT '{}';
+		ALTER TABLE permissions ALTER COLUMN created_at SET DEFAULT NOW();
+		ALTER TABLE permissions ALTER COLUMN updated_at SET DEFAULT NOW();
+		UPDATE permissions SET ui = '{}' WHERE ui IS NULL;
+		UPDATE permissions SET server = '{}' WHERE server IS NULL;
+		UPDATE permissions SET created_at = NOW() WHERE created_at IS NULL;
+		UPDATE permissions SET updated_at = NOW() WHERE updated_at IS NULL;
+		ALTER TABLE permissions ALTER COLUMN ui SET NOT NULL;
+		ALTER TABLE permissions ALTER COLUMN server SET NOT NULL;
+		ALTER TABLE permissions ALTER COLUMN created_at SET NOT NULL;
+		ALTER TABLE permissions ALTER COLUMN updated_at SET NOT NULL;
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_org_role_unique
+			ON permissions(org_id, role);
 
 		CREATE TABLE IF NOT EXISTS system_config (
 			id           SERIAL PRIMARY KEY,
@@ -140,6 +192,20 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE(org_id, config_name, version)
 		);
+		ALTER TABLE system_config ALTER COLUMN version SET DEFAULT 1;
+		ALTER TABLE system_config ALTER COLUMN config SET DEFAULT '{}';
+		ALTER TABLE system_config ALTER COLUMN created_at SET DEFAULT NOW();
+		ALTER TABLE system_config ALTER COLUMN updated_at SET DEFAULT NOW();
+		UPDATE system_config SET version = 1 WHERE version IS NULL;
+		UPDATE system_config SET config = '{}' WHERE config IS NULL;
+		UPDATE system_config SET created_at = NOW() WHERE created_at IS NULL;
+		UPDATE system_config SET updated_at = NOW() WHERE updated_at IS NULL;
+		ALTER TABLE system_config ALTER COLUMN version SET NOT NULL;
+		ALTER TABLE system_config ALTER COLUMN config SET NOT NULL;
+		ALTER TABLE system_config ALTER COLUMN created_at SET NOT NULL;
+		ALTER TABLE system_config ALTER COLUMN updated_at SET NOT NULL;
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_system_config_org_name_version_unique
+			ON system_config(org_id, config_name, version);
 
 		CREATE TABLE IF NOT EXISTS events (
 			id              BIGSERIAL,
@@ -162,7 +228,7 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 					SELECT 1 FROM timescaledb_information.hypertables
 					WHERE hypertable_name = 'events'
 				) THEN
-					PERFORM create_hypertable('events', 'timestamp');
+					PERFORM create_hypertable('events', 'timestamp', migrate_data => TRUE);
 				END IF;
 			END IF;
 		END $$;
@@ -190,6 +256,27 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
 		ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 1;
+		ALTER TABLE users ALTER COLUMN first_name SET DEFAULT '';
+		ALTER TABLE users ALTER COLUMN last_name SET DEFAULT '';
+		ALTER TABLE users ALTER COLUMN notification_options SET DEFAULT '{}';
+		ALTER TABLE users ALTER COLUMN active SET DEFAULT TRUE;
+		ALTER TABLE users ALTER COLUMN token_version SET DEFAULT 1;
+		ALTER TABLE users ALTER COLUMN created_at SET DEFAULT NOW();
+		ALTER TABLE users ALTER COLUMN updated_at SET DEFAULT NOW();
+		UPDATE users SET first_name = '' WHERE first_name IS NULL;
+		UPDATE users SET last_name = '' WHERE last_name IS NULL;
+		UPDATE users SET notification_options = '{}' WHERE notification_options IS NULL;
+		UPDATE users SET active = TRUE WHERE active IS NULL;
+		UPDATE users SET token_version = 1 WHERE token_version IS NULL;
+		UPDATE users SET created_at = NOW() WHERE created_at IS NULL;
+		UPDATE users SET updated_at = NOW() WHERE updated_at IS NULL;
+		ALTER TABLE users ALTER COLUMN first_name SET NOT NULL;
+		ALTER TABLE users ALTER COLUMN last_name SET NOT NULL;
+		ALTER TABLE users ALTER COLUMN notification_options SET NOT NULL;
+		ALTER TABLE users ALTER COLUMN active SET NOT NULL;
+		ALTER TABLE users ALTER COLUMN token_version SET NOT NULL;
+		ALTER TABLE users ALTER COLUMN created_at SET NOT NULL;
+		ALTER TABLE users ALTER COLUMN updated_at SET NOT NULL;
 
 		-- User-organisation membership
 		CREATE TABLE IF NOT EXISTS user_organisations (
@@ -197,6 +284,8 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			org_id  INTEGER NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
 			PRIMARY KEY (user_id, org_id)
 		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_user_organisations_user_org_unique
+			ON user_organisations(user_id, org_id);
 
 		-- Roles within an organisation for a user
 		CREATE TABLE IF NOT EXISTS user_organisation_roles (
@@ -205,6 +294,8 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
 			PRIMARY KEY (user_id, org_id, role_id)
 		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_user_organisation_roles_user_org_role_unique
+			ON user_organisation_roles(user_id, org_id, role_id);
 
 		-- Organisation role limits (max persons per role per org)
 		CREATE TABLE IF NOT EXISTS organisation_role_limits (
@@ -213,6 +304,8 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			maximum INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (org_id, role_id)
 		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_organisation_role_limits_org_role_unique
+			ON organisation_role_limits(org_id, role_id);
 
 		-- Migrate permissions.role from lowercase to canonical case, and add FK.
 		-- Wrapped in a check so it only runs once.
@@ -424,6 +517,15 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		ALTER TABLE org_api_keys ADD COLUMN IF NOT EXISTS key_hash TEXT;
 		ALTER TABLE org_api_keys ADD COLUMN IF NOT EXISTS key_prefix TEXT NOT NULL DEFAULT '';
 		ALTER TABLE org_api_keys ADD COLUMN IF NOT EXISTS key_last4 TEXT NOT NULL DEFAULT '';
+		ALTER TABLE org_api_keys ALTER COLUMN key_prefix SET DEFAULT '';
+		ALTER TABLE org_api_keys ALTER COLUMN key_last4 SET DEFAULT '';
+		ALTER TABLE org_api_keys ALTER COLUMN created_at SET DEFAULT NOW();
+		UPDATE org_api_keys SET key_prefix = '' WHERE key_prefix IS NULL;
+		UPDATE org_api_keys SET key_last4 = '' WHERE key_last4 IS NULL;
+		UPDATE org_api_keys SET created_at = NOW() WHERE created_at IS NULL;
+		ALTER TABLE org_api_keys ALTER COLUMN key_prefix SET NOT NULL;
+		ALTER TABLE org_api_keys ALTER COLUMN key_last4 SET NOT NULL;
+		ALTER TABLE org_api_keys ALTER COLUMN created_at SET NOT NULL;
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_org_api_keys_key_hash
 			ON org_api_keys(key_hash)
 			WHERE key_hash IS NOT NULL AND key_hash <> '';
@@ -441,6 +543,26 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE(org_name, name)
 		);
+		ALTER TABLE notification_profiles ALTER COLUMN description SET DEFAULT '';
+		ALTER TABLE notification_profiles ALTER COLUMN roles SET DEFAULT '[]';
+		ALTER TABLE notification_profiles ALTER COLUMN users SET DEFAULT '[]';
+		ALTER TABLE notification_profiles ALTER COLUMN ack_required SET DEFAULT FALSE;
+		ALTER TABLE notification_profiles ALTER COLUMN created_at SET DEFAULT NOW();
+		ALTER TABLE notification_profiles ALTER COLUMN updated_at SET DEFAULT NOW();
+		UPDATE notification_profiles SET description = '' WHERE description IS NULL;
+		UPDATE notification_profiles SET roles = '[]' WHERE roles IS NULL;
+		UPDATE notification_profiles SET users = '[]' WHERE users IS NULL;
+		UPDATE notification_profiles SET ack_required = FALSE WHERE ack_required IS NULL;
+		UPDATE notification_profiles SET created_at = NOW() WHERE created_at IS NULL;
+		UPDATE notification_profiles SET updated_at = NOW() WHERE updated_at IS NULL;
+		ALTER TABLE notification_profiles ALTER COLUMN description SET NOT NULL;
+		ALTER TABLE notification_profiles ALTER COLUMN roles SET NOT NULL;
+		ALTER TABLE notification_profiles ALTER COLUMN users SET NOT NULL;
+		ALTER TABLE notification_profiles ALTER COLUMN ack_required SET NOT NULL;
+		ALTER TABLE notification_profiles ALTER COLUMN created_at SET NOT NULL;
+		ALTER TABLE notification_profiles ALTER COLUMN updated_at SET NOT NULL;
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_profiles_org_name_unique
+			ON notification_profiles(org_name, name);
 
 		-- Seed predefined notification profiles
 		INSERT INTO notification_profiles (org_name, name, description, roles)
@@ -472,6 +594,21 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE(org_name, name)
 		);
+		ALTER TABLE pdf_templates ALTER COLUMN description SET DEFAULT '';
+		ALTER TABLE pdf_templates ALTER COLUMN template_json SET DEFAULT '{}';
+		ALTER TABLE pdf_templates ALTER COLUMN variables SET DEFAULT '[]';
+		ALTER TABLE pdf_templates ALTER COLUMN created_at SET DEFAULT NOW();
+		ALTER TABLE pdf_templates ALTER COLUMN updated_at SET DEFAULT NOW();
+		UPDATE pdf_templates SET description = '' WHERE description IS NULL;
+		UPDATE pdf_templates SET template_json = '{}' WHERE template_json IS NULL;
+		UPDATE pdf_templates SET variables = '[]' WHERE variables IS NULL;
+		UPDATE pdf_templates SET created_at = NOW() WHERE created_at IS NULL;
+		UPDATE pdf_templates SET updated_at = NOW() WHERE updated_at IS NULL;
+		ALTER TABLE pdf_templates ALTER COLUMN description SET NOT NULL;
+		ALTER TABLE pdf_templates ALTER COLUMN template_json SET NOT NULL;
+		ALTER TABLE pdf_templates ALTER COLUMN variables SET NOT NULL;
+		ALTER TABLE pdf_templates ALTER COLUMN created_at SET NOT NULL;
+		ALTER TABLE pdf_templates ALTER COLUMN updated_at SET NOT NULL;
 
 		CREATE TABLE IF NOT EXISTS tag_calcs (
 			id               SERIAL PRIMARY KEY,
@@ -486,6 +623,21 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE(org_name, name)
 		);
+		ALTER TABLE tag_calcs ALTER COLUMN description SET DEFAULT '';
+		ALTER TABLE tag_calcs ALTER COLUMN interval_seconds SET DEFAULT 60;
+		ALTER TABLE tag_calcs ALTER COLUMN enabled SET DEFAULT TRUE;
+		ALTER TABLE tag_calcs ALTER COLUMN created_at SET DEFAULT NOW();
+		ALTER TABLE tag_calcs ALTER COLUMN updated_at SET DEFAULT NOW();
+		UPDATE tag_calcs SET description = '' WHERE description IS NULL;
+		UPDATE tag_calcs SET interval_seconds = 60 WHERE interval_seconds IS NULL;
+		UPDATE tag_calcs SET enabled = TRUE WHERE enabled IS NULL;
+		UPDATE tag_calcs SET created_at = NOW() WHERE created_at IS NULL;
+		UPDATE tag_calcs SET updated_at = NOW() WHERE updated_at IS NULL;
+		ALTER TABLE tag_calcs ALTER COLUMN description SET NOT NULL;
+		ALTER TABLE tag_calcs ALTER COLUMN interval_seconds SET NOT NULL;
+		ALTER TABLE tag_calcs ALTER COLUMN enabled SET NOT NULL;
+		ALTER TABLE tag_calcs ALTER COLUMN created_at SET NOT NULL;
+		ALTER TABLE tag_calcs ALTER COLUMN updated_at SET NOT NULL;
 	`
 
 	if _, err := db.pool.Exec(ctx, migration); err != nil {
@@ -509,6 +661,8 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			name    TEXT NOT NULL,
 			UNIQUE (org_id, name)
 		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_devices_org_name_unique
+			ON metric_devices(org_id, name);
 
 		CREATE TABLE IF NOT EXISTS metric_definitions (
 			id        INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
@@ -516,6 +670,8 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			name      TEXT NOT NULL,
 			UNIQUE (device_id, name)
 		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_definitions_device_name_unique
+			ON metric_definitions(device_id, name);
 
 		CREATE TABLE IF NOT EXISTS device_metrics (
 			time      TIMESTAMPTZ NOT NULL,
@@ -536,7 +692,8 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 					WHERE hypertable_name = 'device_metrics'
 				) THEN
 					PERFORM create_hypertable('device_metrics', 'time',
-						chunk_time_interval => INTERVAL '7 days');
+						chunk_time_interval => INTERVAL '7 days',
+						migrate_data => TRUE);
 					ALTER TABLE device_metrics SET (
 						timescaledb.compress,
 						timescaledb.compress_segmentby = 'org_id, device_id, metric_id',
@@ -575,6 +732,29 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE(org_name, name)
 		);
+		ALTER TABLE scheduled_tasks ALTER COLUMN description SET DEFAULT '';
+		ALTER TABLE scheduled_tasks ALTER COLUMN task_config SET DEFAULT '{}';
+		ALTER TABLE scheduled_tasks ALTER COLUMN enabled SET DEFAULT TRUE;
+		ALTER TABLE scheduled_tasks ALTER COLUMN last_run_status SET DEFAULT '';
+		ALTER TABLE scheduled_tasks ALTER COLUMN last_run_message SET DEFAULT '';
+		ALTER TABLE scheduled_tasks ALTER COLUMN created_at SET DEFAULT NOW();
+		ALTER TABLE scheduled_tasks ALTER COLUMN updated_at SET DEFAULT NOW();
+		UPDATE scheduled_tasks SET description = '' WHERE description IS NULL;
+		UPDATE scheduled_tasks SET task_config = '{}' WHERE task_config IS NULL;
+		UPDATE scheduled_tasks SET enabled = TRUE WHERE enabled IS NULL;
+		UPDATE scheduled_tasks SET last_run_status = '' WHERE last_run_status IS NULL;
+		UPDATE scheduled_tasks SET last_run_message = '' WHERE last_run_message IS NULL;
+		UPDATE scheduled_tasks SET created_at = NOW() WHERE created_at IS NULL;
+		UPDATE scheduled_tasks SET updated_at = NOW() WHERE updated_at IS NULL;
+		ALTER TABLE scheduled_tasks ALTER COLUMN description SET NOT NULL;
+		ALTER TABLE scheduled_tasks ALTER COLUMN task_config SET NOT NULL;
+		ALTER TABLE scheduled_tasks ALTER COLUMN enabled SET NOT NULL;
+		ALTER TABLE scheduled_tasks ALTER COLUMN last_run_status SET NOT NULL;
+		ALTER TABLE scheduled_tasks ALTER COLUMN last_run_message SET NOT NULL;
+		ALTER TABLE scheduled_tasks ALTER COLUMN created_at SET NOT NULL;
+		ALTER TABLE scheduled_tasks ALTER COLUMN updated_at SET NOT NULL;
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_tasks_org_name_unique
+			ON scheduled_tasks(org_name, name);
 
 		CREATE TABLE IF NOT EXISTS schedule_run_log (
 			id           SERIAL PRIMARY KEY,
@@ -586,6 +766,15 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			message      TEXT NOT NULL DEFAULT '',
 			output_path  TEXT NOT NULL DEFAULT ''
 		);
+		ALTER TABLE schedule_run_log ALTER COLUMN status SET DEFAULT '';
+		ALTER TABLE schedule_run_log ALTER COLUMN message SET DEFAULT '';
+		ALTER TABLE schedule_run_log ALTER COLUMN output_path SET DEFAULT '';
+		UPDATE schedule_run_log SET status = '' WHERE status IS NULL;
+		UPDATE schedule_run_log SET message = '' WHERE message IS NULL;
+		UPDATE schedule_run_log SET output_path = '' WHERE output_path IS NULL;
+		ALTER TABLE schedule_run_log ALTER COLUMN status SET NOT NULL;
+		ALTER TABLE schedule_run_log ALTER COLUMN message SET NOT NULL;
+		ALTER TABLE schedule_run_log ALTER COLUMN output_path SET NOT NULL;
 	`
 
 	if _, err := db.pool.Exec(ctx, schedulerMigration); err != nil {

@@ -130,6 +130,8 @@ export class SchedulerWidget extends BaseComponent {
         .sw-table td { padding: 6px 10px; border-bottom: 1px solid color-mix(in srgb, var(--widget-border) 50%, transparent); vertical-align: middle; }
         .sw-table tr:hover td { background: color-mix(in srgb, var(--accent-color) 4%, transparent); }
         .sw-status { display: inline-flex; align-items: center; gap: 4px; }
+        .sw-status-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .sw-status-message { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.62rem; color: color-mix(in srgb, var(--content-text) 58%, transparent); }
         .sw-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
         .sw-dot-ok { background: var(--status-good-color); }
         .sw-dot-error { background: var(--status-bad-color); }
@@ -218,9 +220,12 @@ export class SchedulerWidget extends BaseComponent {
         <td>${TASK_TYPE_LABELS[t.taskType] ?? t.taskType}</td>
         <td>${describeCron(t.schedule)}</td>
         <td>
-          <span class="sw-status">
-            <span class="sw-dot ${statusDot}"></span>
-            ${t.lastRunStatus || '-'}
+          <span class="sw-status-cell">
+            <span class="sw-status">
+              <span class="sw-dot ${statusDot}"></span>
+              ${t.lastRunStatus || '-'}
+            </span>
+            ${t.lastRunMessage ? `<span class="sw-status-message" title="${_esc(t.lastRunMessage)}">${_esc(t.lastRunMessage)}</span>` : ''}
           </span>
         </td>
         <td>
@@ -643,15 +648,39 @@ export class SchedulerWidget extends BaseComponent {
     if (!this.canManage) return;
     this.state.runningId = id;
     this.rerender();
-    try {
-      await runScheduledTaskNow(id);
-      // Refresh task status and history
-      const tasks = await listScheduledTasks();
-      this.state.tasks = tasks;
+    let finished = false;
+    const refreshTask = async (): Promise<ScheduledTask | undefined> => {
+      this.state.tasks = await listScheduledTasks();
       if (this.state.expandedId === id) {
         this.state.history[id] = await getScheduleRunLog(id);
       }
+      this.rerender();
+      return this.state.tasks.find(t => t.id === id);
+    };
+    const refreshWhileRunning = async () => {
+      while (!finished && this.isConnected) {
+        await sleep(2000);
+        if (finished || !this.isConnected) return;
+        try {
+          await refreshTask();
+        } catch {
+          // The original run request remains authoritative; polling is best-effort progress UI.
+        }
+      }
+    };
+    const progressPoll = refreshWhileRunning();
+    try {
+      await runScheduledTaskNow(id);
+      finished = true;
+      await progressPoll;
+      let task = await refreshTask();
+      while (task?.lastRunStatus === 'running' && this.isConnected) {
+        await sleep(2000);
+        task = await refreshTask();
+      }
     } catch (e: any) {
+      finished = true;
+      await progressPoll;
       this.state.error = e?.message ?? 'Run failed';
     }
     this.state.runningId = null;
@@ -776,6 +805,10 @@ function parseCommandValue(raw: string): any {
   } catch {
     return text;
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function commandValueText(root: ParentNode): string {

@@ -33,6 +33,7 @@ type RunContext struct {
 	Task             sqldb.ScheduledTask
 	FiredAt          time.Time
 	AllowUnsafeTasks bool
+	Progress         func(string)
 }
 
 // Run dispatches to the appropriate executor based on task type.
@@ -212,7 +213,12 @@ func runBackup(ctx context.Context, rc RunContext) (string, error) {
 	}
 	defer f.Close()
 
-	if err := backups.Backup(ctx, rc.DB.BackupAdapter(), f); err != nil {
+	if err := backups.BackupWithProgress(ctx, rc.DB.BackupAdapter(), f, func(ev backups.ProgressEvent) {
+		if rc.Progress == nil || ev.Table == "" {
+			return
+		}
+		rc.Progress(fmt.Sprintf("Backup %s table %d/%d: %s", ev.Phase, ev.Index, ev.Total, ev.Table))
+	}); err != nil {
 		os.Remove(outPath)
 		return "", fmt.Errorf("backup failed: %w", err)
 	}

@@ -210,9 +210,73 @@ func (s *SQLiteAdapter) ExportSchema(ctx context.Context) (*Schema, error) {
 			return nil, err
 		}
 		rows.Close()
+		indexes, err := s.tableIndexes(ctx, tbl)
+		if err != nil {
+			return nil, err
+		}
+		t.Indexes = indexes
 		schema.Tables[tbl] = t
 	}
 	return schema, nil
+}
+
+func (s *SQLiteAdapter) tableIndexes(ctx context.Context, table string) ([]Index, error) {
+	quotedTable, err := quoteIdent(table)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.DB.QueryContext(ctx, fmt.Sprintf(`PRAGMA index_list(%s)`, quotedTable))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var indexes []Index
+	for rows.Next() {
+		var seq int
+		var name string
+		var unique int
+		var origin string
+		var partial int
+		if err := rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
+			return nil, err
+		}
+		if origin == "pk" || partial != 0 {
+			continue
+		}
+		columns, err := s.indexColumns(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		if len(columns) == 0 {
+			continue
+		}
+		indexes = append(indexes, Index{Columns: columns, Unique: unique != 0})
+	}
+	return indexes, rows.Err()
+}
+
+func (s *SQLiteAdapter) indexColumns(ctx context.Context, indexName string) ([]string, error) {
+	quotedIndex, err := quoteIdent(indexName)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.DB.QueryContext(ctx, fmt.Sprintf(`PRAGMA index_info(%s)`, quotedIndex))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var columns []string
+	for rows.Next() {
+		var seqno, cid int
+		var name string
+		if err := rows.Scan(&seqno, &cid, &name); err != nil {
+			return nil, err
+		}
+		columns = append(columns, name)
+	}
+	return columns, rows.Err()
 }
 
 func (s *SQLiteAdapter) ExportTable(ctx context.Context, table string, w io.Writer) error {
@@ -255,9 +319,39 @@ func (s *SQLiteAdapter) CreateTable(ctx context.Context, name string, table Tabl
 		}
 		cols = append(cols, fmt.Sprintf(`PRIMARY KEY (%s)`, strings.Join(quotedPK, ", ")))
 	}
-	_, err = s.DB.ExecContext(ctx,
-		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (%s)`, quotedTable, strings.Join(cols, ", ")))
-	return err
+	if _, err = s.DB.ExecContext(ctx,
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (%s)`, quotedTable, strings.Join(cols, ", ")),
+	); err != nil {
+		return err
+	}
+	for i, index := range table.Indexes {
+		if len(index.Columns) == 0 {
+			continue
+		}
+		quotedCols, err := quoteIdentList("index column", index.Columns)
+		if err != nil {
+			return err
+		}
+		unique := ""
+		if index.Unique {
+			unique = "UNIQUE "
+		}
+		indexName := fmt.Sprintf("idx_restore_%s_%d", name, i+1)
+		quotedIndex, err := quoteIdent(indexName)
+		if err != nil {
+			return err
+		}
+		if _, err := s.DB.ExecContext(ctx, fmt.Sprintf(
+			`CREATE %sINDEX IF NOT EXISTS %s ON %s (%s)`,
+			unique,
+			quotedIndex,
+			quotedTable,
+			strings.Join(quotedCols, ", "),
+		)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *SQLiteAdapter) FinalizeTable(_ context.Context, _ string, _ Table) error {

@@ -73,7 +73,7 @@ func (h *ScheduleHandlers) HandleCreate(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if t.Enabled {
+	if t.Enabled && h.Engine != nil {
 		if err := h.Engine.Reload(r.Context(), org, t.ID); err != nil {
 			// Non-fatal - task is saved, just log and continue.
 			_ = err
@@ -107,8 +107,10 @@ func (h *ScheduleHandlers) HandleUpdate(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := h.Engine.Reload(r.Context(), org, id); err != nil {
-		_ = err
+	if h.Engine != nil {
+		if err := h.Engine.Reload(r.Context(), org, id); err != nil {
+			_ = err
+		}
 	}
 	json.NewEncoder(w).Encode(t)
 }
@@ -124,19 +126,25 @@ func (h *ScheduleHandlers) HandleDelete(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.Engine.Remove(id)
+	if h.Engine != nil {
+		h.Engine.Remove(id)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *ScheduleHandlers) HandleRunNow(w http.ResponseWriter, r *http.Request) {
-	org := h.GetOrg(r)
-	id := chi.URLParam(r, "id")
-	outputPath, err := h.Engine.RunNow(r.Context(), org, id)
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+	if h.Engine == nil {
+		http.Error(w, "scheduler engine unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]any{"outputPath": outputPath})
+	org := h.GetOrg(r)
+	id := chi.URLParam(r, "id")
+	if err := h.Engine.StartNow(r.Context(), org, id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]any{"status": "started"})
 }
 
 func (h *ScheduleHandlers) HandleHistory(w http.ResponseWriter, r *http.Request) {

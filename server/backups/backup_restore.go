@@ -10,12 +10,29 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path"
 	"strings"
 )
 
+type ProgressEvent struct {
+	Phase string
+	Table string
+	Index int
+	Total int
+}
+
+type ProgressFunc func(ProgressEvent)
+
 func Backup(ctx context.Context, db Adapter, w io.Writer) error {
-	gz := gzip.NewWriter(w)
+	return BackupWithProgress(ctx, db, w, nil)
+}
+
+func BackupWithProgress(ctx context.Context, db Adapter, w io.Writer, progress ProgressFunc) error {
+	gz, err := gzip.NewWriterLevel(w, gzip.BestSpeed)
+	if err != nil {
+		return err
+	}
 	defer gz.Close()
 
 	tw := tar.NewWriter(gz)
@@ -35,22 +52,71 @@ func Backup(ctx context.Context, db Adapter, w io.Writer) error {
 		return err
 	}
 
+	total := 0
 	for _, table := range tables {
 		if skipBackupTableData(table) {
 			continue
 		}
+		total++
+	}
 
-		buf := &bytes.Buffer{}
+	index := 0
+	for _, table := range tables {
+		if skipBackupTableData(table) {
+			continue
+		}
+		index++
 
-		if err := db.ExportTable(ctx, table, buf); err != nil {
+		if progress != nil {
+			progress(ProgressEvent{Phase: "exporting", Table: table, Index: index, Total: total})
+		}
+
+		tmp, err := os.CreateTemp("", "xact-backup-table-*.csv")
+		if err != nil {
+			return err
+		}
+		tmpName := tmp.Name()
+		removeTemp := true
+		defer func() {
+			if removeTemp {
+				os.Remove(tmpName)
+			}
+		}()
+
+		if err := db.ExportTable(ctx, table, tmp); err != nil {
+			tmp.Close()
+			os.Remove(tmpName)
+			return err
+		}
+		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+			tmp.Close()
+			os.Remove(tmpName)
+			return err
+		}
+		info, err := tmp.Stat()
+		if err != nil {
+			tmp.Close()
+			os.Remove(tmpName)
 			return err
 		}
 
-		path := "tables/" + table + ".csv"
+		if progress != nil {
+			progress(ProgressEvent{Phase: "archiving", Table: table, Index: index, Total: total})
+		}
 
-		if err := writeFile(tw, path, buf.Bytes()); err != nil {
+		archivePath := "tables/" + table + ".csv"
+
+		if err := writeStream(tw, archivePath, tmp, info.Size()); err != nil {
+			tmp.Close()
+			os.Remove(tmpName)
 			return err
 		}
+		if err := tmp.Close(); err != nil {
+			os.Remove(tmpName)
+			return err
+		}
+		os.Remove(tmpName)
+		removeTemp = false
 	}
 
 	return nil
@@ -255,18 +321,22 @@ func writeJSON(tw *tar.Writer, name string, v any) error {
 }
 
 func writeFile(tw *tar.Writer, name string, data []byte) error {
+	return writeStream(tw, name, bytes.NewReader(data), int64(len(data)))
+}
+
+func writeStream(tw *tar.Writer, name string, r io.Reader, size int64) error {
 
 	hdr := &tar.Header{
 		Name: name,
 		Mode: 0600,
-		Size: int64(len(data)),
+		Size: size,
 	}
 
 	if err := tw.WriteHeader(hdr); err != nil {
 		return err
 	}
 
-	_, err := tw.Write(data)
+	_, err := io.Copy(tw, r)
 
 	return err
 }

@@ -78,6 +78,7 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 		)`,
 		`ALTER TABLE organisations ADD COLUMN logo TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE organisations ADD COLUMN favicon TEXT NOT NULL DEFAULT ''`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_organisations_name_unique ON organisations(name)`,
 		`INSERT OR IGNORE INTO organisations (name, display_name, active) VALUES ('default', '', 1)`,
 
 		`CREATE TABLE IF NOT EXISTS roles (
@@ -85,12 +86,24 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 			name        TEXT NOT NULL UNIQUE,
 			description TEXT NOT NULL DEFAULT ''
 		)`,
-		`INSERT OR IGNORE INTO roles (name, description) VALUES ('SystemAdmin', 'Has unrestricted access to all features and organisations')`,
-		`INSERT OR IGNORE INTO roles (name, description) VALUES ('Admin', 'Has administrative rights within an organisation')`,
-		`INSERT OR IGNORE INTO roles (name, description) VALUES ('Manager', 'Ops manager, KPI dashboards, reports')`,
-		`INSERT OR IGNORE INTO roles (name, description) VALUES ('Technician', 'System infrastructure status and maintenance information')`,
-		`INSERT OR IGNORE INTO roles (name, description) VALUES ('Operator', 'Operations information and control')`,
-		`INSERT OR IGNORE INTO roles (name, description) VALUES ('User', 'Readonly access to specified information')`,
+		`INSERT INTO roles (name, description)
+		 SELECT 'SystemAdmin', 'Has unrestricted access to all features and organisations'
+		 WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = 'SystemAdmin')`,
+		`INSERT INTO roles (name, description)
+		 SELECT 'Admin', 'Has administrative rights within an organisation'
+		 WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = 'Admin')`,
+		`INSERT INTO roles (name, description)
+		 SELECT 'Manager', 'Ops manager, KPI dashboards, reports'
+		 WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = 'Manager')`,
+		`INSERT INTO roles (name, description)
+		 SELECT 'Technician', 'System infrastructure status and maintenance information'
+		 WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = 'Technician')`,
+		`INSERT INTO roles (name, description)
+		 SELECT 'Operator', 'Operations information and control'
+		 WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = 'Operator')`,
+		`INSERT INTO roles (name, description)
+		 SELECT 'User', 'Readonly access to specified information'
+		 WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = 'User')`,
 
 		`CREATE TABLE IF NOT EXISTS users (
 			id                   INTEGER PRIMARY KEY,
@@ -107,6 +120,8 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 			updated_at           TEXT NOT NULL
 		)`,
 		`ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_login_name_unique ON users(login_name)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email)`,
 
 		`CREATE TABLE IF NOT EXISTS dashboards (
 			id          INTEGER PRIMARY KEY,
@@ -139,6 +154,7 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 			updated_at TEXT NOT NULL,
 			UNIQUE(org_id, role)
 		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_org_role_unique ON permissions(org_id, role)`,
 
 		`CREATE TABLE IF NOT EXISTS system_config (
 			id          INTEGER PRIMARY KEY,
@@ -150,6 +166,7 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 			updated_at  TEXT NOT NULL,
 			UNIQUE(org_id, config_name, version)
 		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_system_config_org_name_version_unique ON system_config(org_id, config_name, version)`,
 
 		`CREATE TABLE IF NOT EXISTS events (
 			id              INTEGER PRIMARY KEY,
@@ -181,6 +198,24 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 			role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
 			PRIMARY KEY (user_id, org_id, role_id)
 		)`,
+		`INSERT OR IGNORE INTO user_organisation_roles (user_id, org_id, role_id)
+		 SELECT uor.user_id, uor.org_id, MIN(canonical.id)
+		 FROM user_organisation_roles uor
+		 JOIN roles duplicate ON duplicate.id = uor.role_id
+		 JOIN roles canonical ON canonical.name = duplicate.name
+		 WHERE uor.role_id IN (
+			SELECT id FROM roles
+			WHERE id NOT IN (SELECT MIN(id) FROM roles GROUP BY name)
+		 )
+		 GROUP BY uor.user_id, uor.org_id, duplicate.name`,
+		`DELETE FROM user_organisation_roles
+		 WHERE role_id IN (
+			SELECT id FROM roles
+			WHERE id NOT IN (SELECT MIN(id) FROM roles GROUP BY name)
+		 )`,
+		`DELETE FROM roles
+		 WHERE id NOT IN (SELECT MIN(id) FROM roles GROUP BY name)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_roles_name_unique ON roles(name)`,
 
 		`CREATE TABLE IF NOT EXISTS organisation_role_limits (
 			org_id  INTEGER NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
@@ -202,6 +237,7 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 		`ALTER TABLE org_api_keys ADD COLUMN key_hash TEXT`,
 		`ALTER TABLE org_api_keys ADD COLUMN key_prefix TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE org_api_keys ADD COLUMN key_last4 TEXT NOT NULL DEFAULT ''`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_api_keys_key_unique ON org_api_keys(key)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_api_keys_key_hash ON org_api_keys(key_hash) WHERE key_hash IS NOT NULL AND key_hash <> ''`,
 
 		`CREATE TABLE IF NOT EXISTS notification_profiles (
@@ -216,6 +252,7 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 			updated_at   TEXT NOT NULL,
 			UNIQUE(org_name, name)
 		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_profiles_org_name_unique ON notification_profiles(org_name, name)`,
 
 		`CREATE TABLE IF NOT EXISTS pdf_templates (
 			id            TEXT PRIMARY KEY,
@@ -228,6 +265,7 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 			updated_at    TEXT NOT NULL,
 			UNIQUE(org_name, name)
 		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_pdf_templates_org_name_unique ON pdf_templates(org_name, name)`,
 
 		`CREATE TABLE IF NOT EXISTS tag_calcs (
 			id               INTEGER PRIMARY KEY,
@@ -242,6 +280,7 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 			updated_at       TEXT NOT NULL,
 			UNIQUE(org_name, name)
 		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tag_calcs_org_name_unique ON tag_calcs(org_name, name)`,
 
 		`CREATE TABLE IF NOT EXISTS metric_devices (
 			id     INTEGER PRIMARY KEY,
@@ -249,6 +288,7 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 			name   TEXT NOT NULL,
 			UNIQUE (org_id, name)
 		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_devices_org_name_unique ON metric_devices(org_id, name)`,
 
 		`CREATE TABLE IF NOT EXISTS metric_definitions (
 			id        INTEGER PRIMARY KEY,
@@ -256,6 +296,7 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 			name      TEXT NOT NULL,
 			UNIQUE (device_id, name)
 		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_definitions_device_name_unique ON metric_definitions(device_id, name)`,
 
 		`CREATE TABLE IF NOT EXISTS device_metrics (
 			time      TEXT NOT NULL,
@@ -282,6 +323,7 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 			updated_at       TEXT NOT NULL,
 			UNIQUE(org_name, name)
 		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_tasks_org_name_unique ON scheduled_tasks(org_name, name)`,
 
 		`CREATE TABLE IF NOT EXISTS schedule_run_log (
 			id           INTEGER PRIMARY KEY,
@@ -300,6 +342,11 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 	}
 
 	for _, stmt := range stmts {
+		announce := shouldLogSQLiteMigration(stmt)
+		if announce {
+			log.Printf("SQLite migration running: %s", sqliteMigrationPreview(stmt))
+		}
+		start := time.Now()
 		if _, err := db.db.ExecContext(ctx, stmt); err != nil {
 			if strings.Contains(stmt, "ADD COLUMN") && strings.Contains(err.Error(), "duplicate column") {
 				continue
@@ -309,6 +356,9 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 				preview = preview[:60] + "..."
 			}
 			return fmt.Errorf("migration statement failed (%s): %w", preview, err)
+		}
+		if announce {
+			log.Printf("SQLite migration finished in %s: %s", time.Since(start).Round(time.Millisecond), sqliteMigrationPreview(stmt))
 		}
 	}
 
@@ -344,6 +394,19 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func shouldLogSQLiteMigration(stmt string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(stmt))
+	return strings.HasPrefix(upper, "CREATE INDEX") || strings.HasPrefix(upper, "CREATE UNIQUE INDEX")
+}
+
+func sqliteMigrationPreview(stmt string) string {
+	preview := strings.Join(strings.Fields(stmt), " ")
+	if len(preview) > 120 {
+		return preview[:120] + "..."
+	}
+	return preview
 }
 
 func (db *SQLiteDB) renameLegacyDashboardTable(ctx context.Context) error {

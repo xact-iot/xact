@@ -185,14 +185,16 @@ Use the **Events Viewer** widget with a filter on `device = scheduler` to monito
 
 Backup archives are standard `.tar.gz` files containing a `schema.json` schema manifest and one CSV file per table. A pre-built restore tool is included in the server build at `server/bin/restore`. It reads the same `.env` file as the server and automatically selects the correct database driver.
 
-> **Warning:** Restore overwrites existing table data. **Stop the XACT server before restoring.**
+> **Warning:** Restore overwrites existing table data. 
+
+> **Stop the XACT server before restoring.**
 
 ### Running a restore
 
 From the `server/` directory:
 
 ```sh
-./bin/restore /var/xact/backups/backup-20260409-080000.tar.gz
+./bin/restore --confirm ./backups/backup-20260409-080000.tar.gz
 ```
 
 The tool reads `DATABASE_URL` (PostgreSQL) or `SQLITE_PATH` (SQLite) from `.env` - whichever is configured. Output:

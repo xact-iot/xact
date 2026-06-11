@@ -328,12 +328,18 @@ func TestScheduleHandlersCRUDRunNowAndHistory(t *testing.T) {
 		"name": "Noop Updated", "taskType": "shell", "schedule": "0 0 * * *", "taskConfig": map[string]any{"command": "true"}, "enabled": false,
 	}, http.StatusOK, nil)
 	var runResp map[string]any
-	doJSON(t, r, http.MethodPost, "/schedules/"+created.ID+"/run", nil, http.StatusOK, &runResp)
-	if _, ok := runResp["outputPath"]; !ok {
+	doJSON(t, r, http.MethodPost, "/schedules/"+created.ID+"/run", nil, http.StatusAccepted, &runResp)
+	if runResp["status"] != "started" {
 		t.Fatalf("run response = %#v", runResp)
 	}
 	var history []sqldb.ScheduleRunLog
-	doJSON(t, r, http.MethodGet, "/schedules/"+created.ID+"/history", nil, http.StatusOK, &history)
+	for i := 0; i < 20; i++ {
+		doJSON(t, r, http.MethodGet, "/schedules/"+created.ID+"/history", nil, http.StatusOK, &history)
+		if len(history) == 1 && history[0].Status == "ok" {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 	if len(history) != 1 || history[0].Status != "ok" {
 		t.Fatalf("history = %#v", history)
 	}
@@ -347,4 +353,28 @@ func TestScheduleHandlersCRUDRunNowAndHistory(t *testing.T) {
 	if tasks, err := db.ListScheduledTasks(ctx, "default"); err != nil || len(tasks) != 0 {
 		t.Fatalf("remaining tasks = %#v err=%v", tasks, err)
 	}
+}
+
+func TestScheduleHandlersSaveWithoutEngine(t *testing.T) {
+	db := newWebAPITestDB(t, "web-schedules-no-engine")
+	h := NewScheduleHandlers(db, nil, func(*http.Request) string { return "default" })
+	r := chi.NewRouter()
+	r.Post("/schedules", h.HandleCreate)
+	r.Put("/schedules/{id}", h.HandleUpdate)
+	r.Delete("/schedules/{id}", h.HandleDelete)
+	r.Post("/schedules/{id}/run", h.HandleRunNow)
+
+	var created sqldb.ScheduledTask
+	doJSON(t, r, http.MethodPost, "/schedules", map[string]any{
+		"name": "Daily Report", "taskType": "report", "schedule": "0 8 * * *", "taskConfig": map[string]any{"templateId": "daily"}, "enabled": true,
+	}, http.StatusCreated, &created)
+	if created.ID == "" {
+		t.Fatal("created schedule missing id")
+	}
+
+	doJSON(t, r, http.MethodPut, "/schedules/"+created.ID, map[string]any{
+		"name": "Daily Report Updated", "taskType": "report", "schedule": "30 8 * * *", "taskConfig": map[string]any{"templateId": "daily"}, "enabled": true,
+	}, http.StatusOK, nil)
+	doJSON(t, r, http.MethodPost, "/schedules/"+created.ID+"/run", nil, http.StatusServiceUnavailable, nil)
+	doJSON(t, r, http.MethodDelete, "/schedules/"+created.ID, nil, http.StatusNoContent, nil)
 }

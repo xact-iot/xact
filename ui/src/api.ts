@@ -1097,11 +1097,23 @@ export async function deleteScheduledTask(id: string): Promise<void> {
   if (!r.ok) throw new Error(`Failed to delete scheduled task: ${r.status}`);
 }
 
-export async function runScheduledTaskNow(id: string): Promise<{ outputPath?: string; error?: string }> {
+export async function runScheduledTaskNow(id: string): Promise<{ status?: string; outputPath?: string; error?: string }> {
   const r = await fetch(`${BASE_URL}/api/v1/schedules/${id}/run`, {
     method: 'POST', headers: getHeaders(),
   });
-  return r.json();
+  const body = await r.text().catch(() => '');
+  let data: { status?: string; outputPath?: string; error?: string } = {};
+  if (body.trim()) {
+    try {
+      data = JSON.parse(body);
+    } catch {
+      if (!r.ok) throw new Error(body.trim() || `Failed to run scheduled task: ${r.status}`);
+      throw new Error(`Failed to parse run response: ${body.trim()}`);
+    }
+  }
+  if (!r.ok) throw new Error(data.error || body.trim() || `Failed to run scheduled task: ${r.status}`);
+  if (data.error) throw new Error(data.error);
+  return data;
 }
 
 export async function getScheduleRunLog(id: string): Promise<ScheduleRunLog[]> {
