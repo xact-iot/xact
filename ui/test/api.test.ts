@@ -148,6 +148,11 @@ describe('REST API wrappers', () => {
   it('covers dashboard and permission wrappers', async () => {
     const fetchMock = stubFetch(mockResponse([{ id: 1, name: 'Main' }]));
     await expect(api.listDashboards()).resolves.toEqual([{ id: 1, name: 'Main' }]);
+
+    fetchMock.mockResolvedValueOnce(mockResponse({ error: 'unauthorized' }, { ok: false, status: 401 }));
+    await expect(api.listDashboards()).rejects.toMatchObject({ name: 'ApiError', status: 401 });
+
+    fetchMock.mockResolvedValueOnce(mockResponse([{ id: 1, name: 'Main' }]));
     await expect(api.getDashboard(1)).resolves.toEqual([{ id: 1, name: 'Main' }]);
 
     fetchMock.mockResolvedValueOnce(mockResponse({ id: 2, name: 'New' }));

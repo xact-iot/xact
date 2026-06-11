@@ -45,7 +45,7 @@ import { getMirrorStore } from './store/store';
 import { getUiStore } from './store/ui-store';
 
 // Import API wrapper
-import { setAuthHeadersProvider, listDashboards, getDashboard, createDashboard, updateDashboard, deleteDashboard, fetchHealth, fetchNATSConfig } from './api';
+import { ApiError, setAuthHeadersProvider, listDashboards, getDashboard, createDashboard, updateDashboard, deleteDashboard, fetchHealth, fetchNATSConfig } from './api';
 import type { DashboardMeta } from './api';
 
 // Import permissions
@@ -289,6 +289,49 @@ function reconcileDashboardServerIds(savedConfigs: DashboardConfig[], targetConf
   };
   collect(savedConfigs);
   apply(targetConfigs);
+}
+
+async function loadDashboardMenuFromServer(
+  editor: import('./dashboards/dashboard-config-editor').DashboardConfigEditor | null,
+  sidebar: import('./components/app-sidebar').AppSidebar | null,
+): Promise<void> {
+  let serverDashboards = await listDashboards();
+  if (serverDashboards.length > 0) {
+    if (await backfillStarterDashboards(serverDashboards)) {
+      serverDashboards = await listDashboards();
+    }
+    const configs = dashboardMetaToConfigs(serverDashboards);
+    editor?.setConfigs(configs);
+    sidebar?.setMenuItems(configsToMenuItems(configs));
+    return;
+  }
+
+  // No dashboards on server yet - persist editor defaults with their starter widgets.
+  if (editor) {
+    const configs = editor.getConfigs();
+    await saveDashboardConfigs(configs);
+    sidebar?.setMenuItems(configsToMenuItems(configs));
+  }
+}
+
+async function recoverFromStaleSession(
+  app: HTMLElement,
+  header: import('./components/app-header').AppHeader | null,
+): Promise<void> {
+  logout();
+  header?.clearUser();
+  app.querySelector('app-header')?.clearUser();
+  await waitForLogin();
+
+  const authedUser = getCurrentUser();
+  if (authedUser?.tenant_id) {
+    getUiStore().set('orgName', authedUser.tenant_id);
+  }
+  await loadPermissions();
+}
+
+function isAuthApiError(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 401 || err.status === 403);
 }
 
 // TypeScript declarations for custom elements
@@ -654,26 +697,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Load dashboard configuration from server
   editor = content?.querySelector('dashboard-config-editor') as import('./dashboards/dashboard-config-editor').DashboardConfigEditor | null;
   try {
-    let serverDashboards = await listDashboards();
-    if (serverDashboards.length > 0) {
-      if (await backfillStarterDashboards(serverDashboards)) {
-        serverDashboards = await listDashboards();
-      }
-      const configs = dashboardMetaToConfigs(serverDashboards);
-      editor?.setConfigs(configs);
-      sidebar?.setMenuItems(configsToMenuItems(configs));
-    } else {
-      // No dashboards on server yet - persist editor defaults with their starter widgets.
-      if (editor) {
-        const configs = editor.getConfigs();
-        await saveDashboardConfigs(configs);
-        sidebar?.setMenuItems(configsToMenuItems(configs));
-      }
-    }
+    await loadDashboardMenuFromServer(editor, sidebar);
   } catch (err) {
-    console.error('XACT: Failed to load dashboards from server, using defaults:', err);
-    if (editor) {
-      sidebar?.setMenuItems(configsToMenuItems(editor.getConfigs()));
+    if (isAuthApiError(err)) {
+      console.warn('XACT: Stored session was rejected by the server; login required.');
+      await recoverFromStaleSession(app, header);
+      await loadDashboardMenuFromServer(editor, sidebar);
+    } else {
+      console.error('XACT: Failed to load dashboards from server, using defaults:', err);
+      if (editor) {
+        sidebar?.setMenuItems(configsToMenuItems(editor.getConfigs()));
+      }
     }
   }
 

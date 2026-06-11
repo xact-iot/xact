@@ -2,7 +2,7 @@
 
 ![XACT Features](screenshots/xact-features.png)
 
-XACT is a modern industrial IoT platform designed for real-time monitoring, data acquisition, and process automation. XACT handles everything from hobby projects to lab deployments to enterprise-grade clustered installations.
+XACT is a industrial IoT platform designed for real-time monitoring, data acquisition, and process automation. XACT handles everything from hobby projects to lab deployments to installations with hundreds or even thousands of devices..
 
 ## Table of Contents
 

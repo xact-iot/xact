@@ -6,6 +6,16 @@ import { getCurrentUser } from './auth';
 
 const BASE_URL = '/xact'
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 // --- Health / Server Info ---
 
 export interface HealthInfo {
@@ -335,7 +345,7 @@ export async function listDashboards(): Promise<DashboardMeta[]> {
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to list dashboards: ${response.status}`);
+    throw new ApiError(`Failed to list dashboards: ${response.status}`, response.status);
   }
 
   return response.json();
