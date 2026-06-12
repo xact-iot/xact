@@ -28,7 +28,7 @@ const (
 	backupTemplateNode    = "AirQualityBackup"
 	standardTemplateName  = templatesNode + "." + standardTemplateNode
 	backupTemplateName    = templatesNode + "." + backupTemplateNode
-	defaultDeviceCount    = 500
+	defaultDeviceCount    = 25
 	defaultUpdatePeriod   = 5 * time.Minute
 	defaultStartupSpread  = 0
 	defaultTemplateWait   = 3 * time.Second
@@ -81,8 +81,7 @@ type intersectionAnchor struct {
 }
 
 // These anchors are major Los Angeles and Long Beach road junctions. The
-// generated devices apply small deterministic offsets around them to create a
-// larger street-corner fleet across the basin and port corridor.
+// generated fleet creates at most one device at each intersection.
 var laLongBeachIntersections = []intersectionAnchor{
 	{Name: "US-101 and Alameda Street", Lat: 34.0566, Lon: -118.2351},
 	{Name: "I-10 and I-110 Interchange", Lat: 34.0398, Lon: -118.2675},
@@ -135,8 +134,9 @@ func main() {
 		log.Fatalf("setup XACT templates: %v", err)
 	}
 
+	standardCount, backupCount := countDeviceVariations(devices)
 	log.Printf("AirQuality: provisioning %d %s air-quality devices under %s (%d %s, %d %s)",
-		len(devices), cityName, airQualityDeviceType, cfg.devices/2, variationStandard, cfg.devices/2, variationBackup)
+		len(devices), cityName, airQualityDeviceType, standardCount, variationStandard, backupCount, variationBackup)
 	if err := publishInitialFleet(ctx, cfg, publisher, devices); err != nil {
 		log.Fatalf("initial fleet publish: %v", err)
 	}
@@ -167,7 +167,7 @@ func parseFlags() config {
 
 	flag.StringVar(&cfg.tenant, "tenant", cfg.tenant, "XACT organisation/tenant")
 	flag.StringVar(&cfg.zone, "zone", cfg.zone, "XACT zone used for the simulated city")
-	flag.IntVar(&cfg.devices, "devices", cfg.devices, "number of simulated devices; must be even for a 50/50 split")
+	flag.IntVar(&cfg.devices, "devices", cfg.devices, "number of simulated devices; capped at one per intersection")
 	flag.DurationVar(&cfg.updatePeriod, "period", cfg.updatePeriod, "target update period for each device")
 	flag.DurationVar(&cfg.startupSpread, "startup-spread", cfg.startupSpread, "optional duration over which initial device messages are spread; 0 publishes as fast as MQTT acknowledges")
 	flag.DurationVar(&cfg.templateWait, "template-wait", cfg.templateWait, "time to let MQTT-provisioned templates settle before devices are created")
@@ -189,8 +189,8 @@ func (cfg config) validate() error {
 	if cfg.devices <= 0 {
 		return errors.New("devices must be > 0")
 	}
-	if cfg.devices%2 != 0 {
-		return errors.New("devices must be even so the two variations are split 50/50")
+	if cfg.devices > len(laLongBeachIntersections) {
+		return fmt.Errorf("devices must be <= %d so each intersection has at most one device", len(laLongBeachIntersections))
 	}
 	if cfg.updatePeriod < time.Minute {
 		return errors.New("period must be at least 1 minute for this low-throughput simulation")
@@ -311,7 +311,6 @@ func numericTag(value float64, description, units string, deadband float64, lim 
 		"value":       value,
 		"description": description,
 		"units":       units,
-		"persist":     true,
 		"publish":     true,
 	}
 	if deadband > 0 {
@@ -347,20 +346,18 @@ func numericTag(value float64, description, units string, deadband float64, lim 
 	return tag
 }
 
-func textTag(value, description string, persist bool) map[string]any {
+func textTag(value, description string, _ bool) map[string]any {
 	return map[string]any{
 		"value":       value,
 		"description": description,
-		"persist":     persist,
 		"publish":     true,
 	}
 }
 
-func boolTag(value bool, description string, persist bool) map[string]any {
+func boolTag(value bool, description string, _ bool) map[string]any {
 	return map[string]any{
 		"value":       value,
 		"description": description,
-		"persist":     persist,
 		"publish":     true,
 	}
 }
@@ -369,43 +366,54 @@ func buildDevices(count int) ([]*device, error) {
 	if count <= 0 {
 		return nil, errors.New("device count must be positive")
 	}
-	if count%2 != 0 {
-		return nil, errors.New("device count must be even")
+	if count > len(laLongBeachIntersections) {
+		return nil, fmt.Errorf("device count must be <= %d", len(laLongBeachIntersections))
 	}
 
 	devices := make([]*device, 0, count)
-	half := count / 2
+	standardIndex := 0
+	backupIndex := 0
 	for i := 0; i < count; i++ {
 		variation := variationStandard
 		prefix := "AQ-S"
-		variationIndex := i + 1
-		if i >= half {
+		variationIndex := standardIndex + 1
+		if i%2 == 1 {
 			variation = variationBackup
 			prefix = "AQ-B"
-			variationIndex = i - half + 1
+			variationIndex = backupIndex + 1
 		}
 
-		anchor := laLongBeachIntersections[i%len(laLongBeachIntersections)]
-		lat, lon := offsetCoordinate(anchor, i/len(laLongBeachIntersections))
+		anchor := laLongBeachIntersections[i]
 		seed := hash64(fmt.Sprintf("%s-%d-%s", prefix, variationIndex, anchor.Name))
 		devices = append(devices, &device{
 			Name:           fmt.Sprintf("%s-%04d", prefix, variationIndex),
 			Type:           airQualityDeviceType,
 			Variation:      variation,
 			Intersection:   anchor.Name,
-			Lat:            lat,
-			Lon:            lon,
+			Lat:            anchor.Lat,
+			Lon:            anchor.Lon,
 			Seed:           seed,
 			BatteryPercent: 70 + unitNoise(seed, 0, 91)*28,
 		})
+		if variation == variationBackup {
+			backupIndex++
+		} else {
+			standardIndex++
+		}
 	}
 	return devices, nil
 }
 
-func offsetCoordinate(anchor intersectionAnchor, cluster int) (float64, float64) {
-	row := float64(cluster%5 - 2)
-	col := float64((cluster/5)%5 - 2)
-	return round(anchor.Lat+row*0.00027, 6), round(anchor.Lon+col*0.00031, 6)
+func countDeviceVariations(devices []*device) (standard, backup int) {
+	for _, d := range devices {
+		switch d.Variation {
+		case variationStandard:
+			standard++
+		case variationBackup:
+			backup++
+		}
+	}
+	return standard, backup
 }
 
 func publishInitialFleet(ctx context.Context, cfg config, publisher *mqttPublisher, devices []*device) error {

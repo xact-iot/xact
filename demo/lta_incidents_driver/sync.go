@@ -75,9 +75,13 @@ func (d *Driver) PollOnce(ctx context.Context) error {
 	seen := make(map[string]TrafficIncident, len(incidents))
 	for _, incident := range incidents {
 		key := incident.CoordinateKey()
-		seen[key] = incident
 		deviceName := incident.DeviceName()
+		seen[key] = incident
+		seen[deviceName] = incident
 		_, alreadyExists := existing[key]
+		if !alreadyExists {
+			_, alreadyExists = existing[deviceName]
+		}
 
 		if err := d.sink.IngestIncident(d.tenant, d.zone, incident); err != nil {
 			return fmt.Errorf("ingest incident %s: %w", key, err)

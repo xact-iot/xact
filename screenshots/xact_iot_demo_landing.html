@@ -33,7 +33,9 @@
     .pill{border:1px solid var(--cyan); border-radius:999px; padding:10px 16px; color:var(--cyan); background:#00182699}
     .hero{display:grid; grid-template-columns:1.1fr .9fr; gap:28px; align-items:center; padding:32px 0}
     .copy h2{font-size:clamp(40px,6vw,72px); line-height:1; margin:0 0 18px}
+    .copy h3{font-size:21px;}
     .copy p{font-size:21px; color:var(--muted); max-width:680px; line-height:1.45}
+    .copy ul{font-size:21px; color:var(--muted); line-height:1.45}
     .cta{display:flex; gap:14px; flex-wrap:wrap; margin-top:28px}
     .btn{padding:15px 22px; border-radius:12px; text-decoration:none; font-weight:800}
     .primary{background:linear-gradient(135deg,var(--cyan),var(--violet)); color:#00101f}
@@ -50,7 +52,7 @@
       content:counter(s); width:44px; height:44px; border-radius:12px; display:grid; place-items:center;
       background:#06294b; border:1px solid var(--cyan); color:var(--cyan); font-weight:900;
     }
-    code{background:#001826; border:1px solid #244c69; padding:3px 7px; border-radius:6px; color:#7ff3ff}
+    code{font-size:18px; background:#001826; border:1px solid #244c69; padding:3px 7px; border-radius:6px; color:#7ff3ff}
     .features{padding:24px 0 46px}
     .section-title{font-size:22px; letter-spacing:2px; color:var(--cyan); margin-bottom:18px}
     .grid{display:grid; grid-template-columns:repeat(3,1fr); gap:16px}
@@ -82,10 +84,13 @@
           Welcome to the XACT IoT Server demo site. Explore
           live dashboards, maps, alerts, reports, device data processing and plugin-driven extensibility.
         </p>
-        <div class="cta">
-          <a class="btn primary" href="#login">View login instructions</a>
-          <a class="btn secondary" href="#features">Explore features</a>
-        </div>
+        <h3>Data Sources</h3>
+        <ul>
+          <li>ISS real time telemetry</li>
+          <li>Singapore real time traffic information</li>
+          <li>Simulated municipal water reticulation system</li>
+          <li>Simulated air quality monitoring system</li>
+        </ul>
       </section>
 
       <aside class="login-card" id="login">
@@ -95,7 +100,7 @@
           <li><div>Enter the demo user credentials. Username <code>demo</code> and password <code>demo</code>.</div></li>
           <li><div>The demo user can view all dashboards and settings, but cannot edit or change anything.</div></li>
           <li><div>Select the dashboards on the left.</div></li>
-          <li><div>Hover over icons on the maps to see more detail regarding the device under the pointer.</div></li>
+          <li><div>Hover over icons on the maps to see more detail regarding the device under the pointer. Zoom in to switch from icon to device view.</div></li>
         </ol>
       </aside>
     </main>

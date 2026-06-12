@@ -578,6 +578,43 @@ describe('area-map-widget coordinate loading', () => {
     expect(widget.map.panes['xact-device-layer-lower'].style.zIndex).toBe('890');
   });
 
+  it('raises a hovered marker layer above other device layers while showing hover widgets', async () => {
+    mockStore.getNodeValue.mockImplementation((path: string) => {
+      if (path.endsWith('.meta.lat')) return 33.7701;
+      if (path.endsWith('.meta.lon')) return -118.1937;
+      return undefined;
+    });
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock();
+    const topLayer = { ...layer, id: 'top' };
+    const lowerLayer = {
+      ...layer,
+      id: 'lower',
+      zoomWidgetType: 'test-map-child',
+      zoomWidgetConfig: { tagPrefix: '*' },
+      zoomThreshold: 13,
+    };
+    widget.config = {
+      ...widget.config,
+      layers: [topLayer, lowerLayer],
+    };
+    widget.ensureDeviceLayerPanes();
+
+    await widget.addDevice(lowerLayer, 'default.LA_LongBeach.AirQuality.AQ-B-0149');
+    const marker = widget.devices.get('default.LA_LongBeach.AirQuality.AQ-B-0149').marker;
+
+    marker.handlers.mouseover();
+
+    expect(widget.map.panes['xact-device-layer-lower'].style.zIndex).toBe('950');
+    expect(widget.map.panes['xact-device-layer-top'].style.zIndex).toBe('900');
+    expect(widget.devices.get('default.LA_LongBeach.AirQuality.AQ-B-0149').hoverWidgetEl).toBeInstanceOf(HTMLElement);
+
+    marker.handlers.mouseout();
+
+    expect(widget.map.panes['xact-device-layer-top'].style.zIndex).toBe('900');
+    expect(widget.map.panes['xact-device-layer-lower'].style.zIndex).toBe('890');
+  });
+
   it('refreshes layers by clearing existing devices/plugins/subscriptions and skipping disabled layers', async () => {
     const widget = document.createElement('area-map-widget') as any;
     const deviceUnsub = vi.fn();

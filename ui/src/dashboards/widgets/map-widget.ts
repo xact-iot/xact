@@ -221,6 +221,9 @@ const TOMTOM_FLOW_STYLES = ['relative0', 'relative0-dark', 'absolute', 'relative
 const TOMTOM_INCIDENT_STYLES = ['s0', 's0-dark', 's1', 's2', 's3', 'night'];
 const KNOWN_ICON_PREFIXES = new Set(ICON_SETS.map(set => set.prefix));
 const MAP_CONFIG_OVERLAY_Z_INDEX = 19000;
+const DEVICE_LAYER_TOP_Z_INDEX = 900;
+const DEVICE_LAYER_STEP_Z_INDEX = 10;
+const DEVICE_LAYER_HOVER_Z_INDEX = 950;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -385,6 +388,7 @@ export class AreaMapWidget extends BaseComponent {
   // Search
   private searchQuery = '';
   private selectedDevicePath: string | null = null;
+  private hoverRaisedLayerId: string | null = null;
 
   // Legend collapsed state
   private legendCollapsed = false;
@@ -765,14 +769,28 @@ export class AreaMapWidget extends BaseComponent {
       }
     });
 
-    const topZ = 900;
     this.config.layers.forEach((layer, index) => {
       const paneName = this.getLayerPaneName(layer);
       if (!this.map.getPane(paneName)) {
         this.map.createPane(paneName);
       }
       const pane = this.map.getPane(paneName);
-      if (pane) pane.style.zIndex = String(topZ - index * 10);
+      if (pane) pane.style.zIndex = String(this.getLayerPaneZIndex(layer, index));
+    });
+  }
+
+  private getLayerPaneZIndex(layer: LayerConfig, index = this.config.layers.findIndex(l => l.id === layer.id)): number {
+    if (this.hoverRaisedLayerId === layer.id) return DEVICE_LAYER_HOVER_Z_INDEX;
+    const layerIndex = index >= 0 ? index : 0;
+    return DEVICE_LAYER_TOP_Z_INDEX - layerIndex * DEVICE_LAYER_STEP_Z_INDEX;
+  }
+
+  private setHoverRaisedLayer(layer: LayerConfig, raised: boolean): void {
+    if (!this.map) return;
+    this.hoverRaisedLayerId = raised ? layer.id : (this.hoverRaisedLayerId === layer.id ? null : this.hoverRaisedLayerId);
+    this.config.layers.forEach((candidate, index) => {
+      const pane = this.map.getPane(this.getLayerPaneName(candidate));
+      if (pane) pane.style.zIndex = String(this.getLayerPaneZIndex(candidate, index));
     });
   }
 
@@ -966,7 +984,11 @@ export class AreaMapWidget extends BaseComponent {
     const marker = L.marker(position, { icon, pane: this.getLayerPaneName(layer) });
     marker.addTo(this.map);
     marker.on('click', () => this.onDeviceClick(devicePath));
-    marker.on('mouseover', () => this.mountHoverWidget(devicePath));
+    marker.on('mouseover', () => {
+      this.setHoverRaisedLayer(layer, true);
+      this.mountHoverWidget(devicePath);
+    });
+    marker.on('mouseout', () => this.setHoverRaisedLayer(layer, false));
 
     const unsubs: Array<() => void> = [];
 

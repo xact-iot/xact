@@ -6,23 +6,33 @@ import (
 )
 
 func TestBuildDevicesShareDeviceTypeWithVariationSplit(t *testing.T) {
-	devices, err := buildDevices(500)
+	devices, err := buildDevices(defaultDeviceCount)
 	if err != nil {
 		t.Fatalf("buildDevices: %v", err)
 	}
-	if len(devices) != 500 {
-		t.Fatalf("len(devices) = %d, want 500", len(devices))
+	if len(devices) != len(laLongBeachIntersections) {
+		t.Fatalf("len(devices) = %d, want %d", len(devices), len(laLongBeachIntersections))
 	}
 
 	names := map[string]bool{}
+	intersections := map[string]bool{}
 	var standard, backup int
-	for _, d := range devices {
+	for i, d := range devices {
 		if names[d.Name] {
 			t.Fatalf("duplicate device name %s", d.Name)
 		}
 		names[d.Name] = true
+		if intersections[d.Intersection] {
+			t.Fatalf("duplicate intersection %s", d.Intersection)
+		}
+		intersections[d.Intersection] = true
 		if d.Lat == 0 || d.Lon == 0 || d.Intersection == "" {
 			t.Fatalf("device missing location: %+v", d)
+		}
+		anchor := laLongBeachIntersections[i]
+		if d.Intersection != anchor.Name || d.Lat != anchor.Lat || d.Lon != anchor.Lon {
+			t.Fatalf("device location = %s %.6f %.6f, want %s %.6f %.6f",
+				d.Intersection, d.Lat, d.Lon, anchor.Name, anchor.Lat, anchor.Lon)
 		}
 		if d.Type != airQualityDeviceType {
 			t.Fatalf("device type = %s, want %s", d.Type, airQualityDeviceType)
@@ -36,8 +46,8 @@ func TestBuildDevicesShareDeviceTypeWithVariationSplit(t *testing.T) {
 			t.Fatalf("unexpected variation %q", d.Variation)
 		}
 	}
-	if standard != 250 || backup != 250 {
-		t.Fatalf("split standard=%d backup=%d, want 250/250", standard, backup)
+	if standard != 13 || backup != 12 {
+		t.Fatalf("split standard=%d backup=%d, want 13/12", standard, backup)
 	}
 }
 
@@ -70,6 +80,28 @@ func TestTemplatePayloadBatterySuperset(t *testing.T) {
 	}
 	if _, ok := pm25["limits"].(map[string]any); !ok {
 		t.Fatal("pm25 limits missing")
+	}
+}
+
+func TestTemplatePayloadDoesNotProvisionPersistBlocks(t *testing.T) {
+	for name, template := range map[string]payload{
+		"standard": buildTemplatePayload(false),
+		"backup":   buildTemplatePayload(true),
+	} {
+		assertNoPersistKey(t, name, template)
+	}
+}
+
+func assertNoPersistKey(t *testing.T, path string, value any) {
+	t.Helper()
+	switch v := value.(type) {
+	case map[string]any:
+		if _, ok := v["persist"]; ok {
+			t.Fatalf("%s contains persist key", path)
+		}
+		for key, child := range v {
+			assertNoPersistKey(t, path+"."+key, child)
+		}
 	}
 }
 
@@ -118,8 +150,8 @@ func TestTelemetryPayloadBatteryGroupOnlyForBackup(t *testing.T) {
 	}
 }
 
-func TestBuildDevicesRejectsOddSplit(t *testing.T) {
-	if _, err := buildDevices(501); err == nil {
-		t.Fatal("buildDevices accepted an odd count")
+func TestBuildDevicesRejectsMoreThanOneDevicePerIntersection(t *testing.T) {
+	if _, err := buildDevices(len(laLongBeachIntersections) + 1); err == nil {
+		t.Fatal("buildDevices accepted more devices than intersections")
 	}
 }

@@ -100,6 +100,35 @@ func TestPollOnceCreatesUpdatesAndRemovesByCoordinate(t *testing.T) {
 	}
 }
 
+func TestPollOnceMatchesExistingIncidentByDeviceNameFallback(t *testing.T) {
+	active := TrafficIncident{
+		Type:      "Accident",
+		Latitude:  1.30398068448214,
+		Longitude: 103.919182834377,
+		Message:   "Accident on expressway",
+	}
+	sink := &fakeSink{
+		existing: map[string]string{
+			active.DeviceName(): active.DeviceName(),
+		},
+		resolved: map[string]TrafficIncident{
+			active.DeviceName(): active,
+		},
+	}
+
+	driver := NewDriver(DefaultTenant, DefaultZone, fakeSource{incidents: []TrafficIncident{active}}, sink)
+	if err := driver.PollOnce(context.Background()); err != nil {
+		t.Fatalf("PollOnce() error = %v", err)
+	}
+
+	if len(sink.deletes) != 0 {
+		t.Fatalf("deletes = %#v, want none for active fallback-matched incident", sink.deletes)
+	}
+	if len(sink.events) != 0 {
+		t.Fatalf("events = %#v, want no create/resolve events for existing active incident", sink.events)
+	}
+}
+
 func TestPollOnceContinuesInIngestOnlyModeWhenLoginUnauthorized(t *testing.T) {
 	active := TrafficIncident{
 		Type:      "Accident",
@@ -151,6 +180,36 @@ func TestMapExistingIncidentsUsesMetaLatLon(t *testing.T) {
 	got := mapExistingIncidents(node)
 	want := map[string]string{
 		coordinateKey(1.30398068448214, 103.919182834377): "INC_EXISTING",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("mapExistingIncidents() = %#v, want %#v", got, want)
+	}
+}
+
+func TestMapExistingIncidentsFallsBackToGeneratedDeviceName(t *testing.T) {
+	node := nodeResponse{Children: []childInfo{
+		{
+			Name: "INC_STALE",
+			Type: "node",
+			Children: []childInfo{
+				{
+					Name: "meta",
+					Type: "node",
+					Children: []childInfo{
+						{Name: "lat", Type: "leaf", Value: "unknown"},
+					},
+				},
+			},
+		},
+		{
+			Name: "MANUAL_NODE",
+			Type: "node",
+		},
+	}}
+
+	got := mapExistingIncidents(node)
+	want := map[string]string{
+		"INC_STALE": "INC_STALE",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("mapExistingIncidents() = %#v, want %#v", got, want)

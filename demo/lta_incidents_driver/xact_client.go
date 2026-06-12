@@ -396,21 +396,34 @@ func mapExistingIncidents(node nodeResponse) map[string]string {
 		}
 		meta, ok := findChild(device.Children, "meta")
 		if !ok {
+			if isIncidentDeviceName(device.Name) {
+				result[device.Name] = device.Name
+			}
 			continue
 		}
 		latChild, hasLat := findChild(meta.Children, "lat")
 		lonChild, hasLon := findChild(meta.Children, "lon")
 		if !hasLat || !hasLon {
+			if isIncidentDeviceName(device.Name) {
+				result[device.Name] = device.Name
+			}
 			continue
 		}
 		lat, latOK := numberValue(latChild.Value)
 		lon, lonOK := numberValue(lonChild.Value)
 		if !latOK || !lonOK {
+			if isIncidentDeviceName(device.Name) {
+				result[device.Name] = device.Name
+			}
 			continue
 		}
 		result[coordinateKey(lat, lon)] = device.Name
 	}
 	return result
+}
+
+func isIncidentDeviceName(name string) bool {
+	return strings.HasPrefix(name, "INC_")
 }
 
 func findChild(children []childInfo, name string) (childInfo, bool) {
