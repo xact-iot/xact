@@ -23,9 +23,11 @@ It is not practical for the core XACT code to embed every possible protocol used
 The stand alone option can be written in your language of choice.
 
 The demo section in the repo has examples that show:
+  - An example Python3 driver for sending data using the HTTP REST API.
   - LTA VMS and traffic images drivers fetch data using HTTP REST and publish this to XACT with MQTT.
   - Water driver simulates a small town water reticulation system and publishes to XACT with the REST API.
   - ISS driver fetches data with a proprietary protocol and publishes to XACT with NATS.
+
 
 ---
 
