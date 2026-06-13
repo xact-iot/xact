@@ -1,6 +1,6 @@
 # XACT Screenshots
 
-Return to the project's README [View readme](..)
+Return to the project's README [View readme](https://github.com/xact-iot/xact)
 
 A small selection of screenshots from the demo system. 
 
