@@ -1,6 +1,6 @@
 # XACT Screenshots
 
-Return to the project's README [View readme](../README.md)
+Return to the project's README [View readme](..)
 
 A small selection of screenshots from the demo system. 
 
