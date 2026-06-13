@@ -73,6 +73,17 @@ export function logout(): void {
   authToken = null;
   localStorage.removeItem('xact_auth_token');
   localStorage.removeItem('xact_auth_user');
+  clearPersistentNavigationState();
+}
+
+function clearPersistentNavigationState(): void {
+  try {
+    if (typeof history !== 'undefined' && typeof window !== 'undefined') {
+      history.replaceState(null, '', '/xact/');
+    }
+  } catch {
+    // Ignore navigation cleanup failures; auth state has already been cleared.
+  }
 }
 
 export function getAuthToken(): string | null {

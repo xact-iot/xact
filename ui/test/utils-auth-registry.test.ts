@@ -70,6 +70,19 @@ describe('auth helpers', () => {
     expect(getAuthHeaders()).toEqual({ 'Content-Type': 'application/json' });
   });
 
+  it('clears dashboard navigation state on logout', () => {
+    history.replaceState({ xactRoute: 'dashboard', dashboardId: 'server:42' }, '', '/xact/#server%3A42');
+    localStorage.setItem('xact_auth_token', jwt({ exp: Math.floor(Date.now() / 1000) + 3600, tenant_id: 'default' }));
+    localStorage.setItem('xact_auth_user', JSON.stringify({ id: '2', username: 'viewer', tenant_id: 'default', roles: ['User'], allowed_orgs: ['default'] }));
+
+    logout();
+
+    expect(window.location.pathname).toBe('/xact/');
+    expect(window.location.hash).toBe('');
+    expect(history.state).toBeNull();
+    expect(localStorage.getItem('xact_auth_user')).toBeNull();
+  });
+
   it('handles bootstrap admin endpoints and error bodies', async () => {
     const fetchMock = vi.fn(async () => response({ setupRequired: true, passwordSet: false }));
     vi.stubGlobal('fetch', fetchMock);
