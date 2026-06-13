@@ -4,11 +4,58 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/xact-iot/xact/sqldb"
 )
+
+func TestSQLiteOpenPathAddsConcurrencyPragmas(t *testing.T) {
+	path := sqliteOpenPath("file:xact.db?mode=rwc")
+	if !strings.Contains(path, "mode=rwc") {
+		t.Fatalf("open path lost existing query params: %s", path)
+	}
+	for _, want := range []string{
+		"_pragma=busy_timeout%3D10000",
+		"_pragma=foreign_keys%28ON%29",
+		"_pragma=journal_mode%28WAL%29",
+	} {
+		if !strings.Contains(path, want) {
+			t.Fatalf("open path %q missing %q", path, want)
+		}
+	}
+}
+
+func TestNewSQLiteDBConfiguresPooledWALConnections(t *testing.T) {
+	ctx := context.Background()
+	dbi, err := NewSQLiteDB(ctx, filepath.Join(t.TempDir(), "xact.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteDB: %v", err)
+	}
+	defer dbi.Close()
+	db := dbi.(*SQLiteDB)
+
+	if got := db.RawDB().Stats().MaxOpenConnections; got != 8 {
+		t.Fatalf("MaxOpenConnections = %d, want 8", got)
+	}
+
+	var journalMode string
+	if err := db.RawDB().QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&journalMode); err != nil {
+		t.Fatalf("query journal_mode: %v", err)
+	}
+	if journalMode != "wal" {
+		t.Fatalf("journal_mode = %q, want wal", journalMode)
+	}
+
+	var foreignKeys int
+	if err := db.RawDB().QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
+		t.Fatalf("query foreign_keys: %v", err)
+	}
+	if foreignKeys != 1 {
+		t.Fatalf("foreign_keys = %d, want 1", foreignKeys)
+	}
+}
 
 func TestMigrateSeedsStarterDashboards(t *testing.T) {
 	ctx := context.Background()

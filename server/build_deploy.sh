@@ -237,12 +237,11 @@ MQTT_URL=mqtt://127.0.0.1:1883
 MQTT_PASSWORD=${MQTT_SECRET}
 
 # Evaluation defaults: serve the app directly over HTTP on the local network.
-# For production, put XACT behind TLS/reverse proxy or set ENABLE_HTTPS=yes with certs.
+# For production, set ENABLE_HTTPS=yes with certificates in HTTP_CERTS_DIR.
 ENABLE_HTTPS=no
 HTTP_CERTS_DIR=./certs
 API_HOST=0.0.0.0
 API_PORT=8080
-START_NGINX=no
 MAX_REQUEST_BODY_BYTES=8388608
 # Set to comma-separated UI origins when exposing the API cross-origin.
 CORS_ALLOWED_ORIGINS=
@@ -296,112 +295,6 @@ STATIC_SERVE_MODE=server
 STATIC_DIR=./web
 ENVEOF
 
-    if [ "$OS" = "linux" ]; then
-        cat > "$PLATFORM_DIR/nginx.conf" << 'NGINXEOF'
-worker_processes 1;
-daemon on;
-
-pid /run/nginx.pid;
-error_log logs/nginx-error.log info;
-
-events {
-    worker_connections 1024;
-}
-
-http {
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
-
-    access_log logs/nginx-access.log;
-    sendfile on;
-    keepalive_timeout 65;
-
-    upstream xact_api {
-        server 127.0.0.1:8080;
-    }
-
-    upstream xact_nats_ws {
-        server 127.0.0.1:9222;
-    }
-
-    server {
-        listen 8443 ssl;
-        server_name _;
-
-        ssl_certificate certs/server.crt;
-        ssl_certificate_key certs/server.key;
-        ssl_protocols TLSv1.2 TLSv1.3;
-
-        client_max_body_size 32m;
-        client_body_buffer_size 1m;
-        client_body_temp_path data/client-body-temp;
-
-        location = / {
-            return 302 /xact/;
-        }
-
-        location = /xact {
-            return 301 /xact/;
-        }
-
-        location = /xact/ws {
-            proxy_pass http://xact_nats_ws/;
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection "upgrade";
-            proxy_set_header Host $host;
-            proxy_set_header X-Forwarded-Host $host;
-            proxy_set_header X-Forwarded-Proto https;
-            proxy_read_timeout 1d;
-            proxy_send_timeout 1d;
-        }
-
-        location /xact/api/ {
-            proxy_pass http://xact_api;
-            proxy_set_header Host $host;
-            proxy_set_header Authorization $http_authorization;
-            proxy_set_header X-Forwarded-Host $host;
-            proxy_set_header X-Forwarded-Proto https;
-        }
-
-        location = /xact/login {
-            proxy_pass http://xact_api;
-            proxy_set_header Host $host;
-            proxy_set_header Authorization $http_authorization;
-            proxy_set_header X-Forwarded-Host $host;
-            proxy_set_header X-Forwarded-Proto https;
-        }
-
-        location = /xact/health {
-            proxy_pass http://xact_api;
-            proxy_set_header Host $host;
-            proxy_set_header X-Forwarded-Host $host;
-            proxy_set_header X-Forwarded-Proto https;
-        }
-
-        location = /xact/api-docs {
-            proxy_pass http://xact_api;
-            proxy_set_header Host $host;
-            proxy_set_header X-Forwarded-Host $host;
-            proxy_set_header X-Forwarded-Proto https;
-        }
-
-        location /xact/plugins/ {
-            proxy_pass http://xact_api;
-            proxy_set_header Host $host;
-            proxy_set_header X-Forwarded-Host $host;
-            proxy_set_header X-Forwarded-Proto https;
-        }
-
-        location /xact/ {
-            alias web/;
-            try_files $uri $uri/ /xact/index.html =404;
-        }
-    }
-}
-NGINXEOF
-    fi
-
     if [ "$OS" = "windows" ]; then
         cat > "$PLATFORM_DIR/start.bat" << 'BATEOF'
 @echo off
@@ -451,43 +344,7 @@ if [ ! -d "logs" ]; then
     mkdir -p logs
 fi
 
-if grep -Eq '^START_NGINX=yes$' .env 2>/dev/null; then
-    nginx_pid_file="/run/nginx.pid"
-
-    find_nginx_master() {
-        if [ -s "$nginx_pid_file" ] && kill -0 "$(cat "$nginx_pid_file")" 2>/dev/null; then
-            cat "$nginx_pid_file"
-            return
-        fi
-        ps -u "$(id -u)" -o pid=,args= \
-            | awk -v dir="$SCRIPT_DIR" '$0 ~ /nginx: master process/ && $0 ~ dir { print $1; exit }'
-    }
-
-    if command -v nginx >/dev/null 2>&1 && [ -f "nginx.conf" ]; then
-        if [ -f "$nginx_pid_file" ] && { [ ! -s "$nginx_pid_file" ] || ! kill -0 "$(cat "$nginx_pid_file")" 2>/dev/null; }; then
-            rm -f "$nginx_pid_file" 2>/dev/null || true
-        fi
-
-        if nginx -p "$SCRIPT_DIR/" -c "$SCRIPT_DIR/nginx.conf" -t; then
-            nginx_pid="$(find_nginx_master)"
-            if [ -z "$nginx_pid" ]; then
-                echo "Starting NGINX reverse proxy on https://localhost:8443/xact/"
-                nginx -p "$SCRIPT_DIR/" -c "$SCRIPT_DIR/nginx.conf"
-            else
-                echo "Reloading NGINX reverse proxy on https://localhost:8443/xact/"
-                kill -HUP "$nginx_pid"
-            fi
-        else
-            echo "Warning: nginx.conf is invalid; browser HTTPS proxy will not be started"
-        fi
-    elif command -v nginx >/dev/null 2>&1; then
-        echo "Warning: nginx.conf missing; browser HTTPS proxy will not be started"
-    else
-        echo "Warning: nginx not found; browser HTTPS proxy will not be started"
-    fi
-else
-    echo "Starting HTTP server"
-fi
+echo "Starting XACT server"
 
 exec ./xact
 SHEOF

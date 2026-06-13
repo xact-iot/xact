@@ -219,17 +219,8 @@ func (db *SQLiteDB) QueryMetricsByTagPaths(ctx context.Context, orgName string,
 	var pathArgs []any
 	for _, p := range tagPaths {
 		orConditions = append(orConditions,
-			`(d.name || '.' || md.name = ? OR (d.name || '.' || md.name LIKE ? AND d.name || '.' || md.name LIKE ?))`)
-		dotIdx := strings.Index(p, ".")
-		lastDotIdx := strings.LastIndex(p, ".")
-		if dotIdx < 0 || dotIdx == lastDotIdx {
-			// Simple "device.metric" - only exact match
-			pathArgs = append(pathArgs, p, p+"%", "%"+p)
-		} else {
-			devicePrefix := p[:dotIdx+1]   // "device."
-			metricSuffix := p[lastDotIdx:] // ".metric"
-			pathArgs = append(pathArgs, p, devicePrefix+"%", "%"+metricSuffix)
-		}
+			`(d.name || '.' || md.name = ? OR (? LIKE d.name || '.%' AND ? LIKE '%.' || md.name))`)
+		pathArgs = append(pathArgs, p, p, p)
 	}
 
 	query := `

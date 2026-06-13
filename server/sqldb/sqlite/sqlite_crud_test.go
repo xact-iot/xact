@@ -382,6 +382,8 @@ func TestSQLiteEventsAndMetricQueries(t *testing.T) {
 		{DeviceName: "pump-1", MetricName: "temp", Timestamp: now, Value: 1},
 		{DeviceName: "pump-1", MetricName: "flow", Timestamp: now.Add(time.Second), Value: 2},
 		{DeviceName: "area.pump-2", MetricName: "temp", Timestamp: now.Add(2 * time.Second), Value: 3},
+		{DeviceName: "LA_LongBeach.AirQuality.AQ-S-0001.air", MetricName: "aqi", Timestamp: now.Add(3 * time.Second), Value: 42},
+		{DeviceName: "LA_LongBeach.AirQuality.AQ-S-0140.air", MetricName: "aqi", Timestamp: now.Add(4 * time.Second), Value: 84},
 	}
 	if err := db.InsertMetrics(ctx, "default", points); err != nil {
 		t.Fatalf("InsertMetrics: %v", err)
@@ -389,6 +391,10 @@ func TestSQLiteEventsAndMetricQueries(t *testing.T) {
 	byPaths, err := db.QueryMetricsByTagPaths(ctx, "default", []string{"pump-1.temp", "area.pump-2.temp"}, now.Add(-time.Second), now.Add(time.Minute))
 	if err != nil || len(byPaths) != 1 || byPaths[0].Name != "temp" || len(byPaths[0].Data) != 2 {
 		t.Fatalf("QueryMetricsByTagPaths = %#v err=%v", byPaths, err)
+	}
+	airQualityPath, err := db.QueryMetricsByTagPaths(ctx, "default", []string{"LA_LongBeach.AirQuality.AQ-S-0001.air.aqi"}, now.Add(-time.Second), now.Add(time.Minute))
+	if err != nil || len(airQualityPath) != 1 || airQualityPath[0].Name != "aqi" || len(airQualityPath[0].Data) != 1 || airQualityPath[0].Data[0].Value != 42 {
+		t.Fatalf("QueryMetricsByTagPaths exact AirQuality path = %#v err=%v", airQualityPath, err)
 	}
 	since, err := db.QueryMetricsSince(ctx, "default", "pump-1", []string{"temp", "flow"}, "temp", now)
 	if err != nil || len(since) != 1 || since[0].Name != "flow" {

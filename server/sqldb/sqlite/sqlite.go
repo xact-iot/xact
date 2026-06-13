@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -31,22 +32,29 @@ type SQLiteDB struct {
 // NewSQLiteDB opens an SQLite database at path and returns a ready-to-use instance.
 // Call Migrate() separately to initialise the schema.
 func NewSQLiteDB(ctx context.Context, path string) (sqldb.DB, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", sqliteOpenPath(path))
 	if err != nil {
 		return nil, fmt.Errorf("opening sqlite database: %w", err)
 	}
-	// SQLite allows only one writer at a time; one connection prevents contention.
-	db.SetMaxOpenConns(1)
-	// Enable foreign key enforcement on the single connection.
-	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("enabling foreign keys: %w", err)
-	}
+	db.SetMaxOpenConns(8)
+	db.SetMaxIdleConns(8)
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("pinging sqlite database: %w", err)
 	}
 	return &SQLiteDB{db: db, bootstrapAdminFile: bootstrapAdminPasswordFile(path)}, nil
+}
+
+func sqliteOpenPath(path string) string {
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	q := url.Values{}
+	q.Add("_pragma", "busy_timeout=10000")
+	q.Add("_pragma", "foreign_keys(ON)")
+	q.Add("_pragma", "journal_mode(WAL)")
+	return path + sep + q.Encode()
 }
 
 // Close releases the database connection.
