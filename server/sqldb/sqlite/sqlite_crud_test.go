@@ -36,6 +36,20 @@ func TestSQLiteUserAndOrganisationLifecycle(t *testing.T) {
 	if len(roles) == 0 {
 		t.Fatal("expected seeded roles")
 	}
+	perms, err := db.ListPermissions(ctx, "default")
+	if err != nil {
+		t.Fatalf("ListPermissions: %v", err)
+	}
+	for _, rp := range perms {
+		var ui map[string]map[string]bool
+		if err := json.Unmarshal(rp.UI, &ui); err != nil {
+			t.Fatalf("decode permissions for %s: %v", rp.Role, err)
+		}
+		wantProfileChange := rp.Role != "User"
+		if ui["profile"]["change"] != wantProfileChange {
+			t.Fatalf("%s profile.change = %v, want %v", rp.Role, ui["profile"]["change"], wantProfileChange)
+		}
+	}
 
 	area := &sqldb.OrgArea{North: 10, South: 1, East: 20, West: 2}
 	org := &sqldb.Organisation{Name: "plant", DisplayName: "Plant", Active: true, Area: area}
@@ -76,6 +90,9 @@ func TestSQLiteUserAndOrganisationLifecycle(t *testing.T) {
 	user := &sqldb.User{FirstName: "Grace", LastName: "Hopper", LoginName: "grace", Email: "grace@example.test", Active: true}
 	if err := db.CreateUser(ctx, user, hash); err != nil {
 		t.Fatalf("CreateUser: %v", err)
+	}
+	if user.TokenVersion != 1 {
+		t.Fatalf("CreateUser token version = %d, want 1", user.TokenVersion)
 	}
 	if err := db.AssignUserToOrg(ctx, user.ID, "plant", []string{"Admin", "Operator"}); err != nil {
 		t.Fatalf("AssignUserToOrg: %v", err)

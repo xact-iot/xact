@@ -1,6 +1,7 @@
 import { BaseComponent } from './base-component';
 import { getMyProfile, updateMyProfile, changeMyPassword } from '../api';
 import type { UserRecord } from '../api';
+import { can } from '../permissions/permissions';
 
 export class ProfileDialog extends BaseComponent {
   private profileStatus: { message: string; error: boolean } | null = null;
@@ -8,10 +9,13 @@ export class ProfileDialog extends BaseComponent {
   private profileSaving = false;
   private passwordSaving = false;
   private user: UserRecord | null = null;
+  private canChangeProfile = true;
 
   protected render(): void {
     this.className = 'fixed inset-0 flex items-center justify-center hidden';
     this.style.zIndex = '20000';
+    const disabledAttr = this.canChangeProfile ? '' : 'disabled';
+    const disabledClass = this.canChangeProfile ? '' : 'opacity-60 cursor-not-allowed';
 
     this.innerHTML = `
       <div id="profile-backdrop" class="absolute inset-0 bg-black/60"></div>
@@ -60,14 +64,14 @@ export class ProfileDialog extends BaseComponent {
                     <input id="profile-firstname" type="text" value="${this._esc(this.user?.firstName || '')}"
                       class="w-full px-3 py-2 text-sm border bg-transparent outline-none focus:ring-1 transition-all"
                       style="border-color: var(--border-color); focus-ring-color: var(--accent-color);"
-                      placeholder="First name" />
+                      placeholder="First name" ${disabledAttr} />
                   </div>
                   <div>
                     <label class="block text-xs uppercase tracking-wider opacity-60 mb-1.5">Last Name</label>
                     <input id="profile-lastname" type="text" value="${this._esc(this.user?.lastName || '')}"
                       class="w-full px-3 py-2 text-sm border bg-transparent outline-none focus:ring-1 transition-all"
                       style="border-color: var(--border-color);"
-                      placeholder="Last name" />
+                      placeholder="Last name" ${disabledAttr} />
                   </div>
                 </div>
                 <div>
@@ -75,7 +79,7 @@ export class ProfileDialog extends BaseComponent {
                   <input id="profile-email" type="email" value="${this._esc(this.user?.email || '')}"
                     class="w-full px-3 py-2 text-sm border bg-transparent outline-none focus:ring-1 transition-all"
                     style="border-color: var(--border-color);"
-                    placeholder="email@example.com" />
+                    placeholder="email@example.com" ${disabledAttr} />
                 </div>
 
                 ${this.profileStatus ? `
@@ -94,6 +98,7 @@ export class ProfileDialog extends BaseComponent {
                            style="opacity: ${this.user?.notificationOptions?.emailEnabled ? '1' : '0.5'};">
                       <input type="checkbox" id="profile-notif-email"
                              ${this.user?.notificationOptions?.emailEnabled ? 'checked' : ''}
+                             ${disabledAttr}
                              style="accent-color: var(--accent-color);">
                       Email
                     </label>
@@ -101,6 +106,7 @@ export class ProfileDialog extends BaseComponent {
                            style="opacity: ${this.user?.notificationOptions?.telegramEnabled ? '1' : '0.5'};">
                       <input type="checkbox" id="profile-notif-telegram"
                              ${this.user?.notificationOptions?.telegramEnabled ? 'checked' : ''}
+                             ${disabledAttr}
                              style="accent-color: var(--accent-color);">
                       Telegram
                     </label>
@@ -111,15 +117,15 @@ export class ProfileDialog extends BaseComponent {
                            value="${this._esc(this.user?.notificationOptions?.telegramId || '')}"
                            class="w-full px-3 py-2 text-sm border bg-transparent outline-none focus:ring-1 transition-all font-mono"
                            style="border-color: var(--border-color);"
-                           placeholder="Numeric chat ID" />
+                           placeholder="Numeric chat ID" ${disabledAttr} />
                   </div>
                 </div>
 
                 <button id="profile-save" class="w-full py-2 text-xs font-mono font-medium uppercase tracking-widest border transition-all
-                  ${this.profileSaving ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80'}"
+                  ${this.profileSaving || !this.canChangeProfile ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80'}"
                   style="border-color: var(--accent-color); color: var(--accent-color);"
-                  ${this.profileSaving ? 'disabled' : ''}>
-                  ${this.profileSaving ? 'Saving…' : 'Save Profile'}
+                  ${this.profileSaving || !this.canChangeProfile ? 'disabled' : ''}>
+                  ${this.profileSaving ? 'Saving…' : this.canChangeProfile ? 'Save Profile' : 'Profile Locked'}
                 </button>
               </div>
             `}
@@ -132,27 +138,27 @@ export class ProfileDialog extends BaseComponent {
               <span class="flex-1 h-px" style="background: var(--accent-color); opacity: 0.25;"></span>
             </div>
 
-            <div class="space-y-3">
+            <div class="space-y-3 ${disabledClass}">
               <div>
                 <label class="block text-xs uppercase tracking-wider opacity-60 mb-1.5">Current Password</label>
                 <input id="pwd-current" type="password"
                   class="w-full px-3 py-2 text-sm border bg-transparent outline-none focus:ring-1 transition-all"
                   style="border-color: var(--border-color);"
-                  autocomplete="current-password" />
+                  autocomplete="current-password" ${disabledAttr} />
               </div>
               <div>
                 <label class="block text-xs uppercase tracking-wider opacity-60 mb-1.5">New Password</label>
                 <input id="pwd-new" type="password"
                   class="w-full px-3 py-2 text-sm border bg-transparent outline-none focus:ring-1 transition-all"
                   style="border-color: var(--border-color);"
-                  autocomplete="new-password" />
+                  autocomplete="new-password" ${disabledAttr} />
               </div>
               <div>
                 <label class="block text-xs uppercase tracking-wider opacity-60 mb-1.5">Confirm New Password</label>
                 <input id="pwd-confirm" type="password"
                   class="w-full px-3 py-2 text-sm border bg-transparent outline-none focus:ring-1 transition-all"
                   style="border-color: var(--border-color);"
-                  autocomplete="new-password" />
+                  autocomplete="new-password" ${disabledAttr} />
               </div>
 
               ${this.passwordStatus ? `
@@ -164,10 +170,10 @@ export class ProfileDialog extends BaseComponent {
               ` : ''}
 
               <button id="pwd-save" class="w-full py-2 text-xs font-mono font-medium uppercase tracking-widest border transition-all
-                ${this.passwordSaving ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80'}"
+                ${this.passwordSaving || !this.canChangeProfile ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80'}"
                 style="border-color: var(--accent-color); color: var(--accent-color);"
-                ${this.passwordSaving ? 'disabled' : ''}>
-                ${this.passwordSaving ? 'Changing…' : 'Change Password'}
+                ${this.passwordSaving || !this.canChangeProfile ? 'disabled' : ''}>
+                ${this.passwordSaving ? 'Changing…' : this.canChangeProfile ? 'Change Password' : 'Password Locked'}
               </button>
             </div>
           </div>
@@ -202,7 +208,7 @@ export class ProfileDialog extends BaseComponent {
   };
 
   private handleSaveProfile = async (): Promise<void> => {
-    if (this.profileSaving) return;
+    if (this.profileSaving || !this.canChangeProfile) return;
     const firstName = (this.querySelector('#profile-firstname') as HTMLInputElement)?.value.trim();
     const lastName = (this.querySelector('#profile-lastname') as HTMLInputElement)?.value.trim();
     const email = (this.querySelector('#profile-email') as HTMLInputElement)?.value.trim();
@@ -230,7 +236,7 @@ export class ProfileDialog extends BaseComponent {
   };
 
   private handleChangePassword = async (): Promise<void> => {
-    if (this.passwordSaving) return;
+    if (this.passwordSaving || !this.canChangeProfile) return;
     const current = (this.querySelector('#pwd-current') as HTMLInputElement)?.value;
     const next = (this.querySelector('#pwd-new') as HTMLInputElement)?.value;
     const confirm = (this.querySelector('#pwd-confirm') as HTMLInputElement)?.value;
@@ -282,14 +288,16 @@ export class ProfileDialog extends BaseComponent {
     this.passwordStatus = null;
     this.profileSaving = false;
     this.passwordSaving = false;
+    this.canChangeProfile = true;
     this.detachEventListeners();
     this.render();
     this.attachEventListeners();
     this.classList.remove('hidden');
 
     // Load profile data async
-    getMyProfile().then(user => {
+    Promise.all([getMyProfile(), can('profile.change')]).then(([user, canChangeProfile]) => {
       this.user = user;
+      this.canChangeProfile = canChangeProfile;
       this.rerender();
     }).catch(() => {
       this.profileStatus = { message: 'Failed to load profile.', error: true };

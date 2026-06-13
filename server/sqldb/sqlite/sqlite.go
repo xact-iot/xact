@@ -623,12 +623,12 @@ func (db *SQLiteDB) seedOrgPermissions(ctx context.Context, orgID int) error {
 		ui   string
 	}
 	seeds := []seed{
-		{"SystemAdmin", `{"dashboards-setup":{"read":true,"edit":true},"dashboard-container":{"edit":true},"widget-default":{"view":true,"configure":true},"organisations":{"view":true,"change":true},"permissions":{"view":true,"manage":true},"users":{"view":true,"manage":true},"nodes":{"read":true,"write":true},"tags":{"read":true,"write":true},"logs":{"read":true,"write":true},"reports":{"view":true,"manage":true},"notifications":{"view":true,"manage":true},"scheduler":{"view":true,"manage":true},"tagcalcs":{"view":true,"manage":true}}`},
-		{"Admin", `{"dashboards-setup":{"read":true,"edit":true},"dashboard-container":{"edit":true},"widget-default":{"view":true,"configure":true},"organisations":{"view":false,"change":false},"permissions":{"view":true,"manage":true},"users":{"view":true,"manage":true},"nodes":{"read":true,"write":true},"tags":{"read":true,"write":true},"logs":{"read":true,"write":true},"reports":{"view":true,"manage":true},"notifications":{"view":true,"manage":true},"scheduler":{"view":true,"manage":true},"tagcalcs":{"view":true,"manage":true}}`},
-		{"Manager", `{"dashboards-setup":{"read":true,"edit":true},"dashboard-container":{"edit":true},"widget-default":{"view":true,"configure":true},"organisations":{"view":false,"change":false},"permissions":{"view":false,"manage":false},"users":{"view":false,"manage":false},"nodes":{"read":true,"write":true},"tags":{"read":true,"write":true},"logs":{"read":true,"write":false},"reports":{"view":true,"manage":true},"notifications":{"view":false,"manage":false},"scheduler":{"view":true,"manage":true},"tagcalcs":{"view":false,"manage":false}}`},
-		{"Technician", `{"dashboards-setup":{"read":true,"edit":false},"dashboard-container":{"edit":true},"widget-default":{"view":true,"configure":true},"organisations":{"view":false,"change":false},"permissions":{"view":false,"manage":false},"users":{"view":false,"manage":false},"nodes":{"read":true,"write":true},"tags":{"read":true,"write":true},"logs":{"read":true,"write":false},"reports":{"view":false,"manage":false},"notifications":{"view":false,"manage":false},"scheduler":{"view":false,"manage":false},"tagcalcs":{"view":false,"manage":false}}`},
-		{"Operator", `{"dashboards-setup":{"read":true,"edit":false},"dashboard-container":{"edit":false},"widget-default":{"view":true,"configure":false},"organisations":{"view":false,"change":false},"permissions":{"view":false,"manage":false},"users":{"view":false,"manage":false},"nodes":{"read":true,"write":false},"tags":{"read":true,"write":false},"logs":{"read":false,"write":false},"reports":{"view":false,"manage":false},"notifications":{"view":false,"manage":false},"scheduler":{"view":false,"manage":false},"tagcalcs":{"view":false,"manage":false}}`},
-		{"User", `{"dashboards-setup":{"read":true,"edit":false},"dashboard-container":{"edit":false},"widget-default":{"view":true,"configure":false},"organisations":{"view":false,"change":false},"permissions":{"view":false,"manage":false},"users":{"view":false,"manage":false},"nodes":{"read":true,"write":false},"tags":{"read":true,"write":false},"logs":{"read":false,"write":false},"reports":{"view":false,"manage":false},"notifications":{"view":false,"manage":false},"scheduler":{"view":false,"manage":false},"tagcalcs":{"view":false,"manage":false}}`},
+		{"SystemAdmin", `{"dashboards-setup":{"read":true,"edit":true},"dashboard-container":{"edit":true},"widget-default":{"view":true,"configure":true},"organisations":{"view":true,"change":true},"permissions":{"view":true,"manage":true},"users":{"view":true,"manage":true},"nodes":{"read":true,"write":true},"tags":{"read":true,"write":true},"logs":{"read":true,"write":true},"reports":{"view":true,"manage":true},"notifications":{"view":true,"manage":true},"scheduler":{"view":true,"manage":true},"tagcalcs":{"view":true,"manage":true},"profile":{"change":true}}`},
+		{"Admin", `{"dashboards-setup":{"read":true,"edit":true},"dashboard-container":{"edit":true},"widget-default":{"view":true,"configure":true},"organisations":{"view":false,"change":false},"permissions":{"view":true,"manage":true},"users":{"view":true,"manage":true},"nodes":{"read":true,"write":true},"tags":{"read":true,"write":true},"logs":{"read":true,"write":true},"reports":{"view":true,"manage":true},"notifications":{"view":true,"manage":true},"scheduler":{"view":true,"manage":true},"tagcalcs":{"view":true,"manage":true},"profile":{"change":true}}`},
+		{"Manager", `{"dashboards-setup":{"read":true,"edit":true},"dashboard-container":{"edit":true},"widget-default":{"view":true,"configure":true},"organisations":{"view":false,"change":false},"permissions":{"view":false,"manage":false},"users":{"view":false,"manage":false},"nodes":{"read":true,"write":true},"tags":{"read":true,"write":true},"logs":{"read":true,"write":false},"reports":{"view":true,"manage":true},"notifications":{"view":false,"manage":false},"scheduler":{"view":true,"manage":true},"tagcalcs":{"view":false,"manage":false},"profile":{"change":true}}`},
+		{"Technician", `{"dashboards-setup":{"read":true,"edit":false},"dashboard-container":{"edit":true},"widget-default":{"view":true,"configure":true},"organisations":{"view":false,"change":false},"permissions":{"view":false,"manage":false},"users":{"view":false,"manage":false},"nodes":{"read":true,"write":true},"tags":{"read":true,"write":true},"logs":{"read":true,"write":false},"reports":{"view":false,"manage":false},"notifications":{"view":false,"manage":false},"scheduler":{"view":false,"manage":false},"tagcalcs":{"view":false,"manage":false},"profile":{"change":true}}`},
+		{"Operator", `{"dashboards-setup":{"read":true,"edit":false},"dashboard-container":{"edit":false},"widget-default":{"view":true,"configure":false},"organisations":{"view":false,"change":false},"permissions":{"view":false,"manage":false},"users":{"view":false,"manage":false},"nodes":{"read":true,"write":false},"tags":{"read":true,"write":false},"logs":{"read":false,"write":false},"reports":{"view":false,"manage":false},"notifications":{"view":false,"manage":false},"scheduler":{"view":false,"manage":false},"tagcalcs":{"view":false,"manage":false},"profile":{"change":true}}`},
+		{"User", `{"dashboards-setup":{"read":true,"edit":false},"dashboard-container":{"edit":false},"widget-default":{"view":true,"configure":false},"organisations":{"view":false,"change":false},"permissions":{"view":false,"manage":false},"users":{"view":false,"manage":false},"nodes":{"read":true,"write":false},"tags":{"read":true,"write":false},"logs":{"read":false,"write":false},"reports":{"view":false,"manage":false},"notifications":{"view":false,"manage":false},"scheduler":{"view":false,"manage":false},"tagcalcs":{"view":false,"manage":false},"profile":{"change":false}}`},
 	}
 	now := formatTimestamp(time.Now())
 	for _, s := range seeds {
@@ -701,6 +701,20 @@ func (db *SQLiteDB) ensureViewPermissions(ctx context.Context) error {
 		}
 		if _, ok := logs["write"]; !ok {
 			logs["write"] = role == "SystemAdmin" || role == "Admin"
+			changed = true
+		}
+		profile, ok := ui["profile"]
+		if !ok {
+			profile = map[string]bool{}
+			ui["profile"] = profile
+			changed = true
+		}
+		if _, ok := profile["change"]; !ok {
+			profile["change"] = !strings.EqualFold(role, "User")
+			changed = true
+		}
+		if strings.EqualFold(role, "User") && profile["change"] {
+			profile["change"] = false
 			changed = true
 		}
 		if !changed {

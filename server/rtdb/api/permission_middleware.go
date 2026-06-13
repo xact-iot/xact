@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 // requireUIPermission returns a Chi middleware that enforces a ui permission.
@@ -57,7 +58,7 @@ func isSystemAdmin(ctx context.Context) bool {
 		return false
 	}
 	for _, role := range claims.Roles {
-		if role == "SystemAdmin" {
+		if strings.EqualFold(role, "SystemAdmin") {
 			return true
 		}
 	}
@@ -88,11 +89,11 @@ func (s *Server) checkUIPermission(ctx context.Context, resource, action string)
 
 	userRoles := make(map[string]bool, len(claims.Roles))
 	for _, role := range claims.Roles {
-		userRoles[role] = true
+		userRoles[strings.ToLower(role)] = true
 	}
 
 	for _, rp := range allPerms {
-		if !userRoles[rp.Role] {
+		if !userRoles[strings.ToLower(rp.Role)] {
 			continue
 		}
 		var uiMap map[string]map[string]bool

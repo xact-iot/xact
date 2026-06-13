@@ -68,6 +68,9 @@ registerPermissions('logs', 'System Logs', [
   { name: 'read', description: 'Query system log entries' },
   { name: 'write', description: 'Create system log entries' },
 ], 'Server-side access to the log store - controls who can query, view, and create system log entries.');
+registerPermissions('profile', 'User Profile', [
+  { name: 'change', description: 'Change own profile and password' },
+], 'Controls whether users can update their own profile details and password.');
 
 // CRITICAL: Set up auth headers provider BEFORE importing components
 // Components may make API calls during initialization

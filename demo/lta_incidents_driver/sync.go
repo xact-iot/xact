@@ -64,6 +64,7 @@ func (d *Driver) PollOnce(ctx context.Context) error {
 	existing, err := d.sink.ExistingIncidents(d.tenant, d.zone)
 	manageLifecycle := true
 	if err != nil {
+		fmt.Printf("Sink Existing incidents: %v\n", err)
 		if !errors.Is(err, ErrXACTLoginUnauthorized) {
 			return err
 		}

@@ -111,11 +111,11 @@ func TestPostgresUsersWithPGXMock(t *testing.T) {
 	create := &sqldb.User{FirstName: "Ada", LastName: "Lovelace", LoginName: "ada", Email: "ada@example.test", Active: true}
 	mock.ExpectQuery("INSERT INTO users").
 		WithArgs(create.FirstName, create.LastName, create.LoginName, "pw-hash", create.Email, jsonRaw("{}"), create.Active).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "created_at"}).AddRow(6, now))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "token_version", "created_at"}).AddRow(6, 1, now))
 	if err := db.CreateUser(ctx, create, "pw-hash"); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	if create.ID != 6 {
+	if create.ID != 6 || create.TokenVersion != 1 {
 		t.Fatalf("create did not hydrate user: %#v", create)
 	}
 

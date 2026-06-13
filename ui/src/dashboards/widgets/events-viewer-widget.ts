@@ -575,7 +575,7 @@ export class EventsViewerWidget extends BaseComponent {
   .evw-export-btn {
     background: transparent;
     border: 1px solid var(--border-color);
-    color: var(--footer-text);
+    color: var(--content-text);
     font-family: var(--widget-font-family);
     font-size: var(--widget-label-font-size);
     padding: 2px 10px;
@@ -586,7 +586,7 @@ export class EventsViewerWidget extends BaseComponent {
   }
   .evw-export-btn:hover { border-color: var(--accent-color); color: var(--accent-color); }
 
-  .evw-count { font-size: var(--widget-label-font-size); color: var(--footer-text); }
+  .evw-count { font-size: var(--widget-label-font-size); color: var(--content-text); opacity: .82; }
 
   .evw-page-btn {
     background: transparent;
@@ -603,7 +603,7 @@ export class EventsViewerWidget extends BaseComponent {
   }
   .evw-page-btn:hover:not(:disabled) { border-color: var(--accent-color); color: var(--accent-color); }
   .evw-page-btn:disabled { opacity: .3; cursor: default; }
-  .evw-page-info { font-size: var(--widget-label-font-size); color: var(--footer-text); min-width: 70px; text-align: center; }
+  .evw-page-info { font-size: var(--widget-label-font-size); color: var(--content-text); opacity: .82; min-width: 70px; text-align: center; }
 </style>
 
 <!-- Filter bar -->

@@ -227,12 +227,12 @@ func (db *PostgresDB) CreateUser(ctx context.Context, user *sqldb.User, password
 	}
 	return db.pool.QueryRow(ctx, `
 		INSERT INTO users (first_name, last_name, login_name, password_hash, email,
-		                   notification_options, active)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, created_at
+		                   notification_options, active, token_version)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 1)
+		RETURNING id, token_version, created_at
 	`, user.FirstName, user.LastName, user.LoginName, passwordHash, user.Email,
 		opts, user.Active,
-	).Scan(&user.ID, &user.CreatedAt)
+	).Scan(&user.ID, &user.TokenVersion, &user.CreatedAt)
 }
 
 // UpdateUser updates mutable user fields (not password, not login_name).

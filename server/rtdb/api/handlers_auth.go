@@ -188,7 +188,7 @@ func (s *Server) loginResponseForUser(ctx context.Context, user *sqldb.User) (Lo
 	isSystemAdmin := false
 	for _, org := range user.Orgs {
 		for _, role := range org.Roles {
-			if role == "SystemAdmin" {
+			if strings.EqualFold(role, "SystemAdmin") {
 				isSystemAdmin = true
 				break
 			}

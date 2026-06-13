@@ -41,6 +41,12 @@ func newTestDB(loginName, password string) *testDB {
 	}
 }
 
+func newRoleTestDB(loginName, password, role string) *testDB {
+	db := newTestDB(loginName, password)
+	db.user.Orgs = []sqldb.UserOrg{{OrgID: 1, OrgName: "default", Roles: []string{role}}}
+	return db
+}
+
 func newUnsetAdminTestDB() *testDB {
 	return &testDB{
 		user: &sqldb.User{
@@ -79,7 +85,8 @@ func (d *testDB) ListPermissions(_ context.Context, _ string) ([]sqldb.RolePermi
 			"tags":{"read":true,"write":true},
 			"organisations":{"view":true,"change":true},
 			"users":{"view":true,"manage":true},
-			"logs":{"read":true}
+			"logs":{"read":true},
+			"profile":{"change":true}
 		}`),
 	}}, nil
 }
@@ -591,6 +598,30 @@ func TestLoginEndpoint(t *testing.T) {
 		}
 		if resp.User.Username != "testuser" {
 			t.Errorf("expected username testuser, got %s", resp.User.Username)
+		}
+	})
+
+	t.Run("user role can list dashboards after login", func(t *testing.T) {
+		srv := NewServer(ServerConfig{}, treeOps, nil, nil, "test-secret", newRoleTestDB("viewer", "testpass", "User"), "")
+		req := httptest.NewRequest("POST", "/login",
+			bytes.NewReader([]byte(`{"username":"viewer","password":"testpass"}`)))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("login status = %d; body: %s", rr.Code, rr.Body.String())
+		}
+		var resp LoginResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode login: %v", err)
+		}
+
+		req = httptest.NewRequest("GET", "/api/v1/dashboards", nil)
+		req.Header.Set("Authorization", "Bearer "+resp.Token)
+		rr = httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("dashboard list status = %d; body: %s", rr.Code, rr.Body.String())
 		}
 	})
 }

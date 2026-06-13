@@ -132,7 +132,7 @@
   window.XACT.registerTheme(
     {
       id:      THEME_ID,
-      name:    'Neon Chaos',
+      name:    'Plugin Neon Chaos',
       preview: '#050905',
     },
     CSS

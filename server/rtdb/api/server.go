@@ -431,12 +431,9 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 		// Dashboard operations (requires database)
 		if s.dashboardHandlers != nil {
 			registerDashboardRoutes := func(r chi.Router) {
-				// Any authenticated user can load dashboard content.
+				// Any authenticated user can load dashboard navigation/content.
+				r.Get("/", s.dashboardHandlers.HandleListDashboards)
 				r.Get("/{id}", s.dashboardHandlers.HandleGetDashboard)
-				r.Group(func(r chi.Router) {
-					r.Use(s.requireUIPermission("dashboards-setup", "read"))
-					r.Get("/", s.dashboardHandlers.HandleListDashboards)
-				})
 				r.Group(func(r chi.Router) {
 					r.Use(s.requireUIPermission("dashboards-setup", "edit"))
 					r.Post("/", s.dashboardHandlers.HandleCreateDashboard)
@@ -503,8 +500,10 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 		if s.meHandlers != nil {
 			r.Route("/api/v1/me", func(r chi.Router) {
 				r.Get("/", s.meHandlers.HandleGetMe)
-				r.Put("/", s.meHandlers.HandleUpdateMe)
-				r.Post("/change-password", s.meHandlers.HandleChangePassword)
+				r.With(s.requireUIPermission("profile", "change")).
+					Put("/", s.meHandlers.HandleUpdateMe)
+				r.With(s.requireUIPermission("profile", "change")).
+					Post("/change-password", s.meHandlers.HandleChangePassword)
 			})
 		}
 

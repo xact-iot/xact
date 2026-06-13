@@ -449,6 +449,22 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		)
 		WHERE (ui #> '{logs,write}') IS NULL;
 
+		-- Allow self-service profile/password changes by default except for
+		-- the User role, which is commonly used for guest-style access.
+		UPDATE permissions
+		SET ui = jsonb_set(
+			CASE WHEN ui ? 'profile' THEN ui ELSE ui || '{"profile":{}}'::jsonb END,
+			'{profile,change}',
+			CASE WHEN role = 'User' THEN 'false'::jsonb ELSE 'true'::jsonb END,
+			true
+		)
+		WHERE (ui #> '{profile,change}') IS NULL;
+
+		UPDATE permissions
+		SET ui = jsonb_set(ui, '{profile,change}', 'false'::jsonb, true)
+		WHERE role = 'User'
+		  AND (ui #>> '{profile,change}') = 'true';
+
 		-- Restrict organisations.change for Admin to false (SystemAdmin-only default).
 		-- Guarded so it only fires when the value is still the original seeded 'true'.
 		UPDATE permissions
@@ -485,6 +501,20 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			true
 		)
 		WHERE (ui #> '{logs,write}') IS NULL;
+
+		UPDATE permissions
+		SET ui = jsonb_set(
+			CASE WHEN ui ? 'profile' THEN ui ELSE ui || '{"profile":{}}'::jsonb END,
+			'{profile,change}',
+			CASE WHEN role = 'User' THEN 'false'::jsonb ELSE 'true'::jsonb END,
+			true
+		)
+		WHERE (ui #> '{profile,change}') IS NULL;
+
+		UPDATE permissions
+		SET ui = jsonb_set(ui, '{profile,change}', 'false'::jsonb, true)
+		WHERE role = 'User'
+		  AND (ui #>> '{profile,change}') = 'true';
 
 		-- Also ensure the admin user (login_name = 'admin') is a SystemAdmin in every org.
 		-- Uses ON CONFLICT DO NOTHING so it is safe to run repeatedly.

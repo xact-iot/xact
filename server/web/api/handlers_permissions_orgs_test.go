@@ -29,7 +29,7 @@ func TestPermissionHandlersMergeCurrentUserRolePermissions(t *testing.T) {
 
 	h := NewPermissionHandlers(
 		db,
-		func(context.Context) ([]string, bool) { return []string{"Operator", "Technician"}, true },
+		func(context.Context) ([]string, bool) { return []string{"operator", "technician"}, true },
 		func(context.Context) (string, bool) { return "default", true },
 	)
 

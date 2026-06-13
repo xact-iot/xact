@@ -167,8 +167,8 @@ func (db *SQLiteDB) CreateUser(ctx context.Context, user *sqldb.User, passwordHa
 	}
 	result, err := db.db.ExecContext(ctx, `
 		INSERT INTO users (first_name, last_name, login_name, password_hash, email,
-		                   notification_options, active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                   notification_options, active, token_version, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
 	`, user.FirstName, user.LastName, user.LoginName, passwordHash, user.Email,
 		string(opts), active, now, now)
 	if err != nil {
@@ -179,6 +179,7 @@ func (db *SQLiteDB) CreateUser(ctx context.Context, user *sqldb.User, passwordHa
 		return err
 	}
 	user.ID = int(id)
+	user.TokenVersion = 1
 	user.CreatedAt = parseTimestamp(now)
 	return nil
 }

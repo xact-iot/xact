@@ -352,6 +352,7 @@ func (c *XACTClient) postJSON(endpoint string, payload any, apiKeyAuth bool) err
 	if err != nil {
 		return err
 	}
+
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create POST %s: %w", endpoint, err)

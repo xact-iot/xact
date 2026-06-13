@@ -236,8 +236,17 @@ func TestPermissionMiddlewareAndRespondWithError(t *testing.T) {
 	if s.checkUIPermission(req.Context(), "nodes", "delete") {
 		t.Fatal("unexpected Admin nodes/delete permission")
 	}
+	if !s.checkUIPermission(req.Context(), "profile", "change") {
+		t.Fatal("expected Admin profile/change permission")
+	}
+	if !s.checkUIPermission(newAPIRequestWithClaims(http.MethodGet, "/", nil, &JWTClaims{TenantID: "default", Roles: []string{"admin"}}).Context(), "nodes", "read") {
+		t.Fatal("expected lowercase admin role to match Admin permissions")
+	}
 	if !s.checkUIPermission(newAPIRequestWithClaims(http.MethodGet, "/", nil, &JWTClaims{Roles: []string{"SystemAdmin"}}).Context(), "anything", "anything") {
 		t.Fatal("SystemAdmin should bypass permission checks")
+	}
+	if !s.checkUIPermission(newAPIRequestWithClaims(http.MethodGet, "/", nil, &JWTClaims{Roles: []string{"systemadmin"}}).Context(), "anything", "anything") {
+		t.Fatal("lowercase systemadmin should bypass permission checks")
 	}
 
 	nextCalled := false

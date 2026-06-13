@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/xact-iot/xact/sqldb"
@@ -51,12 +52,12 @@ func (h *PermissionHandlers) HandleGetMyPermissions(w http.ResponseWriter, r *ht
 
 	userRoles := make(map[string]bool, len(roles))
 	for _, role := range roles {
-		userRoles[role] = true
+		userRoles[strings.ToLower(role)] = true
 	}
 
 	merged := make(map[string]map[string]bool)
 	for _, rp := range allPerms {
-		if !userRoles[rp.Role] {
+		if !userRoles[strings.ToLower(rp.Role)] {
 			continue
 		}
 		var uiMap map[string]map[string]bool
