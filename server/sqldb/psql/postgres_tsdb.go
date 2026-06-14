@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -168,14 +169,13 @@ func (db *PostgresDB) QueryMetricsRange(ctx context.Context, orgName, deviceName
 	return scanMetricSeries(rows)
 }
 
-// QueryMetricsByTagPaths returns time-ordered series whose device+metric path matches
-// any of the given tagPaths. Intermediate RTDB nodes are handled via LIKE matching:
-// a stored "device.metric" matches tagPath if the path starts with "device." and
-// ends with ".metric" (or equals "device.metric" exactly).
+// QueryMetricsByTagPaths returns time-ordered series whose exact device+metric
+// path matches any of the given tagPaths.
 func (db *PostgresDB) QueryMetricsByTagPaths(ctx context.Context, orgName string,
 	tagPaths []string, start, end time.Time) ([]sqldb.MetricSeries, error) {
 
-	if len(tagPaths) == 0 {
+	paths := normalizedMetricTagPaths(tagPaths)
+	if len(paths) == 0 {
 		return nil, nil
 	}
 	if end.IsZero() {
@@ -187,26 +187,86 @@ func (db *PostgresDB) QueryMetricsByTagPaths(ctx context.Context, orgName string
 		return nil, err
 	}
 
-	rows, err := db.pool.Query(ctx, `
+	pairs := candidateMetricPathPairs(paths)
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+
+	values := make([]string, 0, len(pairs))
+	args := make([]any, 0, len(pairs)*2+4)
+	for _, pair := range pairs {
+		deviceArg := len(args) + 1
+		metricArg := len(args) + 2
+		values = append(values, fmt.Sprintf("($%d, $%d)", deviceArg, metricArg))
+		args = append(args, pair.device, pair.metric)
+	}
+	orgArg := len(args) + 1
+	metricsOrgArg := len(args) + 2
+	startArg := len(args) + 3
+	endArg := len(args) + 4
+	args = append(args, orgID, orgID, start, end)
+
+	query := `
+		WITH requested(device_name, metric_name) AS (
+			VALUES ` + strings.Join(values, ", ") + `
+		)
 		SELECT dm.time, md.name, dm.value
-		FROM device_metrics dm
-		JOIN metric_definitions md ON md.id = dm.metric_id
-		JOIN metric_devices d ON d.id = dm.device_id
-		WHERE dm.org_id = $1
-		  AND dm.time >= $2 AND dm.time <= $3
-		  AND EXISTS (
-		    SELECT 1 FROM unnest($4::text[]) AS p(path)
-		    WHERE p.path = d.name || '.' || md.name
-		       OR (p.path LIKE (d.name || '.%') AND p.path LIKE ('%.' || md.name))
-		  )
+		FROM requested r
+		JOIN metric_devices d ON d.org_id = $` + fmt.Sprint(orgArg) + ` AND d.name = r.device_name
+		JOIN metric_definitions md ON md.device_id = d.id AND md.name = r.metric_name
+		JOIN device_metrics dm
+		  ON dm.org_id = $` + fmt.Sprint(metricsOrgArg) + ` AND dm.device_id = d.id AND dm.metric_id = md.id
+		 AND dm.time >= $` + fmt.Sprint(startArg) + ` AND dm.time <= $` + fmt.Sprint(endArg) + `
 		ORDER BY md.name, dm.time ASC
-	`, orgID, start, end, tagPaths)
+	`
+	rows, err := db.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("querying metrics by tag paths: %w", err)
 	}
 	defer rows.Close()
 
 	return scanMetricSeries(rows)
+}
+
+type metricPathPair struct {
+	device string
+	metric string
+}
+
+func candidateMetricPathPairs(paths []string) []metricPathPair {
+	pairs := make([]metricPathPair, 0, len(paths))
+	seen := make(map[metricPathPair]struct{}, len(paths))
+	for _, path := range paths {
+		for i, r := range path {
+			if r != '.' || i == 0 || i == len(path)-1 {
+				continue
+			}
+			pair := metricPathPair{device: path[:i], metric: path[i+1:]}
+			if _, ok := seen[pair]; ok {
+				continue
+			}
+			seen[pair] = struct{}{}
+			pairs = append(pairs, pair)
+		}
+	}
+	return pairs
+}
+
+func normalizedMetricTagPaths(tagPaths []string) []string {
+	paths := make([]string, 0, len(tagPaths))
+	seen := make(map[string]struct{}, len(tagPaths))
+	for _, path := range tagPaths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	return paths
 }
 
 // QueryMetricsSince returns series for the listed metrics with time > startTime.

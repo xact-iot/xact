@@ -191,10 +191,8 @@ type DB interface {
 	QueryMetricsRange(ctx context.Context, orgName, deviceName string,
 		metrics []string, start, end time.Time) ([]MetricSeries, error)
 
-	// QueryMetricsByTagPaths returns time-ordered series for any metrics whose
-	// stored "device.metric" path matches one of the given tag paths.
-	// A tag path may contain intermediate RTDB nodes (e.g. "NASA.ISS.life.clean_water");
-	// matching uses prefix/suffix LIKE so intermediate segments are ignored.
+	// QueryMetricsByTagPaths returns time-ordered series for metrics whose stored
+	// "device.metric" path exactly matches one of the given tag paths.
 	QueryMetricsByTagPaths(ctx context.Context, orgName string,
 		tagPaths []string, start, end time.Time) ([]MetricSeries, error)
 

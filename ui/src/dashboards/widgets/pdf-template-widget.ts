@@ -164,6 +164,12 @@ interface WidgetState {
   editorZoom: number;
   previewValues: Record<string, string>;  // runtime values for custom variables
   deleteConfirm: string | null;
+  variableDialogOpen: boolean;
+  variableInsertTarget: { el: number; row: number; col: number; start: number; end: number } | null;
+  variableDialogExpanded: Set<number>;
+  propertiesScrollTop: number;
+  canvasScrollTop: number;
+  canvasScrollLeft: number;
 }
 
 // ─── Default document ────────────────────────────────────────────────────────
@@ -235,6 +241,12 @@ export class PDFTemplateWidget extends BaseComponent {
     editorZoom: 1.0,
     previewValues: {},
     deleteConfirm: null,
+    variableDialogOpen: false,
+    variableInsertTarget: null,
+    variableDialogExpanded: new Set(),
+    propertiesScrollTop: 0,
+    canvasScrollTop: 0,
+    canvasScrollLeft: 0,
   };
 
   connectedCallback(): void {
@@ -268,9 +280,11 @@ export class PDFTemplateWidget extends BaseComponent {
   }
 
   private rerender(): void {
+    this.captureEditorScroll();
     this.detachEventListeners();
     this.render();
     this.attachEventListeners();
+    this.restoreEditorScrollSoon();
   }
 
   protected detachEventListeners(): void {}
@@ -335,7 +349,7 @@ export class PDFTemplateWidget extends BaseComponent {
                   <th class="px-4 py-2.5">Name</th>
                   <th class="px-4 py-2.5">Description</th>
                   <th class="px-4 py-2.5">Updated</th>
-                  <th class="px-4 py-2.5 w-32"></th>
+                  <th class="px-4 py-2.5 w-40"></th>
                 </tr>
               </thead>
               <tbody>
@@ -369,6 +383,15 @@ export class PDFTemplateWidget extends BaseComponent {
         <td class="px-4 py-3 text-xs opacity-50 font-mono">${updated}</td>
         <td class="px-4 py-3">
           <div class="flex items-center gap-1 justify-end">
+            <button class="btn-view-template p-1.5 rounded opacity-50 hover:opacity-100 transition-opacity"
+                    title="View PDF" data-id="${this.esc(t.id)}">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+              </svg>
+            </button>
             <button class="btn-download-template p-1.5 rounded opacity-50 hover:opacity-100 transition-opacity"
                     title="Download PDF" data-id="${this.esc(t.id)}">
               <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -490,6 +513,7 @@ export class PDFTemplateWidget extends BaseComponent {
           ${s.activeTab === 'json' ? this.renderJSONTab() : ''}
           ${s.activeTab === 'preview' ? this.renderPreviewTab() : ''}
         </div>
+        ${s.variableDialogOpen ? this.renderVariableDialog() : ''}
       </div>`;
   }
 
@@ -649,7 +673,7 @@ export class PDFTemplateWidget extends BaseComponent {
     }).join('');
 
     return `
-      <div class="flex-1 overflow-auto flex flex-col items-center py-6"
+      <div id="pdf-canvas-scroll" class="flex-1 overflow-auto flex flex-col items-center py-6"
            style="background:color-mix(in srgb,var(--panel-bg,var(--widget-bg,#0d1117)) 100%,transparent)">
         <div style="width:${pageW}px">
           <div class="flex items-center justify-center gap-2 mb-2">
@@ -993,7 +1017,7 @@ case 'events':
     }
 
     return `
-      <div class="flex flex-col overflow-y-auto shrink-0 border-l"
+      <div id="pdf-properties-panel" class="flex flex-col overflow-y-auto shrink-0 border-l"
            style="width:260px;${panelBg};border-color:var(--border-color)">
         <div class="px-3 pt-3">
           <div class="flex items-center justify-between mb-3">
@@ -1116,7 +1140,14 @@ case 'events':
             </div>
 
             <div class="mb-2">
-              <div class="opacity-50 mb-0.5">Text</div>
+              <div class="flex items-center justify-between gap-2 mb-0.5">
+                <div class="opacity-50">Text</div>
+                <button class="cell-variable-btn prop-btn-icon" data-el="${elIdx}"
+                        data-row="${s.selectedCell!.row}" data-col="${s.selectedCell!.col}"
+                        title="Insert variable">
+                  Variable
+                </button>
+              </div>
               <input type="text" class="cell-text prop-input" data-el="${elIdx}"
                      data-row="${s.selectedCell!.row}" data-col="${s.selectedCell!.col}"
                      value="${this.esc(cell.text ?? '')}">
@@ -1219,15 +1250,13 @@ case 'events':
       <div class="space-y-3 pb-4 text-xs">
         <div>
           <div class="opacity-50 mb-0.5">Height (pt)</div>
-          <input type="number" class="image-height" data-el="${elIdx}"
-                 value="${el.height ?? 144}" min="18"
-                 class="prop-input">
+          <input type="number" class="image-height prop-input" data-el="${elIdx}"
+                 value="${el.height ?? 144}" min="18">
         </div>
         <div>
           <div class="opacity-50 mb-0.5">Width (pt, 0 = full width)</div>
-          <input type="number" class="image-width" data-el="${elIdx}"
-                 value="${el.width ?? 0}" min="0"
-                 class="prop-input">
+          <input type="number" class="image-width prop-input" data-el="${elIdx}"
+                 value="${el.width ?? 0}" min="0">
         </div>
         <div>
           <div class="opacity-50 mb-0.5">Image File</div>
@@ -1252,9 +1281,8 @@ case 'events':
 
         <div>
           <div class="opacity-50 mb-0.5">Height (pt)</div>
-          <input type="number" class="chart-height" data-el="${elIdx}"
-                 value="${el.height ?? 200}" min="40"
-                 class="prop-input">
+          <input type="number" class="chart-height prop-input" data-el="${elIdx}"
+                 value="${el.height ?? 200}" min="40">
         </div>
 
         <!-- Data source -->
@@ -1590,7 +1618,7 @@ case 'events':
             in any text field to insert a variable value.
           </div>
           <div id="variables-list" class="space-y-2">
-            ${vars.map((v, i) => this.renderVariableRow(v, i)).join('')}
+            ${vars.map((v, i) => this.renderVariableRow(v, i, false)).join('')}
           </div>
           ${vars.length === 0 ? `<div class="text-xs opacity-30 text-center py-6">No variables yet.</div>` : ''}
         </div>
@@ -1605,13 +1633,65 @@ case 'events':
       </div>`;
   }
 
-  private renderVariableRow(v: PDFVariable, i: number): string {
+  private renderVariableDialog(): string {
+    const vars = this.state.variables;
+    const hasTarget = this.resolveVariableInsertTarget() !== null;
     return `
-      <div class="rounded border p-2.5 space-y-1.5 text-xs"
+      <div class="pdf-variable-dialog-backdrop">
+        <div class="pdf-variable-dialog rounded-lg border shadow-xl">
+          <div class="flex items-center justify-between px-4 py-3 border-b"
+               style="border-color:var(--border-color)">
+            <div>
+              <div class="text-sm font-semibold" style="color:var(--accent-color)">Variables</div>
+              <div class="text-xs opacity-50 mt-0.5">${hasTarget ? 'Choose a variable to insert into the selected cell.' : 'Select a table cell to insert a variable.'}</div>
+            </div>
+            <button id="btn-variable-dialog-close" class="text-xl leading-none opacity-50 hover:opacity-100"
+                    style="color:inherit">&times;</button>
+          </div>
+          <div class="flex-1 overflow-auto p-4">
+            <div class="space-y-2">
+              ${vars.map((v, i) => this.renderVariableRow(v, i, true)).join('')}
+            </div>
+            ${vars.length === 0 ? `<div class="text-xs opacity-30 text-center py-6">No variables yet.</div>` : ''}
+          </div>
+          <div class="px-4 py-3 border-t shrink-0" style="border-color:var(--border-color)">
+            <button id="btn-dialog-add-variable"
+                    class="w-full text-xs py-1.5 rounded border transition-colors"
+                    style="border-color:color-mix(in srgb,var(--accent-color) 30%,transparent);
+                           color:var(--accent-color)">
+              + Add Variable
+            </button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  private renderVariableRow(v: PDFVariable, i: number, insertable: boolean): string {
+    const collapsed = insertable && !this.state.variableDialogExpanded.has(i);
+    const typeLabel: Record<string, string> = {
+      builtin: 'Built-in',
+      rtdb: 'RTDB Tag',
+      sql: 'SQL Query',
+      custom: 'Custom',
+    };
+    const summary = v.type === 'builtin'
+      ? (v.source || 'now')
+      : v.type === 'rtdb'
+        ? (v.path || 'No tag selected')
+        : v.type === 'sql'
+          ? (v.query ? 'Query configured' : 'No query')
+          : (v.label || v.defaultValue || 'Parameter');
+    return `
+      <div class="rounded border p-2.5 space-y-1.5 text-xs pdf-variable-row"
            style="border-color:var(--border-color)">
         <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <input type="text" class="var-name prop-input prop-w-120 prop-font-mono" data-idx="${i}" value="${this.esc(v.name)}"
+          <div class="flex items-center gap-2 min-w-0">
+            ${insertable ? `
+              <button class="btn-insert-var prop-btn-icon" data-idx="${i}" title="Insert variable">
+                Insert
+              </button>
+            ` : ''}
+            <input type="text" class="var-name prop-input ${insertable ? 'prop-w-240' : 'prop-w-120'} prop-font-mono" data-idx="${i}" value="${this.esc(v.name)}"
                    placeholder="variable_name"
                    >
             <span class="opacity-30">=</span>
@@ -1621,12 +1701,23 @@ case 'events':
               <option value="sql" ${v.type==='sql'?'selected':''}>SQL Query</option>
               <option value="custom" ${v.type==='custom'?'selected':''}>Custom (parameter)</option>
             </select>
+            ${collapsed ? `
+              <span class="pdf-variable-summary opacity-50 prop-font-mono">${this.esc(typeLabel[v.type] ?? v.type)} · ${this.esc(summary)}</span>
+            ` : ''}
           </div>
-          <button class="btn-remove-var" data-idx="${i}"
-                  style="opacity:.4;cursor:pointer;background:none;border:none;color:inherit;
-                         font-size:14px;padding:0 2px">✕</button>
+          <div class="flex items-center gap-1 shrink-0">
+            ${insertable ? `
+              <button class="btn-toggle-var-details prop-btn-icon" data-idx="${i}" title="${collapsed ? 'Edit variable' : 'Collapse variable'}">
+                ${collapsed ? 'Edit' : 'Done'}
+              </button>
+            ` : ''}
+            <button class="btn-remove-var" data-idx="${i}"
+                    style="opacity:.4;cursor:pointer;background:none;border:none;color:inherit;
+                           font-size:14px;padding:0 2px">✕</button>
+          </div>
         </div>
-        ${v.type === 'builtin' ? `
+        ${collapsed ? '' : ''}
+        ${!collapsed && v.type === 'builtin' ? `
           <div class="flex items-center gap-2">
             <span class="opacity-40 w-14 shrink-0">Source</span>
             <select class="var-source prop-select prop-flex-1" data-idx="${i}">
@@ -1647,15 +1738,16 @@ case 'events':
             </div>
           ` : ''}
         ` : ''}
-        ${v.type === 'rtdb' ? `
+        ${!collapsed && v.type === 'rtdb' ? `
           <div class="flex items-center gap-2">
             <span class="opacity-40 w-14 shrink-0">Tag path</span>
             <input type="text" class="var-path prop-input prop-flex-1 prop-font-mono" data-idx="${i}" value="${this.esc(v.path ?? '')}"
                    placeholder="e.g. pump1.flow_rate"
                    >
+            <button class="var-path-pick prop-btn-icon" data-idx="${i}" title="Browse tag tree">⋯</button>
           </div>
         ` : ''}
-        ${v.type === 'sql' ? `
+        ${!collapsed && v.type === 'sql' ? `
           <div>
             <div class="opacity-40 mb-0.5">SQL Query ($1 = org name, returns one value)</div>
             <textarea class="var-query prop-input prop-textarea prop-font-mono prop-min-h-60" data-idx="${i}" rows="3"
@@ -1663,7 +1755,7 @@ case 'events':
                       >${this.esc(v.query ?? '')}</textarea>
           </div>
         ` : ''}
-        ${v.type === 'custom' ? `
+        ${!collapsed && v.type === 'custom' ? `
           <div class="flex items-center gap-2">
             <span class="opacity-40 w-14 shrink-0">Label</span>
             <input type="text" class="var-label prop-input prop-flex-1" data-idx="${i}" value="${this.esc(v.label ?? '')}"
@@ -1696,10 +1788,20 @@ case 'events':
     return `
       <div class="flex flex-col h-full overflow-hidden p-3">
         <div class="text-xs opacity-40 mb-2">
-          Raw template JSON - paste either a document ({ config, elements }) or a saved template ({ templateJson, variables }).
+          Saved template JSON - copy this to duplicate the report, or paste either a document ({ config, elements }) or a saved template ({ templateJson, variables }).
         </div>
         <json-editor id="json-editor" style="flex:1;min-height:0"></json-editor>
       </div>`;
+  }
+
+  private templateJSONExport(): string {
+    const s = this.state;
+    return JSON.stringify({
+      name: s.templateName,
+      description: s.templateDesc,
+      templateJson: s.doc,
+      variables: s.variables,
+    }, null, 2);
   }
 
   private parseTemplateJSONInput(raw: string): { doc: TDoc; variables?: PDFVariable[]; name?: string; description?: string } {
@@ -1840,7 +1942,7 @@ case 'events':
     if (this.state.activeTab === 'json') {
       const je = this.querySelector('#json-editor') as any;
       if (je) {
-        je.setValue(JSON.stringify(this.state.doc, null, 2));
+        je.setValue(this.templateJSONExport());
         je.refresh();
       }
     }
@@ -1862,6 +1964,11 @@ case 'events':
         const id = (e.target as HTMLElement).closest('[data-id]')?.getAttribute('data-id') ?? '';
         const t = s.templates.find(t => t.id === id);
         if (t) await this.downloadPDF(t.id, t.name);
+      });
+      this.onAll('.btn-view-template', 'click', async (e) => {
+        const id = (e.target as HTMLElement).closest('[data-id]')?.getAttribute('data-id') ?? '';
+        const t = s.templates.find(t => t.id === id);
+        if (t) await this.viewPDF(t.id);
       });
       if (this.canManage) this.onAll('.btn-delete-template', 'click', (e) => {
         const el = (e.target as HTMLElement).closest('[data-id]');
@@ -1917,7 +2024,7 @@ case 'events':
         this.rerender();
         setTimeout(() => {
           const je = this.querySelector('#json-editor') as any;
-          if (je) { je.setValue(JSON.stringify(s.doc, null, 2)); je.refresh(); }
+          if (je) { je.setValue(this.templateJSONExport()); je.refresh(); }
         }, 50);
       } else if (this.canManage && s.activeTab === 'json' && tab !== 'json') {
         // Try to parse JSON editor back to doc
@@ -1984,6 +2091,7 @@ case 'events':
 
     if (s.activeTab !== 'editor') {
       this.attachTabListeners();
+      this.attachVariableDialogListeners();
       return;
     }
 
@@ -2151,6 +2259,16 @@ case 'events':
     this.onAll('.cell-text', 'change', (e) => {
       const cell = this.getCell(e); if (!cell) return;
       cell.text = (e.target as HTMLInputElement).value; s.dirty = true; this.rerender();
+    });
+    this.onAll('.cell-variable-btn', 'mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.openVariableDialog(e);
+    });
+    this.onAll('.cell-variable-btn', 'click', (e) => {
+      e.preventDefault();
+      if (this.state.variableDialogOpen) return;
+      this.openVariableDialog(e);
     });
 
     this.onAll('.cell-image-file', 'change', (e) => {
@@ -2601,6 +2719,7 @@ case 'events':
         s.dirty = true;
       }, true);
     });
+    this.attachVariableDialogListeners();
   }
 
   private attachTabListeners(): void {
@@ -2636,6 +2755,9 @@ case 'events':
       this.onAll('.var-path', 'change', (e) => {
         const idx = this.varIdx(e);
         if (idx >= 0) { s.variables[idx].path = (e.target as HTMLInputElement).value.trim(); s.dirty = true; }
+      });
+      this.onAll('.var-path-pick', 'click', (e) => {
+        this.pickVariableRTDBPath(this.varIdx(e));
       });
       this.onAll('.var-query', 'change', (e) => {
         const idx = this.varIdx(e);
@@ -2688,6 +2810,211 @@ case 'events':
         this.rerender();
       });
     }
+  }
+
+  private attachVariableDialogListeners(): void {
+    if (!this.state.variableDialogOpen) return;
+    this.on('#btn-variable-dialog-close', 'click', () => this.closeVariableDialog());
+    this.on('.pdf-variable-dialog-backdrop', 'click', (e) => {
+      if (e.target === e.currentTarget) this.closeVariableDialog();
+    });
+    this.on('#btn-dialog-add-variable', 'click', () => this.addVariable());
+    this.onAll('.btn-insert-var', 'click', (e) => {
+      const idx = this.varIdx(e);
+      if (idx >= 0) this.insertVariableIntoCell(this.state.variables[idx]);
+    });
+    this.onAll('.btn-toggle-var-details', 'click', (e) => {
+      const idx = this.varIdx(e);
+      if (idx < 0) return;
+      if (this.state.variableDialogExpanded.has(idx)) {
+        this.state.variableDialogExpanded.delete(idx);
+      } else {
+        this.state.variableDialogExpanded.add(idx);
+      }
+      this.rerender();
+    });
+    this.onAll('.btn-remove-var', 'click', (e) => {
+      const idx = +((e.target as HTMLElement).closest('[data-idx]')?.getAttribute('data-idx') ?? -1);
+      if (idx >= 0) {
+        this.state.variables.splice(idx, 1);
+        this.state.dirty = true;
+        this.syncPreviewValues();
+        this.rerender();
+      }
+    });
+    this.onAll('.var-name', 'change', (e) => {
+      const idx = this.varIdx(e);
+      if (idx >= 0) {
+        this.state.variables[idx].name = (e.target as HTMLInputElement).value.trim();
+        this.state.dirty = true;
+        this.syncPreviewValues();
+      }
+    });
+    this.onAll('.var-type', 'change', (e) => {
+      const idx = this.varIdx(e);
+      if (idx >= 0) {
+        this.state.variables[idx].type = (e.target as HTMLSelectElement).value as any;
+        this.state.dirty = true;
+        this.syncPreviewValues();
+        this.rerender();
+      }
+    });
+    this.onAll('.var-source', 'change', (e) => {
+      const idx = this.varIdx(e);
+      if (idx >= 0) { this.state.variables[idx].source = (e.target as HTMLSelectElement).value; this.state.dirty = true; this.rerender(); }
+    });
+    this.onAll('.var-format', 'change', (e) => {
+      const idx = this.varIdx(e);
+      if (idx >= 0) { this.state.variables[idx].format = (e.target as HTMLInputElement).value; this.state.dirty = true; }
+    });
+    this.onAll('.var-path', 'change', (e) => {
+      const idx = this.varIdx(e);
+      if (idx >= 0) { this.state.variables[idx].path = (e.target as HTMLInputElement).value.trim(); this.state.dirty = true; }
+    });
+    this.onAll('.var-path-pick', 'click', (e) => {
+      this.pickVariableRTDBPath(this.varIdx(e));
+    });
+    this.onAll('.var-query', 'change', (e) => {
+      const idx = this.varIdx(e);
+      if (idx >= 0) { this.state.variables[idx].query = (e.target as HTMLTextAreaElement).value; this.state.dirty = true; }
+    });
+    this.onAll('.var-label', 'change', (e) => {
+      const idx = this.varIdx(e);
+      if (idx >= 0) { this.state.variables[idx].label = (e.target as HTMLInputElement).value; this.state.dirty = true; }
+    });
+    this.onAll('.var-input-type', 'change', (e) => {
+      const idx = this.varIdx(e);
+      if (idx >= 0) {
+        this.state.variables[idx].inputType = (e.target as HTMLSelectElement).value;
+        this.state.dirty = true;
+        this.rerender();
+      }
+    });
+    this.onAll('.var-default-value', 'change', (e) => {
+      const idx = this.varIdx(e);
+      if (idx < 0) return;
+      const v = this.state.variables[idx];
+      v.defaultValue = (e.target as HTMLInputElement).value;
+      if (!(v.name in this.state.previewValues) || this.state.previewValues[v.name] === '') {
+        this.state.previewValues[v.name] = v.defaultValue;
+      }
+      this.state.dirty = true;
+    });
+  }
+
+  private addVariable(): void {
+    const s = this.state;
+    s.variables.push({ name: `var${s.variables.length + 1}`, label: '', type: 'builtin', source: 'now' });
+    if (s.variableDialogOpen) {
+      s.variableDialogExpanded.add(s.variables.length - 1);
+    }
+    s.dirty = true;
+    this.rerender();
+  }
+
+  private openVariableDialog(e: Event): void {
+    const target = e.target as HTMLElement;
+    const el = +(target.closest('[data-el]')?.getAttribute('data-el') ?? -1);
+    const row = +(target.closest('[data-row]')?.getAttribute('data-row') ?? -1);
+    const col = +(target.closest('[data-col]')?.getAttribute('data-col') ?? -1);
+    const input = this.querySelector<HTMLInputElement>(`.cell-text[data-el="${el}"][data-row="${row}"][data-col="${col}"]`);
+    const cell = this.getCellByIndex(this.state.doc.elements[el], row, col);
+    this.state.propertiesScrollTop = this.getPropertiesScrollTop();
+    if (cell && input && cell.text !== input.value) {
+      cell.text = input.value;
+      this.state.dirty = true;
+    }
+    this.state.variableInsertTarget = cell
+      ? {
+          el, row, col,
+          start: input?.selectionStart ?? (cell.text ?? '').length,
+          end: input?.selectionEnd ?? (cell.text ?? '').length,
+        }
+      : null;
+    this.state.variableDialogOpen = true;
+    this.state.variableDialogExpanded = new Set();
+    this.rerender();
+    this.restorePropertiesScrollSoon();
+  }
+
+  private closeVariableDialog(): void {
+    this.state.variableDialogOpen = false;
+    this.state.variableInsertTarget = null;
+    this.state.variableDialogExpanded = new Set();
+    this.rerender();
+    this.restorePropertiesScrollSoon();
+  }
+
+  private resolveVariableInsertTarget(): { el: number; row: number; col: number; start: number; end: number } | null {
+    const target = this.state.variableInsertTarget;
+    if (target && this.getCellByIndex(this.state.doc.elements[target.el], target.row, target.col)) return target;
+    const selected = this.state.selectedCell;
+    if (this.state.selectedEl < 0 || !selected) return null;
+    const cell = this.getCellByIndex(this.state.doc.elements[this.state.selectedEl], selected.row, selected.col);
+    if (!cell) return null;
+    const end = (cell.text ?? '').length;
+    return { el: this.state.selectedEl, row: selected.row, col: selected.col, start: end, end };
+  }
+
+  private insertVariableIntoCell(v: PDFVariable): void {
+    const target = this.resolveVariableInsertTarget();
+    if (!target || !v.name.trim()) return;
+    const cell = this.getCellByIndex(this.state.doc.elements[target.el], target.row, target.col);
+    if (!cell) return;
+    const text = cell.text ?? '';
+    const start = Math.max(0, Math.min(target.start, text.length));
+    const end = Math.max(start, Math.min(target.end, text.length));
+    const token = `{{${v.name.trim()}}}`;
+    cell.text = `${text.slice(0, start)}${token}${text.slice(end)}`;
+    this.state.selectedEl = target.el;
+    this.state.selectedCell = { row: target.row, col: target.col };
+    this.state.dirty = true;
+    this.closeVariableDialog();
+  }
+
+  private pickVariableRTDBPath(idx: number): void {
+    if (idx < 0) return;
+    const current = this.state.variables[idx]?.path ?? '';
+    getTreeBrowserDialog().open('', 'Select RTDB Tag', (selectedPath) => {
+      this.state.variables[idx].path = selectedPath.replace(/:[A-Z]$/, '');
+      this.state.dirty = true;
+      this.rerender();
+    }, true, current, current);
+  }
+
+  private getPropertiesScrollTop(): number {
+    return this.querySelector<HTMLElement>('#pdf-properties-panel')?.scrollTop ?? this.state.propertiesScrollTop;
+  }
+
+  private restorePropertiesScrollSoon(): void {
+    setTimeout(() => {
+      const panel = this.querySelector<HTMLElement>('#pdf-properties-panel');
+      if (panel) panel.scrollTop = this.state.propertiesScrollTop;
+    }, 0);
+  }
+
+  private captureEditorScroll(): void {
+    const canvas = this.querySelector<HTMLElement>('#pdf-canvas-scroll');
+    if (canvas) {
+      this.state.canvasScrollTop = canvas.scrollTop;
+      this.state.canvasScrollLeft = canvas.scrollLeft;
+    }
+    const properties = this.querySelector<HTMLElement>('#pdf-properties-panel');
+    if (properties) {
+      this.state.propertiesScrollTop = properties.scrollTop;
+    }
+  }
+
+  private restoreEditorScrollSoon(): void {
+    setTimeout(() => {
+      const canvas = this.querySelector<HTMLElement>('#pdf-canvas-scroll');
+      if (canvas) {
+        canvas.scrollTop = this.state.canvasScrollTop;
+        canvas.scrollLeft = this.state.canvasScrollLeft;
+      }
+      const properties = this.querySelector<HTMLElement>('#pdf-properties-panel');
+      if (properties) properties.scrollTop = this.state.propertiesScrollTop;
+    }, 0);
   }
 
   // ─── Colour listener helper ────────────────────────────────────────────────
@@ -2910,6 +3237,8 @@ case 'events':
     s.dirty = false;
     s.saveError = '';
     s.previewValues = {};
+    s.variableDialogOpen = false;
+    s.variableInsertTarget = null;
     this.revokePreview();
     this.rerender();
   }
@@ -2935,6 +3264,8 @@ case 'events':
     s.dirty = false;
     s.saveError = '';
     s.previewValues = {};
+    s.variableDialogOpen = false;
+    s.variableInsertTarget = null;
     this.syncPreviewValues();
     this.revokePreview();
     this.rerender();
@@ -2945,6 +3276,8 @@ case 'events':
     s.view = 'list';
     s.editing = null;
     s.dirty = false;
+    s.variableDialogOpen = false;
+    s.variableInsertTarget = null;
     this.revokePreview();
     this.rerender();
   }
@@ -3017,6 +3350,26 @@ case 'events':
     } catch (err: any) {
       await showAlert(`Download failed: ${err.message}`, {
         title: 'Download failed',
+        tone: 'danger',
+      });
+    }
+  }
+
+  private async viewPDF(id: string): Promise<void> {
+    const tab = window.open('', '_blank');
+    try {
+      const blob = await generatePDF(id);
+      const url = URL.createObjectURL(blob);
+      if (tab) {
+        tab.location.href = url;
+      } else {
+        window.open(url, '_blank');
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err: any) {
+      tab?.close();
+      await showAlert(`View failed: ${err.message}`, {
+        title: 'View failed',
         tone: 'danger',
       });
     }

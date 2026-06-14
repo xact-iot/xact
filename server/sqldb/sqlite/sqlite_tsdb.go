@@ -202,7 +202,8 @@ func (db *SQLiteDB) QueryMetricsRange(ctx context.Context, orgName, deviceName s
 func (db *SQLiteDB) QueryMetricsByTagPaths(ctx context.Context, orgName string,
 	tagPaths []string, start, end time.Time) ([]sqldb.MetricSeries, error) {
 
-	if len(tagPaths) == 0 {
+	paths := normalizedMetricTagPaths(tagPaths)
+	if len(paths) == 0 {
 		return nil, nil
 	}
 	if end.IsZero() {
@@ -214,27 +215,32 @@ func (db *SQLiteDB) QueryMetricsByTagPaths(ctx context.Context, orgName string,
 		return nil, err
 	}
 
-	// Build OR conditions, one per tag path.
-	var orConditions []string
-	var pathArgs []any
-	for _, p := range tagPaths {
-		orConditions = append(orConditions,
-			`(d.name || '.' || md.name = ? OR (? LIKE d.name || '.%' AND ? LIKE '%.' || md.name))`)
-		pathArgs = append(pathArgs, p, p, p)
+	pairs := candidateMetricPathPairs(paths)
+	if len(pairs) == 0 {
+		return nil, nil
 	}
 
+	values := make([]string, 0, len(pairs))
+	args := make([]any, 0, len(pairs)*2+4)
+	for _, pair := range pairs {
+		values = append(values, "(?, ?)")
+		args = append(args, pair.device, pair.metric)
+	}
+	args = append(args, orgID, orgID, formatTimestamp(start), formatTimestamp(end))
+
 	query := `
+		WITH requested(device_name, metric_name) AS (
+			VALUES ` + strings.Join(values, ", ") + `
+		)
 		SELECT dm.time, md.name, dm.value
-		FROM device_metrics dm
-		JOIN metric_definitions md ON md.id = dm.metric_id
-		JOIN metric_devices d ON d.id = dm.device_id
-		WHERE dm.org_id = ?
-		  AND dm.time >= ? AND dm.time <= ?
-		  AND (` + strings.Join(orConditions, " OR ") + `)
+		FROM requested r
+		JOIN metric_devices d ON d.org_id = ? AND d.name = r.device_name
+		JOIN metric_definitions md ON md.device_id = d.id AND md.name = r.metric_name
+		JOIN device_metrics dm INDEXED BY idx_device_metrics_lookup
+		  ON dm.org_id = ? AND dm.device_id = d.id AND dm.metric_id = md.id
+		 AND dm.time >= ? AND dm.time <= ?
 		ORDER BY md.name, dm.time ASC
 	`
-	args := []any{orgID, formatTimestamp(start), formatTimestamp(end)}
-	args = append(args, pathArgs...)
 
 	rows, err := db.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -243,6 +249,47 @@ func (db *SQLiteDB) QueryMetricsByTagPaths(ctx context.Context, orgName string,
 	defer rows.Close()
 
 	return scanMetricSeries(rows)
+}
+
+type metricPathPair struct {
+	device string
+	metric string
+}
+
+func candidateMetricPathPairs(paths []string) []metricPathPair {
+	pairs := make([]metricPathPair, 0, len(paths))
+	seen := make(map[metricPathPair]struct{}, len(paths))
+	for _, path := range paths {
+		for i, r := range path {
+			if r != '.' || i == 0 || i == len(path)-1 {
+				continue
+			}
+			pair := metricPathPair{device: path[:i], metric: path[i+1:]}
+			if _, ok := seen[pair]; ok {
+				continue
+			}
+			seen[pair] = struct{}{}
+			pairs = append(pairs, pair)
+		}
+	}
+	return pairs
+}
+
+func normalizedMetricTagPaths(tagPaths []string) []string {
+	paths := make([]string, 0, len(tagPaths))
+	seen := make(map[string]struct{}, len(tagPaths))
+	for _, path := range tagPaths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	return paths
 }
 
 // QueryMetricsSince returns series for the listed metrics with time > startTime.

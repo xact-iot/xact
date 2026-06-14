@@ -192,6 +192,9 @@ func renderPDF(ctx context.Context, doc *TemplateDoc, gc GenerateContext) ([]byt
 	pdf.SetAutoPageBreak(true, bm)
 
 	for i := range doc.Elements {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		el := &doc.Elements[i]
 		switch el.Type {
 		case "title":
@@ -222,7 +225,9 @@ func renderPDF(ctx context.Context, doc *TemplateDoc, gc GenerateContext) ([]byt
 			}
 		case "events":
 			if el.EventsConfig != nil && gc.EventsQueryer != nil {
-				renderEventsTable(ctx, pdf, el, contentW, gc)
+				if err := renderEventsTable(ctx, pdf, el, contentW, gc); err != nil {
+					return nil, err
+				}
 			}
 		case "chart":
 			heightPt := ptOrDefault(el.Height, 200)
@@ -243,11 +248,15 @@ func renderPDF(ctx context.Context, doc *TemplateDoc, gc GenerateContext) ([]byt
 
 				log.Printf("[chart] querying org=%q paths=%v window=%v–%v",
 					gc.OrgName, paths, start.Format(time.RFC3339), end.Format(time.RFC3339))
-				allSeries, err := gc.TagPathsQueryer(ctx, gc.OrgName, paths, start, end)
+				queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				queryStart := time.Now()
+				allSeries, err := gc.TagPathsQueryer(queryCtx, gc.OrgName, paths, start, end)
+				cancel()
+				queryElapsed := time.Since(queryStart)
 				if err != nil {
-					log.Printf("[chart] query error: %v", err)
+					log.Printf("[chart] query error after %s: %v", queryElapsed.Round(time.Millisecond), err)
 				} else {
-					log.Printf("[chart] returned %d series", len(allSeries))
+					log.Printf("[chart] returned %d series, %d points in %s", len(allSeries), metricPointCount(allSeries), queryElapsed.Round(time.Millisecond))
 				}
 
 				if len(allSeries) > 0 {
@@ -360,8 +369,12 @@ func renderGrid(pdf *fpdf.Fpdf, el *Element, contentW, defaultFontSize float64) 
 
 	_, pageH := pdf.GetPageSize()
 	_, _, _, bm := pdf.GetMargins()
+	usableH := usablePageHeight(pdf, pageH, bm)
 	for ri, row := range el.Rows {
 		rowH := gridRowHeight(el, ri)
+		if usableH > 0 && rowH > usableH {
+			rowH = usableH
+		}
 		ensureVerticalSpace(pdf, rowH, pageH, bm)
 
 		rowStartX := pdf.GetX()
@@ -379,6 +392,9 @@ func renderGrid(pdf *fpdf.Fpdf, el *Element, contentW, defaultFontSize float64) 
 			h := rowH
 			if cell.CellHeight > 0 {
 				h = cell.CellHeight * ptToMM
+				if usableH > 0 && h > usableH {
+					h = usableH
+				}
 			}
 
 			// Background colour.
@@ -549,7 +565,7 @@ func renderFooter(pdf *fpdf.Fpdf, el *Element, contentW float64) {
 }
 
 // renderEventsTable queries event entries and renders them as a bordered table.
-func renderEventsTable(ctx context.Context, pdf *fpdf.Fpdf, el *Element, contentW float64, gc GenerateContext) {
+func renderEventsTable(ctx context.Context, pdf *fpdf.Fpdf, el *Element, contentW float64, gc GenerateContext) error {
 	cfg := el.EventsConfig
 
 	end := time.Now()
@@ -576,10 +592,10 @@ func renderEventsTable(ctx context.Context, pdf *fpdf.Fpdf, el *Element, content
 	entries, err := gc.EventsQueryer(ctx, filter)
 	if err != nil {
 		log.Printf("[events] query error: %v", err)
-		return
+		return nil
 	}
 	if len(entries) == 0 {
-		return
+		return nil
 	}
 
 	// Determine visible columns and their labels / relative widths.
@@ -613,7 +629,7 @@ func renderEventsTable(ctx context.Context, pdf *fpdf.Fpdf, el *Element, content
 		}
 	}
 	if len(visible) == 0 {
-		return
+		return nil
 	}
 
 	// Calculate absolute column widths.
@@ -631,11 +647,17 @@ func renderEventsTable(ctx context.Context, pdf *fpdf.Fpdf, el *Element, content
 		fontSize = 8
 	}
 	rowH := fontSize*ptToMM*1.8 + 1.0 // comfortable row height
+	_, pageH := pdf.GetPageSize()
+	_, _, _, bm := pdf.GetMargins()
+	if usableH := usablePageHeight(pdf, pageH, bm); usableH > 0 && rowH > usableH {
+		rowH = usableH
+	}
 
 	hdrBg := coalesce(el.BgColor, "#1e3a5f")
 	hdrTx := coalesce(el.TextColor, "#ffffff")
 
 	// ── Header row ──
+	ensureVerticalSpace(pdf, rowH, pageH, bm)
 	setBg(pdf, hdrBg)
 	setTx(pdf, hdrTx)
 	pdf.SetFont("Helvetica", "B", fontSize)
@@ -650,6 +672,11 @@ func renderEventsTable(ctx context.Context, pdf *fpdf.Fpdf, el *Element, content
 	// ── Data rows ──
 	pdf.SetFont("Helvetica", "", fontSize)
 	for ri, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		ensureVerticalSpace(pdf, rowH, pageH, bm)
+
 		// Alternating row background
 		if ri%2 == 0 {
 			setBg(pdf, "#ffffff")
@@ -677,6 +704,7 @@ func renderEventsTable(ctx context.Context, pdf *fpdf.Fpdf, el *Element, content
 		}
 		pdf.CellFormat(w, 0, "", "T", ln, "", false, 0, "")
 	}
+	return nil
 }
 
 // eventsColValue extracts a display string for the given column key from an event entry.
@@ -798,18 +826,44 @@ func minFloat(a, b float64) float64 {
 	return b
 }
 
+func metricPointCount(series []sqldb.MetricSeries) int {
+	total := 0
+	for _, s := range series {
+		total += len(s.Data)
+	}
+	return total
+}
+
 func ensureVerticalSpace(pdf *fpdf.Fpdf, heightMM, pageH, bottomMarginMM float64) {
 	if heightMM <= 0 {
 		return
 	}
 	_, topMargin, _, _ := pdf.GetMargins()
 	currentY := pdf.GetY()
+	usableH := usablePageHeight(pdf, pageH, bottomMarginMM)
+	if usableH > 0 && heightMM > usableH {
+		heightMM = usableH
+	}
 	if currentY <= topMargin+0.1 {
 		return
 	}
 	if currentY+heightMM > pageH-bottomMarginMM {
 		pdf.AddPage()
 	}
+}
+
+func usablePageHeight(pdf *fpdf.Fpdf, pageH, bottomMarginMM float64) float64 {
+	_, topMargin, _, _ := pdf.GetMargins()
+	usableH := pageH - bottomMarginMM - topMargin
+	if usableH < 0 {
+		return 0
+	}
+	// Leave a tiny cushion so fpdf's automatic page-break check does not see an
+	// exactly page-sized cell as overflow and keep trying to break it.
+	if usableH > 0.1 {
+		usableH -= 0.1
+	}
+	return usableH
 }
 
 func ptOrDefault(v, def float64) float64 {

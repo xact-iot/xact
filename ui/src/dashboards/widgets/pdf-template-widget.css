@@ -67,6 +67,10 @@ pdf-template-widget {
   width: 120px;
 }
 
+.prop-w-240 {
+  width: 240px;
+}
+
 .prop-mt-6 {
   margin-top: 6px;
 }
@@ -208,4 +212,35 @@ pdf-template-widget {
 
 .prop-btn-clear:hover {
   opacity: 1;
+}
+
+.pdf-variable-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 22000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.58);
+}
+
+.pdf-variable-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  background: var(--content-bg, var(--widget-bg));
+  color: var(--content-text, inherit);
+  border-color: var(--border-color);
+}
+
+.pdf-variable-row .btn-insert-var {
+  min-width: 52px;
+}
+
+.pdf-variable-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

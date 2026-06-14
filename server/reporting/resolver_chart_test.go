@@ -276,3 +276,31 @@ func TestGeneratePDFKeepsTitleWithFollowingTable(t *testing.T) {
 		t.Fatalf("expected title/table keep-together pagination to create a third page")
 	}
 }
+
+func TestGeneratePDFClampsOversizedRows(t *testing.T) {
+	template := TemplateDoc{
+		Config: DocConfig{
+			PageSize:      "A4",
+			Orientation:   "P",
+			DocumentTitle: "Oversized Row",
+			Margins:       Margins{Left: 36, Top: 36, Right: 36, Bottom: 36},
+		},
+		Elements: []Element{
+			{ID: "table", Type: "table", AllBorders: true, Rows: [][]CellProps{
+				{{Text: "This row is taller than the usable page", CellHeight: 2000}},
+				{{Text: "The renderer should still make progress"}},
+			}},
+		},
+	}
+	raw, err := json.Marshal(template)
+	if err != nil {
+		t.Fatalf("marshal template: %v", err)
+	}
+	pdf, err := GeneratePDF(context.Background(), raw, GenerateContext{OrgName: "default"})
+	if err != nil {
+		t.Fatalf("GeneratePDF: %v", err)
+	}
+	if len(pdf) < 1000 || !bytes.HasPrefix(pdf, []byte("%PDF")) {
+		t.Fatalf("pdf length/header = %d/%q", len(pdf), pdf[:4])
+	}
+}
