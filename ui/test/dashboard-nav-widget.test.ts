@@ -80,6 +80,19 @@ describe('dashboard-nav-widget device picker', () => {
     expect(option.title).toBe('AQ-B-0001 - Beach sensor');
   });
 
+  it('allows the option list to grow wider than the widget for descriptions', () => {
+    const widget = createWidget();
+    const input = widget.querySelector<HTMLInputElement>('.dnw-combo-input')!;
+
+    input.focus();
+
+    const style = widget.querySelector('style')?.textContent ?? '';
+    expect(style).toContain('width: max-content');
+    expect(style).toContain('max-width: min(48rem, calc(100vw - 2rem))');
+    expect(style).not.toContain('right: 0');
+    expect(style).not.toContain('text-overflow: ellipsis');
+  });
+
   it('uses the device description metadata selector instead of meta.description', () => {
     const widget = createWidget();
     const input = widget.querySelector<HTMLInputElement>('.dnw-combo-input')!;

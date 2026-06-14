@@ -370,6 +370,10 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 		}
 	}
 
+	if err := db.ensureEventsIntegerPrimaryKey(ctx); err != nil {
+		return fmt.Errorf("ensuring events id primary key: %w", err)
+	}
+
 	if err := db.seedAdminUser(ctx); err != nil {
 		return fmt.Errorf("seeding admin user: %w", err)
 	}
@@ -415,6 +419,78 @@ func sqliteMigrationPreview(stmt string) string {
 		return preview[:120] + "..."
 	}
 	return preview
+}
+
+func (db *SQLiteDB) ensureEventsIntegerPrimaryKey(ctx context.Context) error {
+	rows, err := db.db.QueryContext(ctx, `PRAGMA table_info(events)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasEventsTable := false
+	idIsIntegerPrimaryKey := false
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == "id" {
+			hasEventsTable = true
+			idIsIntegerPrimaryKey = strings.EqualFold(strings.TrimSpace(colType), "INTEGER") && pk == 1
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !hasEventsTable || idIsIntegerPrimaryKey {
+		return nil
+	}
+
+	log.Printf("SQLite migration running: rebuilding events table with INTEGER PRIMARY KEY id")
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`ALTER TABLE events RENAME TO events_legacy_id_migration`,
+		`CREATE TABLE events (
+			id              INTEGER PRIMARY KEY,
+			timestamp       TEXT NOT NULL,
+			server          TEXT NOT NULL DEFAULT '',
+			org_name        TEXT NOT NULL DEFAULT '',
+			user_id         INTEGER REFERENCES users(id),
+			severity        TEXT NOT NULL,
+			notification_id INTEGER NOT NULL DEFAULT 0,
+			device          TEXT NOT NULL DEFAULT '',
+			message         TEXT NOT NULL DEFAULT '',
+			params          TEXT
+		)`,
+		`INSERT INTO events (timestamp, server, org_name, user_id, severity, notification_id, device, message, params)
+		 SELECT timestamp, server, org_name, user_id, severity, notification_id, device, message, params
+		 FROM events_legacy_id_migration`,
+		`DROP TABLE events_legacy_id_migration`,
+		`CREATE INDEX IF NOT EXISTS idx_events_severity ON events (severity, timestamp)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_device   ON events (device, timestamp)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_org      ON events (org_name, timestamp)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_user     ON events (user_id, timestamp)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_notif    ON events (notification_id, timestamp)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	log.Printf("SQLite migration finished: rebuilt events table with INTEGER PRIMARY KEY id")
+	return nil
 }
 
 func (db *SQLiteDB) renameLegacyDashboardTable(ctx context.Context) error {

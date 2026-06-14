@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xact-iot/xact/events"
 	"github.com/xact-iot/xact/sqldb"
 )
 
@@ -105,6 +106,53 @@ func TestMigrateSeedsStarterDashboards(t *testing.T) {
 		t.Fatalf("Tag View parent = %v, want %d", tagView.ParentID, monitoring.ID)
 	}
 	assertDashboardWidgetType(t, db, tagView.ID, "tags-manager-widget")
+}
+
+func TestMigrateRepairsLegacyEventsIDColumn(t *testing.T) {
+	ctx := context.Background()
+	dbi, err := NewSQLiteDB(ctx, filepath.Join(t.TempDir(), "xact.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteDB: %v", err)
+	}
+	defer dbi.Close()
+	db := dbi.(*SQLiteDB)
+
+	if _, err := db.RawDB().ExecContext(ctx, `CREATE TABLE events (
+		id              BIGINT NOT NULL,
+		timestamp       TEXT NOT NULL,
+		server          TEXT NOT NULL DEFAULT '',
+		org_name        TEXT NOT NULL DEFAULT '',
+		user_id         INTEGER,
+		severity        TEXT NOT NULL,
+		notification_id INTEGER NOT NULL DEFAULT 0,
+		device          TEXT NOT NULL DEFAULT '',
+		message         TEXT NOT NULL DEFAULT '',
+		params          TEXT
+	)`); err != nil {
+		t.Fatalf("create legacy events table: %v", err)
+	}
+
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if err := db.InsertEventEntries(ctx, []events.EventEntry{{
+		Timestamp: time.Date(2026, 6, 14, 9, 10, 57, 0, time.UTC),
+		Server:    "srv",
+		OrgName:   "default",
+		Severity:  string(events.Info),
+		Device:    "LA_LongBeach.AirQuality.AQ-S-0009",
+		Message:   "PM2.5 particulate concentration returned to normal",
+	}}); err != nil {
+		t.Fatalf("InsertEventEntries after migration: %v", err)
+	}
+
+	var id int64
+	if err := db.RawDB().QueryRowContext(ctx, `SELECT id FROM events LIMIT 1`).Scan(&id); err != nil {
+		t.Fatalf("query inserted event id: %v", err)
+	}
+	if id == 0 {
+		t.Fatal("inserted event id = 0, want generated rowid")
+	}
 }
 
 func TestInsertMetricsBatchedAndCached(t *testing.T) {

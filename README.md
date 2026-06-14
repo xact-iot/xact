@@ -12,7 +12,8 @@ XACT is a industrial IoT platform designed for real-time monitoring, data acquis
     - [2.1.1. Automatically Starting the Server after a Reboot](#211-automatically-starting-the-server-after-a-reboot)
   - [2.2. First Login](#22-first-login)
   - [2.3. Windows](#23-windows)
-  - [2.4. Next Steps](#24-next-steps)
+  - [2.4. Providing data](#23-)
+  - [2.5. Next Steps](#24-next-steps)
 - [3. Core Platform](#3-core-platform)
   - [3.1. Multi-Tenancy](#31-multi-tenancy)
   - [3.2. Users & Permissions](#32-users--permissions)
@@ -112,7 +113,11 @@ start.bat
 
 Open the system at `http://localhost:8080/xact/`, or from another browser on the same trusted local network at `http://<server-host>:8080/xact/`.
 
-### 2.4. Next Steps
+### 2.4. Sending Data to XACT
+
+There are various way to send data to the XACT server and these are described in the online manual. But the simplest way to get started is probably to start with the Python program found in the repo under ```demo/python-example```. This skeleton program sends data via the XACT REST API.
+
+### 2.5. Next Steps
 
 - Open the system at `http://localhost:8080/xact/`, `http://<server-host>:8080/xact/`, or your configured proxy URL.
 - On fresh installs, set the initial `admin` password in the browser; scripted installs can log in with the configured bootstrap password.

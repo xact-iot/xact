@@ -220,10 +220,13 @@ export class DashboardNavWidget extends BaseComponent {
           position: absolute;
           top: calc(100% + 4px);
           left: 0;
-          right: 0;
           z-index: 30;
+          min-width: 100%;
+          width: max-content;
+          max-width: min(48rem, calc(100vw - 2rem));
           max-height: min(18rem, 60vh);
           overflow-y: auto;
+          overflow-x: hidden;
           border: 1px solid var(--widget-border);
           border-radius: 6px;
           background: var(--widget-bg);
@@ -250,8 +253,6 @@ export class DashboardNavWidget extends BaseComponent {
         }
         .dnw-option {
           cursor: pointer;
-          overflow: hidden;
-          text-overflow: ellipsis;
           white-space: nowrap;
           display: flex;
           align-items: baseline;
@@ -272,9 +273,7 @@ export class DashboardNavWidget extends BaseComponent {
         }
         .dnw-option-description {
           flex: 1 1 auto;
-          min-width: 0;
-          overflow: hidden;
-          text-overflow: ellipsis;
+          white-space: nowrap;
           color: var(--footer-text);
           font-size: 0.75rem;
           font-weight: 400;
