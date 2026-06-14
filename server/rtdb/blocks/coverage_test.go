@@ -2,6 +2,7 @@ package blocks
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -169,6 +170,27 @@ func TestLimitCheckHiOnlyLowOnly(t *testing.T) {
 	if leaf2.GetState() != tree.StatusAlarm {
 		t.Error("lo-only: value below limit should alarm")
 	}
+}
+
+func TestLimitCheckConcurrentProcess(t *testing.T) {
+	leaf := tree.NewFloatLeaf("t", tree.TagConfig{Name: "t", Type: tree.TypeFloat})
+	b := &LimitCheckBlock{HiLimit: ptrFloat(100), LowLimit: ptrFloat(0)}
+
+	var wg sync.WaitGroup
+	values := []float64{50, 150, -10, 75, 200, 25}
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func(offset int) {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				if _, err := b.Process(leaf, values[(offset+j)%len(values)]); err != nil {
+					t.Errorf("Process: %v", err)
+					return
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
 }
 
 func TestLimitCheckSchema(t *testing.T) {

@@ -235,15 +235,46 @@ describe('area-map-widget coordinate loading', () => {
     delete (window as any).XACT;
   });
 
-  it('does not hydrate missing coordinates with per-device subscriptions', async () => {
+  it('hydrates missing coordinates with per-device subscriptions', async () => {
     const widget = document.createElement('area-map-widget') as any;
     widget.map = { getPane: vi.fn(() => ({ style: {} })), getZoom: vi.fn(() => 10) };
     mockStore.getNodeValue.mockReturnValue(undefined);
+    const callbacks: Record<string, () => void> = {};
+    const unsubLat = vi.fn();
+    const unsubLon = vi.fn();
+    mockStore.subscribeTagReference.mockImplementation((path: string, callback: () => void) => {
+      callbacks[path] = callback;
+      callback();
+      return path.endsWith('.meta.lat') ? unsubLat : unsubLon;
+    });
 
     await widget.addDevice(layer, 'default.LA_LongBeach.AirQuality.AQ-B-0149');
+    await flush();
 
-    expect(mockStore.subscribe).not.toHaveBeenCalled();
     expect((window as any).L.marker).not.toHaveBeenCalled();
+    expect(mockStore.subscribeTagReference).toHaveBeenCalledWith(
+      'default.LA_LongBeach.AirQuality.AQ-B-0149.meta.lat',
+      expect.any(Function),
+    );
+    expect(mockStore.subscribeTagReference).toHaveBeenCalledWith(
+      'default.LA_LongBeach.AirQuality.AQ-B-0149.meta.lon',
+      expect.any(Function),
+    );
+
+    mockStore.getNodeValue.mockImplementation((path: string) => {
+      if (path.endsWith('.meta.lat')) return 33.7701;
+      if (path.endsWith('.meta.lon')) return -118.1937;
+      return undefined;
+    });
+    callbacks['default.LA_LongBeach.AirQuality.AQ-B-0149.meta.lat']?.();
+    await flush();
+
+    expect((window as any).L.marker).toHaveBeenCalledWith(
+      [33.7701, -118.1937],
+      expect.objectContaining({ icon: expect.anything() }),
+    );
+    expect(unsubLat).toHaveBeenCalled();
+    expect(unsubLon).toHaveBeenCalled();
   });
 
   it('creates markers without subscribing to coordinate tags', async () => {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/xact-iot/xact/events"
@@ -41,6 +42,7 @@ type LimitCheckBlock struct {
 	LowEvent EventConfig `json:"lowEvent"`
 
 	// runtime state - not serialised
+	mu         sync.Mutex
 	wasInAlarm bool
 	hiLock     xnats.PubLock
 	rtnLock    xnats.PubLock
@@ -67,6 +69,9 @@ func (b *LimitCheckBlock) Process(leaf tree.Leaf, value any) (any, error) {
 	if err != nil {
 		return value, nil // pass through non-numeric
 	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
 	hiBreached := b.HiLimit != nil && v > *b.HiLimit
 	lowBreached := b.LowLimit != nil && v < *b.LowLimit

@@ -368,6 +368,7 @@ export class AreaMapWidget extends BaseComponent {
 
   // Device tracking
   private devices = new Map<string, DeviceEntry>();
+  private pendingDeviceUnsubs = new Map<string, Array<() => void>>();
   private layerUnsubs = new Map<string, Array<() => void>>();
   private mapLayerPlugins = new Map<string, MapLayerPluginState>();
 
@@ -429,6 +430,9 @@ export class AreaMapWidget extends BaseComponent {
       this.config.layers = cloneConfig(c.layers);
     }
     this.loadConfiguredIconSets();
+    if (this.map && c.layers !== undefined) {
+      void this.refreshLayers();
+    }
     if (c._saveBoundsNow && this.map) {
       // Persist the captured bounds back to dashboard-container so they are saved
       this.emit('widget-config-save', { config: this.getConfig(), forceDirty: true });
@@ -596,6 +600,10 @@ export class AreaMapWidget extends BaseComponent {
     this.orgMetaUnsub = undefined;
 
     // Clear all device subscriptions
+    for (const unsubs of this.pendingDeviceUnsubs.values()) {
+      unsubs.forEach(fn => fn());
+    }
+    this.pendingDeviceUnsubs.clear();
     for (const entry of this.devices.values()) {
       entry.unsubs.forEach(fn => fn());
       if (entry.interval) clearInterval(entry.interval);
@@ -729,6 +737,10 @@ export class AreaMapWidget extends BaseComponent {
     this.ensureDeviceLayerPanes();
 
     // Clear existing device layers
+    for (const unsubs of this.pendingDeviceUnsubs.values()) {
+      unsubs.forEach(fn => fn());
+    }
+    this.pendingDeviceUnsubs.clear();
     for (const entry of this.devices.values()) {
       entry.unsubs.forEach(fn => fn());
       if (entry.interval) clearInterval(entry.interval);
@@ -946,7 +958,10 @@ export class AreaMapWidget extends BaseComponent {
     const store = getMirrorStore();
 
     const position = this.readDevicePosition(devicePath);
-    if (!position) return;
+    if (!position) {
+      this.watchPendingDevicePosition(layer, devicePath);
+      return;
+    }
 
     // Handle plugin type
     if (layer.itemType === 'plugin' && layer.pluginType) {
@@ -1025,6 +1040,28 @@ export class AreaMapWidget extends BaseComponent {
     this.subscribeToTemplateTags(layer, devicePath);
   }
 
+  private watchPendingDevicePosition(layer: LayerConfig, devicePath: string): void {
+    if (this.pendingDeviceUnsubs.has(devicePath) || this.devices.has(devicePath)) return;
+
+    const store = getMirrorStore();
+    const unsubs: Array<() => void> = [];
+    this.pendingDeviceUnsubs.set(devicePath, unsubs);
+
+    const tryAdd = () => {
+      if (!this.pendingDeviceUnsubs.has(devicePath) || this.devices.has(devicePath) || !this.map) return;
+      if (!this.readDevicePosition(devicePath)) return;
+      const pendingUnsubs = this.pendingDeviceUnsubs.get(devicePath) ?? [];
+      this.pendingDeviceUnsubs.delete(devicePath);
+      pendingUnsubs.forEach(fn => fn());
+      void this.addDevice(layer, devicePath);
+    };
+    const scheduleTryAdd = () => queueMicrotask(tryAdd);
+
+    unsubs.push(store.subscribeTagReference(`${devicePath}.meta.lat`, scheduleTryAdd));
+    unsubs.push(store.subscribeTagReference(`${devicePath}.meta.lon`, scheduleTryAdd));
+    scheduleTryAdd();
+  }
+
   private readDevicePosition(devicePath: string): [number, number] | null {
     const store = getMirrorStore();
     const rawLat = store.getNodeValue(devicePath + '.meta.lat');
@@ -1056,6 +1093,11 @@ export class AreaMapWidget extends BaseComponent {
   }
 
   private removeDevice(devicePath: string): void {
+    const pendingUnsubs = this.pendingDeviceUnsubs.get(devicePath);
+    if (pendingUnsubs) {
+      pendingUnsubs.forEach(fn => fn());
+      this.pendingDeviceUnsubs.delete(devicePath);
+    }
     const entry = this.devices.get(devicePath);
     if (!entry) return;
     entry.unsubs.forEach(fn => fn());
