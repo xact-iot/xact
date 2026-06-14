@@ -513,7 +513,7 @@ func buildTelemetryPayload(d *device, now time.Time) payload {
 	p := payload{
 		"ts":           now.UnixMilli(),
 		"templateName": templateNameForDevice(d),
-		"description":  fmt.Sprintf("%s %s monitor at %s", d.Variation, d.Type, d.Intersection),
+		"description":  d.Intersection,
 		"meta": map[string]any{
 			"name":          d.Name,
 			"deviceFamily":  "AirQuality",
