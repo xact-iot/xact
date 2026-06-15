@@ -975,7 +975,9 @@ export class AreaMapWidget extends BaseComponent {
             }
             leafletObj.addTo(this.map);
             leafletObj.on('click', () => this.onDeviceClick(devicePath));
-            this.devices.set(devicePath, { marker: leafletObj, layer, unsubs: [], divTagPaths: new Set() });
+            const unsubs: Array<() => void> = [];
+            this.devices.set(devicePath, { marker: leafletObj, layer, unsubs, divTagPaths: new Set() });
+            this.subscribeToDevicePosition(devicePath, unsubs);
           }
         } catch (e) {
           console.error('Map plugin renderer error:', e);
@@ -1030,6 +1032,7 @@ export class AreaMapWidget extends BaseComponent {
     }
 
     this.devices.set(devicePath, { marker, layer, unsubs, interval, divTagPaths: new Set(), lastIconHtml: iconHtml });
+    this.subscribeToDevicePosition(devicePath, unsubs);
 
     if (this.hasZoomWidget(layer)) {
       this.scheduleZoomWidgetMount(devicePath);
@@ -1062,6 +1065,22 @@ export class AreaMapWidget extends BaseComponent {
     scheduleTryAdd();
   }
 
+  private subscribeToDevicePosition(devicePath: string, unsubs: Array<() => void>): void {
+    const store = getMirrorStore();
+    const subscribeCoordinate = (path: string) => {
+      let initialCallback = true;
+      unsubs.push(store.subscribeTagReference(path, () => {
+        if (initialCallback) {
+          initialCallback = false;
+          return;
+        }
+        this.updateDevicePosition(devicePath);
+      }));
+    };
+    subscribeCoordinate(`${devicePath}.meta.lat`);
+    subscribeCoordinate(`${devicePath}.meta.lon`);
+  }
+
   private readDevicePosition(devicePath: string): [number, number] | null {
     const store = getMirrorStore();
     const rawLat = store.getNodeValue(devicePath + '.meta.lat');
@@ -1079,7 +1098,9 @@ export class AreaMapWidget extends BaseComponent {
     const entry = this.devices.get(devicePath);
     if (!entry) return;
     const position = this.readDevicePosition(devicePath);
-    if (position) entry.marker.setLatLng(position);
+    if (position && typeof entry.marker?.setLatLng === 'function') {
+      entry.marker.setLatLng(position);
+    }
   }
 
   private shouldSubscribeTagReference(path: string): boolean {

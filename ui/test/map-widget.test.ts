@@ -277,7 +277,7 @@ describe('area-map-widget coordinate loading', () => {
     expect(unsubLon).toHaveBeenCalled();
   });
 
-  it('creates markers without subscribing to coordinate tags', async () => {
+  it('creates markers from current coordinate tags without raw store subscriptions', async () => {
     const widget = document.createElement('area-map-widget') as any;
     widget.map = { getPane: vi.fn(() => ({ style: {} })), getZoom: vi.fn(() => 10) };
     mockStore.getNodeValue.mockImplementation((path: string) => {
@@ -302,6 +302,34 @@ describe('area-map-widget coordinate loading', () => {
     );
   });
 
+  it('moves existing markers when coordinate tag subscriptions update', async () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = { getPane: vi.fn(() => ({ style: {} })), getZoom: vi.fn(() => 10) };
+    let lat = 33.7701;
+    let lon = -118.1937;
+    mockStore.getNodeValue.mockImplementation((path: string) => {
+      if (path.endsWith('.meta.lat')) return lat;
+      if (path.endsWith('.meta.lon')) return lon;
+      return undefined;
+    });
+    const callbacks: Record<string, () => void> = {};
+    mockStore.subscribeTagReference.mockImplementation((path: string, callback: () => void) => {
+      callbacks[path] = callback;
+      callback();
+      return vi.fn();
+    });
+
+    await widget.addDevice(layer, 'default.LA_LongBeach.AirQuality.AQ-B-0149');
+    const marker = (window as any).L.marker.mock.results[0].value;
+    expect(marker.setLatLng).not.toHaveBeenCalled();
+
+    lat = 4.7;
+    lon = 48.3;
+    callbacks['default.LA_LongBeach.AirQuality.AQ-B-0149.meta.lat']?.();
+
+    expect(marker.setLatLng).toHaveBeenCalledWith([4.7, 48.3]);
+  });
+
   it('resolves wildcard patterns recursively and subscribes icon-rule tags', async () => {
     mockStore.listChildrenNames.mockImplementation((path: string) => {
       if (path === 'default.LA_LongBeach') return ['AirQuality'];
@@ -318,8 +346,8 @@ describe('area-map-widget coordinate loading', () => {
     mockStore.getNodeType.mockReturnValue('leaf');
     let ruleCallback: (() => void) | undefined;
     const unsub = vi.fn();
-    mockStore.subscribeTagReference.mockImplementation((_path: string, callback: () => void) => {
-      ruleCallback = callback;
+    mockStore.subscribeTagReference.mockImplementation((path: string, callback: () => void) => {
+      if (path.endsWith('.meta.online')) ruleCallback = callback;
       return unsub;
     });
     const widget = document.createElement('area-map-widget') as any;
