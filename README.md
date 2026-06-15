@@ -2,7 +2,7 @@
 
 ![XACT Features](screenshots/xact-features.png)
 
-XACT is a industrial IoT platform designed for real-time monitoring, data acquisition, and process automation. XACT handles everything from hobby projects to lab deployments to installations with hundreds or even thousands of devices..
+XACT is a industrial IoT platform designed for real-time monitoring, data acquisition, and process automation. XACT handles everything from hobby projects to lab deployments to installations with hundreds or even thousands of devices.
 
 ## Table of Contents
 
@@ -10,8 +10,8 @@ XACT is a industrial IoT platform designed for real-time monitoring, data acquis
 - [2. Installation](#2-installation)
   - [2.1. Linux and Darwin](#21-linux-and-darwin)
     - [2.1.1. Automatically Starting the Server after a Reboot](#211-automatically-starting-the-server-after-a-reboot)
-  - [2.2. First Login](#22-first-login)
-  - [2.3. Windows](#23-windows)
+  - [2.2. Windows](#23-windows)
+  - [2.3. First Login](#22-first-login)
   - [2.4. Providing data](#23-)
   - [2.5. Next Steps](#24-next-steps)
 - [3. Core Platform](#3-core-platform)
@@ -86,12 +86,6 @@ init.d based systems, Alpine, and custom Linux builds can use an init script tha
 
 See the `Next Steps` section below.
 
-### 2.2. First Login
-
-The bootstrap user is named `admin`. On a fresh packaged install, no password is set yet; the browser shows a `Set Admin Password` dialog instead of the normal login form. Set the password there and the first admin session starts immediately.
-
-For production deployment guidance, open the online manual after startup and read **Preparing for Production**.
-
 ### 2.3. Windows
 
 Download the Windows archive. The Windows package is xact-windows-amd64-<version>.zip. Replace `<version>` with the release you need.
@@ -112,6 +106,12 @@ start.bat
 ```
 
 Open the system at `http://localhost:8080/xact/`, or from another browser on the same trusted local network at `http://<server-host>:8080/xact/`.
+
+### 2.2. First Login
+
+The bootstrap user is named `admin`. On a fresh packaged install, no password is set yet; the browser shows a `Set Admin Password` dialog instead of the normal login form. Set the password there and the first admin session starts immediately.
+
+For production deployment guidance, open the online manual after startup and read **Preparing for Production**.
 
 ### 2.4. Sending Data to XACT
 
