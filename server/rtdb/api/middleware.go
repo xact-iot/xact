@@ -24,7 +24,13 @@ type JWTClaims struct {
 	Roles        []string `json:"roles"`
 	AllowedOrgs  []string `json:"allowed_orgs"`
 	TokenVersion int      `json:"token_version"`
+	TokenType    string   `json:"token_type,omitempty"`
 	jwt.RegisteredClaims
+}
+
+type agentTokenResolver interface {
+	ResolveAgentToken(ctx context.Context, raw string) (*sqldb.AgentToken, error)
+	TouchAgentToken(ctx context.Context, id int) error
 }
 
 // JWTAuth middleware validates JWT tokens
@@ -62,6 +68,11 @@ func JWTAuth(secret []byte, dbs ...sqldb.DB) func(http.Handler) http.Handler {
 			)
 
 			if err != nil || !token.Valid {
+				if claims, ok := resolveAgentBearer(r.Context(), db, tokenString); ok {
+					ctx := context.WithValue(r.Context(), claimsContextKey, claims)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
 				unauthorized(w)
 				return
 			}
@@ -84,7 +95,36 @@ func JWTAuth(secret []byte, dbs ...sqldb.DB) func(http.Handler) http.Handler {
 	}
 }
 
+func resolveAgentBearer(ctx context.Context, db sqldb.DB, raw string) (*JWTClaims, bool) {
+	resolver, ok := db.(agentTokenResolver)
+	if !ok {
+		return nil, false
+	}
+	token, err := resolver.ResolveAgentToken(ctx, raw)
+	if err != nil || token == nil || token.OrgName == "" {
+		return nil, false
+	}
+	_ = resolver.TouchAgentToken(ctx, token.ID)
+	return &JWTClaims{
+		UserID:       "0",
+		Username:     "agent:" + token.Name,
+		TenantID:     token.OrgName,
+		Roles:        token.Roles,
+		AllowedOrgs:  []string{token.OrgName},
+		TokenVersion: 0,
+		TokenType:    "agent",
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:  token.Name,
+			Issuer:   "xact",
+			IssuedAt: jwt.NewNumericDate(token.CreatedAt),
+		},
+	}, true
+}
+
 func validateLiveAuthState(ctx context.Context, db sqldb.DB, claims *JWTClaims) bool {
+	if claims.TokenType == "agent" {
+		return true
+	}
 	userID, err := strconv.Atoi(claims.UserID)
 	if err != nil || userID <= 0 {
 		return false

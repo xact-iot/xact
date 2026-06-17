@@ -411,6 +411,7 @@ func main() {
 		ExposeNATSInternalConfig: envEnabled("EXPOSE_NATS_INTERNAL_CONFIG"),
 		AllowedOrigins:           allowedOrigins,
 		MaxRequestBodyBytes:      envInt64Default("MAX_REQUEST_BODY_BYTES", 8<<20),
+		MCP:                      api.MCPConfigFromEnv(appVersion()),
 	}
 
 	if enableHTTPS {
@@ -450,6 +451,7 @@ func main() {
 
 	apiConfig.AppVersion = appVersion()
 	apiServer := api.NewServer(apiConfig, treeOps, treeSync, nc, jwtSecret, database, pluginDir)
+	apiServer.SetIngestProcessor(processor)
 	apiServer.SetEventsPublisher(publisher)
 
 	// Log static file serving mode

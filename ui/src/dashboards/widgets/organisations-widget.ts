@@ -557,8 +557,6 @@ export class OrganisationsWidget extends BaseComponent {
         <div id="api-key-section" class="px-4 shrink-0" style="border-top:1px solid var(--subtle-divider);">
           ${this.apiKeySectionHtml()}
         </div>` : ''}
-
-        
         <!-- Error banner -->
         ${this.form.error ? `
         <div class="mx-4 mb-2 px-3 py-2 rounded text-xs text-red-400"
@@ -665,7 +663,6 @@ export class OrganisationsWidget extends BaseComponent {
       });
     }
 
-    
     // API key listeners (initial render)
     this.attachAPIKeyListeners();
   }

@@ -271,6 +271,15 @@ NATS_BROWSER_ALLOW_COMMANDS=no
 EXPOSE_NATS_INTERNAL_CONFIG=no
 NATS_WS_PATH=/xact/ws
 
+# Embedded MCP Endpoint
+MCP_ENABLED=no
+MCP_ROUTE=/api/v1/mcp
+MCP_WRITE_TOOLS_ENABLED=no
+MCP_TOOL_TIMEOUT_SECONDS=30
+MCP_MAX_PAYLOAD_BYTES=1048576
+MCP_DOCS_ROOT=
+MCP_EXAMPLES_ROOT=
+
 # Events / Audit
 # 0 disables application-side event purging. Use a positive value only when retention policy allows deletion.
 EVENT_RETENTION_DAYS=0

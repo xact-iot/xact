@@ -15,6 +15,12 @@ registerPermissions('organisations', 'Organisation Manager', [
   { name: 'change', description: 'Create, edit, and delete organisations' },
 ], 'Controls access to the Organisation Manager widget - roles with view can inspect organisations; roles with change can create, edit, and delete organisations.');
 
+registerPermissions('agentkeys', 'Agent Keys', [
+  { name: 'manage', description: 'Create and delete agent tokens for users in the current organisation' },
+  { name: 'personal', description: 'Create and delete your own agent tokens' },
+  { name: 'access', description: 'Retrieve your own agent token values' },
+], 'Controls access to the Agent Keys widget and bearer tokens for agents and MCP clients.');
+
 registerPermissions('permissions', 'Role Permissions Manager', [
   { name: 'view', description: 'View role permissions' },
   { name: 'manage', description: 'Manage role permissions' },
@@ -216,6 +222,17 @@ registerWidgetTypes([
     minW: 10,
     minH: 18,
     load: () => import('./organisations-widget'),
+  },
+  {
+    type: 'agentkeys-widget',
+    name: 'Agent Keys',
+    icon: '\u{1F511}',
+    category: 'System',
+    defaultW: 16,
+    defaultH: 18,
+    minW: 10,
+    minH: 12,
+    load: () => import('./agentkeys-widget'),
   },
   {
     type: 'permissions-widget',

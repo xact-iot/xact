@@ -426,6 +426,25 @@ type APIKey struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+// AgentToken represents a named bearer token for agent/MCP/API access.
+// The Token field may hold the raw value when a token is first created. Treat it
+// as secret material and do not return it from list/read endpoints.
+type AgentToken struct {
+	ID              int        `json:"id"`
+	OrgName         string     `json:"orgName"`
+	UserID          int        `json:"userId"`
+	UserLoginName   string     `json:"userLoginName,omitempty"`
+	UserDisplayName string     `json:"userDisplayName,omitempty"`
+	Name            string     `json:"name"`
+	Token           string     `json:"token,omitempty"`
+	TokenPrefix     string     `json:"tokenPrefix,omitempty"`
+	TokenLast4      string     `json:"tokenLast4,omitempty"`
+	Roles           []string   `json:"roles"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	ExpiresAt       *time.Time `json:"expiresAt,omitempty"`
+	LastUsedAt      *time.Time `json:"lastUsedAt,omitempty"`
+}
+
 // ScheduledTask represents a recurring job configured by a user.
 type ScheduledTask struct {
 	ID             string          `json:"id"`

@@ -259,6 +259,94 @@ func TestAPIKeysAreHashedAndListedMasked(t *testing.T) {
 	}
 }
 
+func TestAgentTokensAreEncryptedRetrievableListedMaskedAndResolvable(t *testing.T) {
+	t.Setenv("API_KEY_HASH_SECRET", "test-agent-token-hash-secret")
+	t.Setenv("AGENT_TOKEN_ENCRYPTION_SECRET", "test-agent-token-encryption-secret")
+	ctx := context.Background()
+	dbi, err := NewSQLiteDB(ctx, filepath.Join(t.TempDir(), "xact.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteDB: %v", err)
+	}
+	defer dbi.Close()
+	db := dbi.(*SQLiteDB)
+
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	token, err := db.CreateAgentToken(ctx, "default", 1, "local-agent", []string{"Admin", "Technician"}, nil)
+	if err != nil {
+		t.Fatalf("CreateAgentToken: %v", err)
+	}
+	if token.Token == "" || token.TokenPrefix == "" || token.TokenLast4 == "" {
+		t.Fatalf("created token missing raw/prefix/last4: %#v", token)
+	}
+
+	resolved, err := db.ResolveAgentToken(ctx, token.Token)
+	if err != nil {
+		t.Fatalf("ResolveAgentToken: %v", err)
+	}
+	if resolved == nil {
+		t.Fatal("ResolveAgentToken returned nil")
+	}
+	if resolved.OrgName != "default" || resolved.Name != "local-agent" {
+		t.Fatalf("resolved token = %#v", resolved)
+	}
+	if got := strings.Join(resolved.Roles, ","); got != "Admin,Technician" {
+		t.Fatalf("roles = %q, want Admin,Technician", got)
+	}
+
+	retrieved, err := db.GetAgentToken(ctx, "default", token.ID, 1, false)
+	if err != nil {
+		t.Fatalf("GetAgentToken: %v", err)
+	}
+	if retrieved == nil || retrieved.Token != token.Token {
+		t.Fatalf("retrieved token = %#v, want raw token", retrieved)
+	}
+
+	tokens, err := db.ListAgentTokens(ctx, "default", 1, false)
+	if err != nil {
+		t.Fatalf("ListAgentTokens: %v", err)
+	}
+	if len(tokens) != 1 {
+		t.Fatalf("token count = %d, want 1", len(tokens))
+	}
+	if tokens[0].Token == token.Token {
+		t.Fatal("list response exposed raw agent token")
+	}
+	if tokens[0].Token != sqldb.MaskAPIKey(token.TokenPrefix, token.TokenLast4) {
+		t.Fatalf("listed token = %q, want masked value", tokens[0].Token)
+	}
+
+	var storedSecret, storedHash string
+	if err := db.RawDB().QueryRowContext(ctx,
+		"SELECT token_secret, token_hash FROM org_agent_tokens WHERE id = ?", token.ID,
+	).Scan(&storedSecret, &storedHash); err != nil {
+		t.Fatalf("query stored token: %v", err)
+	}
+	if storedSecret == token.Token {
+		t.Fatal("database stored raw agent token")
+	}
+	if storedSecret == "" {
+		t.Fatal("database did not store encrypted agent token")
+	}
+	if storedHash == "" {
+		t.Fatal("database did not store agent token lookup hash")
+	}
+
+	sysadminToken, err := db.CreateAgentToken(ctx, "default", 1, "sysadmin-agent", []string{"SystemAdmin"}, nil)
+	if err != nil {
+		t.Fatalf("CreateAgentToken SystemAdmin: %v", err)
+	}
+	sysadminResolved, err := db.ResolveAgentToken(ctx, sysadminToken.Token)
+	if err != nil {
+		t.Fatalf("ResolveAgentToken SystemAdmin: %v", err)
+	}
+	if sysadminResolved == nil || strings.Join(sysadminResolved.Roles, ",") != "SystemAdmin" {
+		t.Fatalf("SystemAdmin token roles = %#v", sysadminResolved)
+	}
+}
+
 func findDashboardMeta(t *testing.T, dashboards []sqldb.DashboardMeta, name string) sqldb.DashboardMeta {
 	t.Helper()
 	for _, dashboard := range dashboards {

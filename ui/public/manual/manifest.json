@@ -16,6 +16,7 @@
     { "id": "reports",           "file": "11-reports.md",           "title": "PDF Reports" },
     { "id": "scheduler",         "file": "12-scheduler.md",         "title": "Scheduler" },
     { "id": "data-ingest",       "file": "13-data-ingest.md",       "title": "Data Ingest Methods" },
+    { "id": "mcp-endpoint",      "file": "16-mcp-endpoint.md",      "title": "Embedded MCP Endpoint" },
     { "id": "plugins",           "file": "14-plugins.md",           "title": "Plugins" }
   ]
 }

@@ -248,6 +248,31 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_api_keys_key_unique ON org_api_keys(key)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_api_keys_key_hash ON org_api_keys(key_hash) WHERE key_hash IS NOT NULL AND key_hash <> ''`,
 
+		`CREATE TABLE IF NOT EXISTS org_agent_tokens (
+			id           INTEGER PRIMARY KEY,
+			org_id       INTEGER NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
+			user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			name         TEXT NOT NULL,
+			token_secret TEXT NOT NULL,
+			token_hash   TEXT NOT NULL UNIQUE,
+			token_prefix TEXT NOT NULL DEFAULT '',
+			token_last4  TEXT NOT NULL DEFAULT '',
+			roles        TEXT NOT NULL DEFAULT '[]',
+			created_at   TEXT NOT NULL,
+			expires_at   TEXT,
+			last_used_at TEXT
+		)`,
+		`DROP INDEX IF EXISTS idx_org_agent_tokens_token_unique`,
+		`ALTER TABLE org_agent_tokens ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE`,
+		`ALTER TABLE org_agent_tokens ADD COLUMN token_secret TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE org_agent_tokens ADD COLUMN token_hash TEXT`,
+		`ALTER TABLE org_agent_tokens ADD COLUMN token_prefix TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE org_agent_tokens ADD COLUMN token_last4 TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE org_agent_tokens ADD COLUMN roles TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE org_agent_tokens ADD COLUMN expires_at TEXT`,
+		`ALTER TABLE org_agent_tokens ADD COLUMN last_used_at TEXT`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_agent_tokens_token_hash ON org_agent_tokens(token_hash) WHERE token_hash IS NOT NULL AND token_hash <> ''`,
+
 		`CREATE TABLE IF NOT EXISTS notification_profiles (
 			id           INTEGER PRIMARY KEY,
 			org_name     TEXT NOT NULL REFERENCES organisations(name) ON DELETE CASCADE,
@@ -799,6 +824,26 @@ func (db *SQLiteDB) ensureViewPermissions(ctx context.Context) error {
 		}
 		if strings.EqualFold(role, "User") && profile["change"] {
 			profile["change"] = false
+			changed = true
+		}
+		agentKeys, ok := ui["agentkeys"]
+		if !ok {
+			agentKeys = map[string]bool{}
+			ui["agentkeys"] = agentKeys
+			changed = true
+		}
+		isAdminRole := strings.EqualFold(role, "SystemAdmin") || strings.EqualFold(role, "Admin")
+		isPersonalRole := isAdminRole || strings.EqualFold(role, "Manager") || strings.EqualFold(role, "Technician") || strings.EqualFold(role, "Operator")
+		if _, ok := agentKeys["manage"]; !ok {
+			agentKeys["manage"] = isAdminRole
+			changed = true
+		}
+		if _, ok := agentKeys["personal"]; !ok {
+			agentKeys["personal"] = isPersonalRole
+			changed = true
+		}
+		if _, ok := agentKeys["access"]; !ok {
+			agentKeys["access"] = isPersonalRole
 			changed = true
 		}
 		if !changed {

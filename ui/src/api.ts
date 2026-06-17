@@ -698,6 +698,76 @@ export async function deleteAPIKey(id: number): Promise<void> {
   }
 }
 
+// --- Agent Tokens ---
+
+export interface AgentToken {
+  id: number;
+  orgName: string;
+  userId: number;
+  userLoginName?: string;
+  userDisplayName?: string;
+  name: string;
+  token?: string;
+  tokenPrefix?: string;
+  tokenLast4?: string;
+  roles: string[];
+  createdAt: string;
+  expiresAt?: string;
+  lastUsedAt?: string;
+}
+
+export interface AgentTokenUser {
+  id: number;
+  loginName: string;
+  displayName: string;
+  roles: string[];
+}
+
+export async function listAgentTokens(): Promise<AgentToken[]> {
+  const response = await fetch(`${BASE_URL}/api/v1/agent-tokens`, { headers: getHeaders() });
+  if (!response.ok) throw new Error(`Failed to list agent tokens: ${response.status}`);
+  return response.json();
+}
+
+export async function listAgentTokenUsers(): Promise<AgentTokenUser[]> {
+  const response = await fetch(`${BASE_URL}/api/v1/agent-tokens/users`, { headers: getHeaders() });
+  if (!response.ok) throw new Error(`Failed to list token users: ${response.status}`);
+  return response.json();
+}
+
+export async function createAgentToken(data: { name: string; userId?: number; expiresAt?: string }): Promise<AgentToken> {
+  const response = await fetch(`${BASE_URL}/api/v1/agent-tokens`, {
+    method: 'POST',
+    headers: { ...getHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(body || `Failed to create agent token: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function getAgentToken(id: number): Promise<AgentToken> {
+  const response = await fetch(`${BASE_URL}/api/v1/agent-tokens/${id}`, { headers: getHeaders() });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(body || `Failed to retrieve agent token: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function deleteAgentToken(id: number): Promise<void> {
+  const response = await fetch(`${BASE_URL}/api/v1/agent-tokens/${id}`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(body || `Failed to delete agent token: ${response.status}`);
+  }
+}
+
 // --- Block Schemas API ---
 
 export interface BlockParamDef {

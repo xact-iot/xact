@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/xact-iot/xact/sqldb"
@@ -313,6 +314,258 @@ func (db *SQLiteDB) migrateAPIKeyHashes(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// ListAgentTokens returns agent bearer tokens for an organisation.
+func (db *SQLiteDB) ListAgentTokens(ctx context.Context, orgName string, userID int, includeAll bool) ([]sqldb.AgentToken, error) {
+	query := `
+		SELECT k.id, o.name, k.user_id, COALESCE(u.login_name, ''),
+		       COALESCE(NULLIF(TRIM(u.first_name || ' ' || u.last_name), ''), u.login_name, ''),
+		       k.name, k.token_prefix, k.token_last4, k.roles, k.created_at, k.expires_at, k.last_used_at
+		FROM org_agent_tokens k
+		JOIN organisations o ON o.id = k.org_id
+		LEFT JOIN users u ON u.id = k.user_id
+		WHERE o.name = ?`
+	args := []any{orgName}
+	if !includeAll {
+		query += ` AND k.user_id = ?`
+		args = append(args, userID)
+	}
+	query += ` ORDER BY k.created_at`
+	rows, err := db.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing agent tokens for %q: %w", orgName, err)
+	}
+	defer rows.Close()
+
+	var tokens []sqldb.AgentToken
+	for rows.Next() {
+		tok, err := scanAgentToken(rows)
+		if err != nil {
+			return nil, err
+		}
+		tok.Token = sqldb.MaskAPIKey(tok.TokenPrefix, tok.TokenLast4)
+		tokens = append(tokens, tok)
+	}
+	return tokens, rows.Err()
+}
+
+// CreateAgentToken generates and stores a new bearer token for an organisation.
+func (db *SQLiteDB) CreateAgentToken(ctx context.Context, orgName string, userID int, name string, roles []string, expiresAt *time.Time) (*sqldb.AgentToken, error) {
+	var count int
+	err := db.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM org_agent_tokens k
+		JOIN organisations o ON o.id = k.org_id
+		WHERE o.name = ? AND k.user_id = ?
+	`, orgName, userID).Scan(&count)
+	if err != nil {
+		return nil, fmt.Errorf("counting agent tokens: %w", err)
+	}
+	if count >= 10 {
+		return nil, fmt.Errorf("user already has 10 agent tokens in organisation %q (maximum)", orgName)
+	}
+
+	var orgID int
+	var loginName, displayName string
+	if err := db.db.QueryRowContext(ctx, `
+		SELECT o.id, u.login_name, COALESCE(NULLIF(TRIM(u.first_name || ' ' || u.last_name), ''), u.login_name, '')
+		FROM organisations o
+		JOIN user_organisations uo ON uo.org_id = o.id
+		JOIN users u ON u.id = uo.user_id
+		WHERE o.name = ? AND u.id = ? AND u.active = 1
+	`, orgName, userID).Scan(&orgID, &loginName, &displayName); err != nil {
+		return nil, fmt.Errorf("organisation %q not found: %w", orgName, err)
+	}
+
+	tokenValue, err := sqldb.NewRawAgentToken()
+	if err != nil {
+		return nil, fmt.Errorf("generating agent token: %w", err)
+	}
+	tokenHash := sqldb.HashAgentToken(tokenValue)
+	tokenSecret, err := sqldb.EncryptAgentToken(tokenValue)
+	if err != nil {
+		return nil, fmt.Errorf("encrypting agent token: %w", err)
+	}
+	tokenPrefix := sqldb.APIKeyPrefix(tokenValue)
+	tokenLast4 := sqldb.APIKeyLast4(tokenValue)
+	roles = normalizeAgentRoles(roles)
+	rolesJSON, _ := json.Marshal(roles)
+	now := formatTimestamp(time.Now())
+	var expires any
+	if expiresAt != nil {
+		expires = formatTimestamp(*expiresAt)
+	}
+
+	result, err := db.db.ExecContext(ctx, `
+		INSERT INTO org_agent_tokens (org_id, user_id, name, token_secret, token_hash, token_prefix, token_last4, roles, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, orgID, userID, name, tokenSecret, tokenHash, tokenPrefix, tokenLast4, string(rolesJSON), now, expires)
+	if err != nil {
+		return nil, fmt.Errorf("creating agent token: %w", err)
+	}
+	id, _ := result.LastInsertId()
+
+	return &sqldb.AgentToken{
+		ID:              int(id),
+		OrgName:         orgName,
+		UserID:          userID,
+		UserLoginName:   loginName,
+		UserDisplayName: displayName,
+		Name:            name,
+		Token:           tokenValue,
+		TokenPrefix:     tokenPrefix,
+		TokenLast4:      tokenLast4,
+		Roles:           roles,
+		CreatedAt:       parseTimestamp(now),
+		ExpiresAt:       expiresAt,
+	}, nil
+}
+
+// GetAgentToken returns a decryptable agent token when the caller is allowed to see it.
+func (db *SQLiteDB) GetAgentToken(ctx context.Context, orgName string, id int, userID int, includeAll bool) (*sqldb.AgentToken, error) {
+	query := `
+		SELECT k.id, o.name, k.user_id, COALESCE(u.login_name, ''),
+		       COALESCE(NULLIF(TRIM(u.first_name || ' ' || u.last_name), ''), u.login_name, ''),
+		       k.name, k.token_prefix, k.token_last4, k.roles, k.created_at, k.expires_at, k.last_used_at, k.token_secret
+		FROM org_agent_tokens k
+		JOIN organisations o ON o.id = k.org_id
+		LEFT JOIN users u ON u.id = k.user_id
+		WHERE o.name = ? AND k.id = ?`
+	args := []any{orgName, id}
+	if !includeAll {
+		query += ` AND k.user_id = ?`
+		args = append(args, userID)
+	}
+	var secret string
+	tok, err := scanAgentTokenWithSecret(db.db.QueryRowContext(ctx, query, args...), &secret)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting agent token: %w", err)
+	}
+	raw, err := sqldb.DecryptAgentToken(secret)
+	if err != nil {
+		return nil, err
+	}
+	tok.Token = raw
+	return &tok, nil
+}
+
+// DeleteAgentToken removes an agent token by ID within an organisation.
+func (db *SQLiteDB) DeleteAgentToken(ctx context.Context, orgName string, id int, userID int, includeAll bool) error {
+	query := `
+		DELETE FROM org_agent_tokens
+		WHERE id = ? AND org_id = (SELECT id FROM organisations WHERE name = ?)`
+	args := []any{id, orgName}
+	if !includeAll {
+		query += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	result, err := db.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("deleting agent token %d: %w", id, err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("agent token %d not found in organisation %q", id, orgName)
+	}
+	return nil
+}
+
+// ResolveAgentToken returns the token record for a raw bearer token.
+func (db *SQLiteDB) ResolveAgentToken(ctx context.Context, raw string) (*sqldb.AgentToken, error) {
+	tokenHash := sqldb.HashAgentToken(raw)
+	row := db.db.QueryRowContext(ctx, `
+		SELECT k.id, o.name, k.user_id, COALESCE(u.login_name, ''),
+		       COALESCE(NULLIF(TRIM(u.first_name || ' ' || u.last_name), ''), u.login_name, ''),
+		       k.name, k.token_prefix, k.token_last4, k.roles, k.created_at, k.expires_at, k.last_used_at
+		FROM org_agent_tokens k
+		JOIN organisations o ON o.id = k.org_id
+		LEFT JOIN users u ON u.id = k.user_id
+		WHERE k.token_hash = ?
+		  AND (k.expires_at IS NULL OR k.expires_at = '' OR k.expires_at > ?)
+	`, tokenHash, formatTimestamp(time.Now()))
+	tok, err := scanAgentToken(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("looking up agent token: %w", err)
+	}
+	return &tok, nil
+}
+
+// TouchAgentToken records recent use for display/audit ergonomics.
+func (db *SQLiteDB) TouchAgentToken(ctx context.Context, id int) error {
+	_, err := db.db.ExecContext(ctx,
+		"UPDATE org_agent_tokens SET last_used_at = ? WHERE id = ?",
+		formatTimestamp(time.Now()), id)
+	return err
+}
+
+type agentTokenScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanAgentToken(row agentTokenScanner) (sqldb.AgentToken, error) {
+	var tok sqldb.AgentToken
+	var rolesJSON, createdAtStr string
+	var expiresStr, lastUsedStr sql.NullString
+	if err := row.Scan(&tok.ID, &tok.OrgName, &tok.UserID, &tok.UserLoginName, &tok.UserDisplayName, &tok.Name, &tok.TokenPrefix, &tok.TokenLast4, &rolesJSON, &createdAtStr, &expiresStr, &lastUsedStr); err != nil {
+		return tok, err
+	}
+	_ = json.Unmarshal([]byte(rolesJSON), &tok.Roles)
+	tok.Roles = normalizeAgentRoles(tok.Roles)
+	tok.CreatedAt = parseTimestamp(createdAtStr)
+	if expiresStr.Valid && strings.TrimSpace(expiresStr.String) != "" {
+		t := parseTimestamp(expiresStr.String)
+		tok.ExpiresAt = &t
+	}
+	if lastUsedStr.Valid && strings.TrimSpace(lastUsedStr.String) != "" {
+		t := parseTimestamp(lastUsedStr.String)
+		tok.LastUsedAt = &t
+	}
+	return tok, nil
+}
+
+func scanAgentTokenWithSecret(row agentTokenScanner, secret *string) (sqldb.AgentToken, error) {
+	var tok sqldb.AgentToken
+	var rolesJSON, createdAtStr string
+	var expiresStr, lastUsedStr sql.NullString
+	if err := row.Scan(&tok.ID, &tok.OrgName, &tok.UserID, &tok.UserLoginName, &tok.UserDisplayName, &tok.Name, &tok.TokenPrefix, &tok.TokenLast4, &rolesJSON, &createdAtStr, &expiresStr, &lastUsedStr, secret); err != nil {
+		return tok, err
+	}
+	_ = json.Unmarshal([]byte(rolesJSON), &tok.Roles)
+	tok.Roles = normalizeAgentRoles(tok.Roles)
+	tok.CreatedAt = parseTimestamp(createdAtStr)
+	if expiresStr.Valid && strings.TrimSpace(expiresStr.String) != "" {
+		t := parseTimestamp(expiresStr.String)
+		tok.ExpiresAt = &t
+	}
+	if lastUsedStr.Valid && strings.TrimSpace(lastUsedStr.String) != "" {
+		t := parseTimestamp(lastUsedStr.String)
+		tok.LastUsedAt = &t
+	}
+	return tok, nil
+}
+
+func normalizeAgentRoles(roles []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, role := range roles {
+		role = strings.TrimSpace(role)
+		if role == "" {
+			continue
+		}
+		key := strings.ToLower(role)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, role)
+	}
+	return out
 }
 
 // formatArea serialises an OrgArea to a JSON string for storage.

@@ -560,6 +560,46 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			ON org_api_keys(key_hash)
 			WHERE key_hash IS NOT NULL AND key_hash <> '';
 
+		-- Agent bearer tokens for MCP/API access (up to 10 per org)
+		CREATE TABLE IF NOT EXISTS org_agent_tokens (
+			id           SERIAL PRIMARY KEY,
+			org_id       INTEGER NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
+			user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			name         TEXT NOT NULL,
+			token_secret TEXT NOT NULL,
+			token_hash   TEXT NOT NULL UNIQUE,
+			token_prefix TEXT NOT NULL DEFAULT '',
+			token_last4  TEXT NOT NULL DEFAULT '',
+			roles        JSONB NOT NULL DEFAULT '[]',
+			created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			expires_at   TIMESTAMPTZ,
+			last_used_at TIMESTAMPTZ
+		);
+		ALTER TABLE org_agent_tokens DROP COLUMN IF EXISTS token;
+		ALTER TABLE org_agent_tokens ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+		ALTER TABLE org_agent_tokens ADD COLUMN IF NOT EXISTS token_secret TEXT NOT NULL DEFAULT '';
+		ALTER TABLE org_agent_tokens ADD COLUMN IF NOT EXISTS token_hash TEXT;
+		ALTER TABLE org_agent_tokens ADD COLUMN IF NOT EXISTS token_prefix TEXT NOT NULL DEFAULT '';
+		ALTER TABLE org_agent_tokens ADD COLUMN IF NOT EXISTS token_last4 TEXT NOT NULL DEFAULT '';
+		ALTER TABLE org_agent_tokens ADD COLUMN IF NOT EXISTS roles JSONB NOT NULL DEFAULT '[]';
+		ALTER TABLE org_agent_tokens ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+		ALTER TABLE org_agent_tokens ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ;
+		ALTER TABLE org_agent_tokens ALTER COLUMN token_prefix SET DEFAULT '';
+		ALTER TABLE org_agent_tokens ALTER COLUMN token_last4 SET DEFAULT '';
+		ALTER TABLE org_agent_tokens ALTER COLUMN roles SET DEFAULT '[]';
+		ALTER TABLE org_agent_tokens ALTER COLUMN created_at SET DEFAULT NOW();
+		UPDATE org_agent_tokens SET token_prefix = '' WHERE token_prefix IS NULL;
+		UPDATE org_agent_tokens SET token_last4 = '' WHERE token_last4 IS NULL;
+		UPDATE org_agent_tokens SET roles = '[]' WHERE roles IS NULL;
+		UPDATE org_agent_tokens SET created_at = NOW() WHERE created_at IS NULL;
+		ALTER TABLE org_agent_tokens ALTER COLUMN token_prefix SET NOT NULL;
+		ALTER TABLE org_agent_tokens ALTER COLUMN token_last4 SET NOT NULL;
+		ALTER TABLE org_agent_tokens ALTER COLUMN roles SET NOT NULL;
+		ALTER TABLE org_agent_tokens ALTER COLUMN created_at SET NOT NULL;
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_org_agent_tokens_token_hash
+			ON org_agent_tokens(token_hash)
+			WHERE token_hash IS NOT NULL AND token_hash <> '';
+
 		-- Notification profiles
 		CREATE TABLE IF NOT EXISTS notification_profiles (
 			id           SERIAL PRIMARY KEY,
@@ -611,6 +651,32 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		WHERE role IN ('SystemAdmin','Admin') AND NOT (ui ? 'notifications');
 		UPDATE permissions SET ui = ui || '{"notifications":{"manage":false}}'::jsonb
 		WHERE role IN ('Manager','Technician','Operator','User') AND NOT (ui ? 'notifications');
+
+		-- Add agent key permissions to existing rows that predate this migration.
+		UPDATE permissions
+		SET ui = jsonb_set(
+			CASE WHEN ui ? 'agentkeys' THEN ui ELSE ui || '{"agentkeys":{}}'::jsonb END,
+			'{agentkeys,manage}',
+			to_jsonb(role IN ('SystemAdmin','Admin')),
+			true
+		)
+		WHERE NOT ((CASE WHEN ui ? 'agentkeys' THEN ui ELSE ui || '{"agentkeys":{}}'::jsonb END)->'agentkeys' ? 'manage');
+		UPDATE permissions
+		SET ui = jsonb_set(
+			CASE WHEN ui ? 'agentkeys' THEN ui ELSE ui || '{"agentkeys":{}}'::jsonb END,
+			'{agentkeys,personal}',
+			to_jsonb(role IN ('SystemAdmin','Admin','Manager','Technician','Operator')),
+			true
+		)
+		WHERE NOT ((CASE WHEN ui ? 'agentkeys' THEN ui ELSE ui || '{"agentkeys":{}}'::jsonb END)->'agentkeys' ? 'personal');
+		UPDATE permissions
+		SET ui = jsonb_set(
+			CASE WHEN ui ? 'agentkeys' THEN ui ELSE ui || '{"agentkeys":{}}'::jsonb END,
+			'{agentkeys,access}',
+			to_jsonb(role IN ('SystemAdmin','Admin','Manager','Technician','Operator')),
+			true
+		)
+		WHERE NOT ((CASE WHEN ui ? 'agentkeys' THEN ui ELSE ui || '{"agentkeys":{}}'::jsonb END)->'agentkeys' ? 'access');
 
 		-- PDF report templates
 		CREATE TABLE IF NOT EXISTS pdf_templates (

@@ -2,7 +2,10 @@ package psql
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/xact-iot/xact/sqldb"
@@ -108,6 +111,29 @@ func (db *PostgresDB) seedOrgPermissions(ctx context.Context, orgID int) error {
 			('User',        '{"dashboards-setup":{"read":true,"edit":false},"dashboard-container":{"edit":false},"widget-default":{"view":true,"configure":false},"organisations":{"view":false,"change":false},"permissions":{"manage":false},"users":{"manage":false},"nodes":{"read":true,"write":false},"tags":{"read":true,"write":false},"logs":{"read":false,"write":false},"profile":{"change":false}}'::jsonb)
 		) AS r(role, ui)
 		ON CONFLICT (org_id, role) DO NOTHING
+	`, orgID)
+	if err != nil {
+		return err
+	}
+	_, err = db.pool.Exec(ctx, `
+		UPDATE permissions
+		SET ui = jsonb_set(
+			jsonb_set(
+				jsonb_set(
+					CASE WHEN ui ? 'agentkeys' THEN ui ELSE ui || '{"agentkeys":{}}'::jsonb END,
+					'{agentkeys,manage}',
+					to_jsonb(role IN ('SystemAdmin','Admin')),
+					true
+				),
+				'{agentkeys,personal}',
+				to_jsonb(role IN ('SystemAdmin','Admin','Manager','Technician','Operator')),
+				true
+			),
+			'{agentkeys,access}',
+			to_jsonb(role IN ('SystemAdmin','Admin','Manager','Technician','Operator')),
+			true
+		)
+		WHERE org_id = $1
 	`, orgID)
 	return err
 }
@@ -327,4 +353,214 @@ func (db *PostgresDB) migrateAPIKeyHashes(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// ListAgentTokens returns agent bearer tokens for an organisation.
+func (db *PostgresDB) ListAgentTokens(ctx context.Context, orgName string, userID int, includeAll bool) ([]sqldb.AgentToken, error) {
+	query := `
+		SELECT k.id, o.name, k.user_id, COALESCE(u.login_name, ''),
+		       COALESCE(NULLIF(TRIM(u.first_name || ' ' || u.last_name), ''), u.login_name, ''),
+		       k.name, k.token_prefix, k.token_last4, k.roles, k.created_at, k.expires_at, k.last_used_at
+		FROM org_agent_tokens k
+		JOIN organisations o ON o.id = k.org_id
+		LEFT JOIN users u ON u.id = k.user_id
+		WHERE o.name = $1`
+	args := []any{orgName}
+	if !includeAll {
+		query += ` AND k.user_id = $2`
+		args = append(args, userID)
+	}
+	query += ` ORDER BY k.created_at`
+	rows, err := db.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing agent tokens for %q: %w", orgName, err)
+	}
+	defer rows.Close()
+
+	var tokens []sqldb.AgentToken
+	for rows.Next() {
+		tok, err := scanAgentToken(rows)
+		if err != nil {
+			return nil, err
+		}
+		tok.Token = sqldb.MaskAPIKey(tok.TokenPrefix, tok.TokenLast4)
+		tokens = append(tokens, tok)
+	}
+	return tokens, rows.Err()
+}
+
+// CreateAgentToken generates and stores a new bearer token for an organisation.
+func (db *PostgresDB) CreateAgentToken(ctx context.Context, orgName string, userID int, name string, roles []string, expiresAt *time.Time) (*sqldb.AgentToken, error) {
+	var count int
+	err := db.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM org_agent_tokens k
+		JOIN organisations o ON o.id = k.org_id
+		WHERE o.name = $1 AND k.user_id = $2`, orgName, userID).Scan(&count)
+	if err != nil {
+		return nil, fmt.Errorf("counting agent tokens: %w", err)
+	}
+	if count >= 10 {
+		return nil, fmt.Errorf("user already has 10 agent tokens in organisation %q (maximum)", orgName)
+	}
+
+	tokenValue, err := sqldb.NewRawAgentToken()
+	if err != nil {
+		return nil, fmt.Errorf("generating agent token: %w", err)
+	}
+	tokenHash := sqldb.HashAgentToken(tokenValue)
+	tokenSecret, err := sqldb.EncryptAgentToken(tokenValue)
+	if err != nil {
+		return nil, fmt.Errorf("encrypting agent token: %w", err)
+	}
+	tokenPrefix := sqldb.APIKeyPrefix(tokenValue)
+	tokenLast4 := sqldb.APIKeyLast4(tokenValue)
+	roles = normalizeAgentRoles(roles)
+	rolesJSON, _ := json.Marshal(roles)
+
+	var tok sqldb.AgentToken
+	err = db.pool.QueryRow(ctx, `
+		INSERT INTO org_agent_tokens (org_id, user_id, name, token_secret, token_hash, token_prefix, token_last4, roles, expires_at)
+		SELECT o.id, u.id, $3, $4, $5, $6, $7, $8::jsonb, $9
+		FROM organisations o
+		JOIN user_organisations uo ON uo.org_id = o.id
+		JOIN users u ON u.id = uo.user_id
+		WHERE o.name = $1 AND u.id = $2 AND u.active = TRUE
+		RETURNING id, $1, $2, COALESCE((SELECT login_name FROM users WHERE id = $2), ''),
+		          COALESCE((SELECT NULLIF(TRIM(first_name || ' ' || last_name), '') FROM users WHERE id = $2), (SELECT login_name FROM users WHERE id = $2), ''),
+		          $3, created_at, expires_at`,
+		orgName, userID, name, tokenSecret, tokenHash, tokenPrefix, tokenLast4, string(rolesJSON), expiresAt,
+	).Scan(&tok.ID, &tok.OrgName, &tok.UserID, &tok.UserLoginName, &tok.UserDisplayName, &tok.Name, &tok.CreatedAt, &tok.ExpiresAt)
+	if err != nil {
+		return nil, fmt.Errorf("creating agent token: %w", err)
+	}
+	tok.Token = tokenValue
+	tok.TokenPrefix = tokenPrefix
+	tok.TokenLast4 = tokenLast4
+	tok.Roles = roles
+	return &tok, nil
+}
+
+// GetAgentToken returns a decryptable agent token when the caller is allowed to see it.
+func (db *PostgresDB) GetAgentToken(ctx context.Context, orgName string, id int, userID int, includeAll bool) (*sqldb.AgentToken, error) {
+	query := `
+		SELECT k.id, o.name, k.user_id, COALESCE(u.login_name, ''),
+		       COALESCE(NULLIF(TRIM(u.first_name || ' ' || u.last_name), ''), u.login_name, ''),
+		       k.name, k.token_prefix, k.token_last4, k.roles, k.created_at, k.expires_at, k.last_used_at, k.token_secret
+		FROM org_agent_tokens k
+		JOIN organisations o ON o.id = k.org_id
+		LEFT JOIN users u ON u.id = k.user_id
+		WHERE o.name = $1 AND k.id = $2`
+	args := []any{orgName, id}
+	if !includeAll {
+		query += ` AND k.user_id = $3`
+		args = append(args, userID)
+	}
+	var secret string
+	tok, err := scanAgentTokenWithSecret(db.pool.QueryRow(ctx, query, args...), &secret)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting agent token: %w", err)
+	}
+	raw, err := sqldb.DecryptAgentToken(secret)
+	if err != nil {
+		return nil, err
+	}
+	tok.Token = raw
+	return &tok, nil
+}
+
+// DeleteAgentToken removes an agent token by ID within an organisation.
+func (db *PostgresDB) DeleteAgentToken(ctx context.Context, orgName string, id int, userID int, includeAll bool) error {
+	query := `
+		DELETE FROM org_agent_tokens k
+		USING organisations o
+		WHERE k.org_id = o.id AND o.name = $1 AND k.id = $2`
+	args := []any{orgName, id}
+	if !includeAll {
+		query += ` AND k.user_id = $3`
+		args = append(args, userID)
+	}
+	tag, err := db.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("deleting agent token %d: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("agent token %d not found in organisation %q", id, orgName)
+	}
+	return nil
+}
+
+// ResolveAgentToken returns the token record for a raw bearer token.
+func (db *PostgresDB) ResolveAgentToken(ctx context.Context, raw string) (*sqldb.AgentToken, error) {
+	tokenHash := sqldb.HashAgentToken(raw)
+	row := db.pool.QueryRow(ctx, `
+		SELECT k.id, o.name, k.user_id, COALESCE(u.login_name, ''),
+		       COALESCE(NULLIF(TRIM(u.first_name || ' ' || u.last_name), ''), u.login_name, ''),
+		       k.name, k.token_prefix, k.token_last4, k.roles, k.created_at, k.expires_at, k.last_used_at
+		FROM org_agent_tokens k
+		JOIN organisations o ON o.id = k.org_id
+		LEFT JOIN users u ON u.id = k.user_id
+		WHERE k.token_hash = $1
+		  AND (k.expires_at IS NULL OR k.expires_at > NOW())
+	`, tokenHash)
+	tok, err := scanAgentToken(row)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("looking up agent token: %w", err)
+	}
+	return &tok, nil
+}
+
+// TouchAgentToken records recent use for display/audit ergonomics.
+func (db *PostgresDB) TouchAgentToken(ctx context.Context, id int) error {
+	_, err := db.pool.Exec(ctx, "UPDATE org_agent_tokens SET last_used_at = NOW() WHERE id = $1", id)
+	return err
+}
+
+type agentTokenScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanAgentToken(row agentTokenScanner) (sqldb.AgentToken, error) {
+	var tok sqldb.AgentToken
+	var rolesJSON []byte
+	if err := row.Scan(&tok.ID, &tok.OrgName, &tok.UserID, &tok.UserLoginName, &tok.UserDisplayName, &tok.Name, &tok.TokenPrefix, &tok.TokenLast4, &rolesJSON, &tok.CreatedAt, &tok.ExpiresAt, &tok.LastUsedAt); err != nil {
+		return tok, err
+	}
+	_ = json.Unmarshal(rolesJSON, &tok.Roles)
+	tok.Roles = normalizeAgentRoles(tok.Roles)
+	return tok, nil
+}
+
+func scanAgentTokenWithSecret(row agentTokenScanner, secret *string) (sqldb.AgentToken, error) {
+	var tok sqldb.AgentToken
+	var rolesJSON []byte
+	if err := row.Scan(&tok.ID, &tok.OrgName, &tok.UserID, &tok.UserLoginName, &tok.UserDisplayName, &tok.Name, &tok.TokenPrefix, &tok.TokenLast4, &rolesJSON, &tok.CreatedAt, &tok.ExpiresAt, &tok.LastUsedAt, secret); err != nil {
+		return tok, err
+	}
+	_ = json.Unmarshal(rolesJSON, &tok.Roles)
+	tok.Roles = normalizeAgentRoles(tok.Roles)
+	return tok, nil
+}
+
+func normalizeAgentRoles(roles []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, role := range roles {
+		role = strings.TrimSpace(role)
+		if role == "" {
+			continue
+		}
+		key := strings.ToLower(role)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, role)
+	}
+	return out
 }

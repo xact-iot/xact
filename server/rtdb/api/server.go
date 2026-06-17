@@ -23,8 +23,10 @@ import (
 	"github.com/go-chi/cors"
 	natsgo "github.com/nats-io/nats.go"
 	"github.com/xact-iot/xact/events"
+	"github.com/xact-iot/xact/mcp"
 	"github.com/xact-iot/xact/notifications"
 	pluginauth "github.com/xact-iot/xact/plugins/auth"
+	"github.com/xact-iot/xact/rtdb/ingest"
 	"github.com/xact-iot/xact/rtdb/ingest/rest"
 	"github.com/xact-iot/xact/rtdb/nats"
 	"github.com/xact-iot/xact/rtdb/tree"
@@ -44,6 +46,7 @@ type ServerConfig struct {
 	ExposeNATSInternalConfig bool   // exposes full NATS credentials for explicitly enabled test harness use
 	AllowedOrigins           []string
 	MaxRequestBodyBytes      int64
+	MCP                      mcp.Config
 }
 
 // TLSConfig contains TLS configuration
@@ -94,6 +97,7 @@ type Server struct {
 	tagCalcHandlers      *api.TagCalcHandlers
 	scheduleHandlers     *api.ScheduleHandlers
 	ingestHandler        *rest.Handler
+	ingestProcessor      *ingest.Processor
 	notifHandler         *events.NotificationHandler
 	eventPublisher       *events.Publisher
 }
@@ -378,6 +382,37 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 		r.Get("/api/v1/auth/my-orgs", s.handleMyOrgs)
 		r.Post("/api/v1/auth/switch-org", s.handleSwitchOrg)
 
+		if s.config.MCP.Enabled {
+			mcpServer := mcp.New(s.config.MCP, mcp.Dependencies{
+				Tree:             s.tree,
+				DB:               s.db,
+				Ingest:           s.ingestProcessor,
+				ScheduleHandlers: s.scheduleHandlers,
+				TagCalcHandlers:  s.tagCalcHandlers,
+				RequireAny: func(ctx context.Context, resource string, actions ...string) bool {
+					for _, action := range actions {
+						if s.checkUIPermission(ctx, resource, action) {
+							return true
+						}
+					}
+					return false
+				},
+				CurrentOrg: func(ctx context.Context) (string, bool) {
+					claims, ok := GetClaimsFromContext(ctx)
+					if !ok {
+						return "", false
+					}
+					return claims.TenantID, claims.TenantID != ""
+				},
+			})
+			route := s.config.MCP.Route
+			if route == "" {
+				route = "/api/v1/mcp"
+			}
+			r.Handle(route, mcpServer)
+			r.Handle(route+"/*", mcpServer)
+		}
+
 		// System
 		r.Get("/api/v1/system/nats-config", s.handleNATSConfig)
 		if s.config.ExposeNATSInternalConfig {
@@ -477,6 +512,19 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 					Delete("/{id}", s.ingestHandler.HandleDeleteAPIKey)
 			})
 		}
+
+		r.Route("/api/v1/agent-tokens", func(r chi.Router) {
+			r.With(s.requireAnyUIPermission("agentkeys", "manage", "personal", "access")).
+				Get("/", s.handleListAgentTokens)
+			r.With(s.requireUIPermission("agentkeys", "manage")).
+				Get("/users", s.handleListAgentTokenUsers)
+			r.With(s.requireAnyUIPermission("agentkeys", "manage", "personal")).
+				Post("/", s.handleCreateAgentToken)
+			r.With(s.requireAnyUIPermission("agentkeys", "manage", "access")).
+				Get("/{id}", s.handleGetAgentToken)
+			r.With(s.requireAnyUIPermission("agentkeys", "manage", "personal")).
+				Delete("/{id}", s.handleDeleteAgentToken)
+		})
 
 		// User management (requires database)
 		if s.userHandlers != nil {
@@ -694,6 +742,12 @@ func (s *Server) SetTagCalcHandlers(h *api.TagCalcHandlers) {
 // Must be called before the server starts accepting requests.
 func (s *Server) SetScheduleHandlers(h *api.ScheduleHandlers) {
 	s.scheduleHandlers = h
+	s.setupRoutes()
+}
+
+// SetIngestProcessor injects the shared ingest processor for embedded tools.
+func (s *Server) SetIngestProcessor(p *ingest.Processor) {
+	s.ingestProcessor = p
 	s.setupRoutes()
 }
 
