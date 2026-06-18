@@ -76,8 +76,8 @@ func (l *baseLeaf) setParent(p *Node) { l.parent = p }
 func (l *baseLeaf) GetTreeOrg() string {
 	p := l.parent
 	for p != nil {
-		if p.nodeType == NodeTypeOrganisation {
-			return p.Name
+		if p.GetNodeType() == NodeTypeOrganisation {
+			return p.GetName()
 		}
 		p = p.parent
 	}
@@ -91,7 +91,7 @@ func (l *baseLeaf) GetTreeDevice() string {
 	var device *Node
 	p := l.parent
 	for p != nil {
-		if p.nodeType == NodeTypeDevice {
+		if p.GetNodeType() == NodeTypeDevice {
 			device = p
 			break
 		}
@@ -102,8 +102,8 @@ func (l *baseLeaf) GetTreeDevice() string {
 	}
 	var segments []string
 	curr := device
-	for curr != nil && curr.nodeType != NodeTypeOrganisation {
-		segments = append([]string{curr.Name}, segments...)
+	for curr != nil && curr.GetNodeType() != NodeTypeOrganisation {
+		segments = append([]string{curr.GetName()}, segments...)
 		curr = curr.parent
 	}
 	return strings.Join(segments, ".")
@@ -119,11 +119,11 @@ func (l *baseLeaf) GetMetricPath() string {
 	var parts []string
 	parts = append(parts, l.name)
 	p := l.parent
-	for p != nil && p.nodeType != NodeTypeDevice {
-		if p.nodeType == NodeTypeOrganisation {
+	for p != nil && p.GetNodeType() != NodeTypeDevice {
+		if p.GetNodeType() == NodeTypeOrganisation {
 			break
 		}
-		parts = append([]string{p.Name}, parts...)
+		parts = append([]string{p.GetName()}, parts...)
 		p = p.parent
 	}
 	return strings.Join(parts, ".")

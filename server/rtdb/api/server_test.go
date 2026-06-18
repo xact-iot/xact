@@ -537,7 +537,7 @@ func TestOpenAPIDocumentIncludesHandlerSchemas(t *testing.T) {
 	server := NewServer(ServerConfig{}, treeOps, nil, nil, "test-secret", nil, "")
 	doc := server.OpenAPIDocument()
 	paths := doc["paths"].(map[string]any)
-	op := paths["/api/v1/tags/"].(map[string]any)["post"].(map[string]any)
+	op := paths["/api/v1/tags"].(map[string]any)["post"].(map[string]any)
 
 	requestBody, ok := op["requestBody"].(map[string]any)
 	if !ok {
@@ -601,11 +601,11 @@ func TestOpenAPIDocumentSchemasForDatabaseRoutes(t *testing.T) {
 			t.Fatalf("%s %s missing requestBody", method, path)
 		}
 	}
-	assertOperationHasRequestSchema("/api/v1/dashboards/", "post")
-	assertOperationHasRequestSchema("/api/v1/users/", "post")
-	assertOperationHasRequestSchema("/api/v1/reports/templates/", "post")
+	assertOperationHasRequestSchema("/api/v1/dashboards", "post")
+	assertOperationHasRequestSchema("/api/v1/users", "post")
+	assertOperationHasRequestSchema("/api/v1/reports/templates", "post")
 	assertOperationHasRequestSchema("/api/v1/notifications/channels", "put")
-	assertOperationHasRequestSchema("/api/v1/api-keys/", "post")
+	assertOperationHasRequestSchema("/api/v1/api-keys", "post")
 }
 
 func TestMCPAPIProxyDeletesRTDBNodeThroughREST(t *testing.T) {
@@ -636,6 +636,83 @@ func TestMCPAPIProxyDeletesRTDBNodeThroughREST(t *testing.T) {
 	}
 	if _, err := treeOps.FindNode("tenant1.BENCH.Bench000001.analog"); err == nil {
 		t.Fatal("node still exists after proxied delete")
+	}
+}
+
+func TestMCPAPIProxyAcceptsCollectionPathWithoutTrailingSlash(t *testing.T) {
+	treeOps := tree.NewTreeWithOperations(nil)
+	server := NewServer(ServerConfig{}, treeOps, nil, nil, "test-secret", newTestDB("admin", "password"), "")
+	op, method, path, err := server.resolveProxyOperation(mcp.APIProxyRequest{
+		Method: http.MethodGet,
+		Path:   "/api/v1/dashboards",
+	})
+	if err != nil {
+		t.Fatalf("resolveProxyOperation: %v", err)
+	}
+	if method != http.MethodGet || path != "/api/v1/dashboards" {
+		t.Fatalf("resolved method/path = %s %s", method, path)
+	}
+	if op.Path != "/api/v1/dashboards" {
+		t.Fatalf("operation path = %s", op.Path)
+	}
+}
+
+func TestMCPAPIProxyHealth(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		proxyPath string
+	}{
+		{name: "no proxy path"},
+		{name: "xact proxy path", proxyPath: "/xact"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			treeOps := tree.NewTreeWithOperations(nil)
+			server := NewServer(ServerConfig{ProxyPath: tc.proxyPath}, treeOps, nil, nil, "test-secret", nil, "")
+			resp, err := server.mcpAPIProxy(context.Background(), mcp.APIProxyRequest{OperationID: "get_health"})
+			if err != nil {
+				t.Fatalf("mcpAPIProxy: %v", err)
+			}
+			if resp.Status != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body=%#v", resp.Status, resp.Body)
+			}
+		})
+	}
+}
+
+func TestMCPAPIProxyHealthWithChiRouteContext(t *testing.T) {
+	treeOps := tree.NewTreeWithOperations(nil)
+	server := NewServer(ServerConfig{ProxyPath: "/xact"}, treeOps, nil, nil, "test-secret", nil, "")
+	ctx := chi.NewRouteContext()
+	ctx.RoutePath = "/api/v1/mcp"
+	reqCtx := context.WithValue(context.Background(), chi.RouteCtxKey, ctx)
+
+	resp, err := server.mcpAPIProxy(reqCtx, mcp.APIProxyRequest{OperationID: "get_health"})
+	if err != nil {
+		t.Fatalf("mcpAPIProxy: %v", err)
+	}
+	if resp.Status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%#v", resp.Status, resp.Body)
+	}
+}
+
+func TestMCPAPIProxyListsDashboardsByOperationID(t *testing.T) {
+	treeOps := tree.NewTreeWithOperations(nil)
+	server := NewServer(ServerConfig{}, treeOps, nil, nil, "test-secret", newTestDB("admin", "password"), "")
+	ctx := context.WithValue(context.Background(), claimsContextKey, &JWTClaims{
+		UserID:       "1",
+		Username:     "admin",
+		TenantID:     "default",
+		Roles:        []string{"Admin"},
+		AllowedOrgs:  []string{"default"},
+		TokenVersion: 1,
+	})
+
+	resp, err := server.mcpAPIProxy(ctx, mcp.APIProxyRequest{OperationID: "get_dashboards"})
+	if err != nil {
+		t.Fatalf("mcpAPIProxy: %v", err)
+	}
+	if resp.Status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%#v", resp.Status, resp.Body)
 	}
 }
 

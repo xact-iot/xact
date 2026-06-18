@@ -230,9 +230,9 @@ func TestPostgresPDFTemplatesWithPGXMock(t *testing.T) {
 		t.Fatalf("unexpected template: %#v", template)
 	}
 
-	create := &sqldb.PDFTemplate{Name: "Weekly", Description: "weekly"}
+	create := &sqldb.PDFTemplate{ID: "tpl-2", Name: "Weekly", Description: "weekly"}
 	mock.ExpectQuery("INSERT INTO pdf_templates").
-		WithArgs("default", create.Name, create.Description, []byte("{}"), []byte("[]")).
+		WithArgs(create.ID, "default", create.Name, create.Description, []byte("{}"), []byte("[]")).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "created_at", "updated_at"}).AddRow("tpl-2", now, now))
 	if err := db.CreatePDFTemplate(ctx, "default", create); err != nil {
 		t.Fatalf("CreatePDFTemplate: %v", err)

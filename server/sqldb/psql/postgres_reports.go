@@ -2,6 +2,7 @@ package psql
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 
@@ -71,12 +72,27 @@ func (db *PostgresDB) CreatePDFTemplate(ctx context.Context, org string, t *sqld
 	if vars == nil {
 		vars = json.RawMessage("[]")
 	}
-	return db.pool.QueryRow(ctx, `
-		INSERT INTO pdf_templates (org_name, name, description, template_json, variables)
-		VALUES ($1, $2, $3, $4, $5)
+	if t.ID == "" {
+		t.ID = newPDFTemplateID()
+	}
+	if err := db.pool.QueryRow(ctx, `
+		INSERT INTO pdf_templates (id, org_name, name, description, template_json, variables)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at
-	`, org, t.Name, t.Description, []byte(tj), []byte(vars)).
-		Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt)
+	`, t.ID, org, t.Name, t.Description, []byte(tj), []byte(vars)).
+		Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		return err
+	}
+	t.OrgName = org
+	return nil
+}
+
+func newPDFTemplateID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 // UpdatePDFTemplate replaces an existing PDF template by ID.

@@ -179,7 +179,7 @@ func (t *TreeWithOperations) CreateDeviceNode(path string, templateRef string) e
 		return err
 	}
 
-	node.nodeType = NodeTypeDevice
+	node.SetNodeType(NodeTypeDevice)
 
 	// Get or create 'meta' subnode
 	var metaNode *Node
@@ -261,7 +261,7 @@ func (t *TreeWithOperations) CreateOrganisationNode(path string, templateRef str
 		return err
 	}
 
-	node.nodeType = NodeTypeOrganisation
+	node.SetNodeType(NodeTypeOrganisation)
 
 	// Get or create 'meta' subnode
 	var metaNode *Node
@@ -1012,9 +1012,7 @@ func (t *TreeWithOperations) LockNode(path string) error {
 	if err != nil {
 		return err
 	}
-	node.mu.Lock()
-	node.locked = true
-	node.mu.Unlock()
+	node.SetLocked(true)
 	return nil
 }
 
@@ -1026,8 +1024,6 @@ func (t *TreeWithOperations) UnlockNode(path string) error {
 	if err != nil {
 		return err
 	}
-	node.mu.Lock()
-	node.locked = false
-	node.mu.Unlock()
+	node.SetLocked(false)
 	return nil
 }

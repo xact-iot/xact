@@ -1506,7 +1506,7 @@ func (s *Server) toolDefineReport(ctx context.Context, raw json.RawMessage) (any
 		if err := s.requireWrite(ctx, "reports", "manage"); err != nil {
 			return nil, err
 		}
-		t := sqldb.PDFTemplate{Name: req.Name, Description: req.Description, TemplateJSON: req.TemplateJSON, Variables: req.Variables}
+		t := sqldb.PDFTemplate{ID: req.ID, Name: req.Name, Description: req.Description, TemplateJSON: req.TemplateJSON, Variables: req.Variables}
 		if t.TemplateJSON == nil {
 			t.TemplateJSON = json.RawMessage(`{"config":{},"elements":[]}`)
 		}

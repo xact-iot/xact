@@ -226,8 +226,7 @@ func canonicalOpenAPIPath(route, proxyPath string) (string, bool) {
 			route = strings.TrimPrefix(route, proxyPath)
 		}
 	}
-	route = strings.ReplaceAll(route, "/*", "/{path}")
-	route = strings.ReplaceAll(route, "{path:.*}", "{path}")
+	route = canonicalRoutePattern(route)
 	if route == "" {
 		route = "/"
 	}
@@ -246,7 +245,11 @@ func canonicalOpenAPIPath(route, proxyPath string) (string, bool) {
 func canonicalRoutePattern(path string) string {
 	path = strings.ReplaceAll(path, "/*", "/{path}")
 	path = strings.ReplaceAll(path, "{path:.*}", "{path}")
-	return cleanRoutePath(path)
+	path = cleanRoutePath(path)
+	if path != "/" {
+		path = strings.TrimRight(path, "/")
+	}
+	return path
 }
 
 func cleanRoutePath(path string) string {
@@ -265,7 +268,7 @@ func joinRoutePath(base, pattern string) string {
 		if base == "" {
 			return "/"
 		}
-		return strings.TrimRight(base, "/") + "/"
+		return strings.TrimRight(base, "/")
 	}
 	if base == "" || base == "/" {
 		return cleanRoutePath(pattern)

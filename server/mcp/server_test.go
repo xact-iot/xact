@@ -3,10 +3,13 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/xact-iot/xact/rtdb/tree"
+	"github.com/xact-iot/xact/sqldb"
+	"github.com/xact-iot/xact/sqldb/sqlite"
 )
 
 type noopTagValuePublisher struct{}
@@ -62,6 +65,55 @@ func rawJSON(t *testing.T, v any) json.RawMessage {
 		t.Fatalf("marshal json: %v", err)
 	}
 	return data
+}
+
+func TestDefineReportCreatePreservesProvidedID(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.NewSQLiteDB(ctx, filepath.Join(t.TempDir(), "xact.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteDB: %v", err)
+	}
+	t.Cleanup(db.Close)
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	srv := New(Config{WriteTools: true}, Dependencies{
+		DB: db,
+		RequireAny: func(context.Context, string, ...string) bool {
+			return true
+		},
+		CurrentOrg: func(context.Context) (string, bool) {
+			return "default", true
+		},
+	})
+	templateID := "32dd8c7d-3aa6-42b4-bc4d-9df49c5d93fd"
+	raw := rawJSON(t, map[string]any{
+		"operation":    "create",
+		"id":           templateID,
+		"name":         "Agent report",
+		"description":  "created by MCP",
+		"templateJson": map[string]any{"config": map[string]any{}, "elements": []any{}},
+		"variables":    []any{},
+		"dryRun":       false,
+	})
+
+	result, err := srv.toolDefineReport(ctx, raw)
+	if err != nil {
+		t.Fatalf("toolDefineReport: %v", err)
+	}
+	out := result.(map[string]any)
+	template := out["template"].(sqldb.PDFTemplate)
+	if template.ID != templateID {
+		t.Fatalf("returned template ID = %q, want %q", template.ID, templateID)
+	}
+	stored, err := db.GetPDFTemplate(ctx, "default", templateID)
+	if err != nil {
+		t.Fatalf("GetPDFTemplate: %v", err)
+	}
+	if stored == nil || stored.ID != templateID {
+		t.Fatalf("stored template = %#v", stored)
+	}
 }
 
 func TestRTDBTagCRUDTools(t *testing.T) {

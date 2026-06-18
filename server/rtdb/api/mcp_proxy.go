@@ -53,17 +53,16 @@ func (s *Server) mcpAPIProxy(ctx context.Context, req mcp.APIProxyRequest) (mcp.
 	if err != nil {
 		return mcp.APIProxyResponse{}, err
 	}
-	target := path
-	if s.config.ProxyPath != "" {
-		target = strings.TrimRight(s.config.ProxyPath, "/") + path
-	}
+	targets := s.proxyDispatchTargets(path)
 	if len(req.Query) > 0 {
 		values := url.Values{}
 		for key, value := range req.Query {
 			addQueryValue(values, key, value)
 		}
 		if encoded := values.Encode(); encoded != "" {
-			target += "?" + encoded
+			for i := range targets {
+				targets[i] += "?" + encoded
+			}
 		}
 	}
 
@@ -71,21 +70,16 @@ func (s *Server) mcpAPIProxy(ctx context.Context, req mcp.APIProxyRequest) (mcp.
 	if len(req.Body) > 0 && string(req.Body) != "null" {
 		body = req.Body
 	}
-	httpReq := httptest.NewRequest(method, target, bytes.NewReader(body))
-	httpReq = httpReq.WithContext(ctx)
-	if len(body) > 0 {
-		httpReq.Header.Set("Content-Type", "application/json")
-	}
+	authToken := ""
 	if !op.Public {
 		token, err := s.internalJWTForContext(ctx)
 		if err != nil {
 			return mcp.APIProxyResponse{}, err
 		}
-		httpReq.Header.Set("Authorization", "Bearer "+token)
+		authToken = token
 	}
 
-	rr := httptest.NewRecorder()
-	s.router.ServeHTTP(rr, httpReq)
+	rr := s.dispatchProxyRequest(ctx, method, targets, body, authToken)
 	resp := rr.Result()
 	defer resp.Body.Close()
 
@@ -105,6 +99,64 @@ func (s *Server) mcpAPIProxy(ctx context.Context, req mcp.APIProxyRequest) (mcp.
 		}
 	}
 	return mcp.APIProxyResponse{Status: resp.StatusCode, Headers: headers, Body: responseBody}, nil
+}
+
+func (s *Server) dispatchProxyRequest(ctx context.Context, method string, targets []string, body []byte, authToken string) *httptest.ResponseRecorder {
+	var last *httptest.ResponseRecorder
+	dispatchCtx := proxyDispatchContext(ctx)
+	for _, target := range targets {
+		httpReq := httptest.NewRequest(method, target, bytes.NewReader(body))
+		httpReq = httpReq.WithContext(dispatchCtx)
+		if len(body) > 0 {
+			httpReq.Header.Set("Content-Type", "application/json")
+		}
+		if authToken != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+authToken)
+		}
+		rr := httptest.NewRecorder()
+		s.router.ServeHTTP(rr, httpReq)
+		if rr.Code != http.StatusNotFound {
+			return rr
+		}
+		last = rr
+	}
+	return last
+}
+
+func proxyDispatchContext(ctx context.Context) context.Context {
+	dispatchCtx := context.Background()
+	if claims, ok := GetClaimsFromContext(ctx); ok {
+		dispatchCtx = context.WithValue(dispatchCtx, claimsContextKey, claims)
+	}
+	return dispatchCtx
+}
+
+func (s *Server) proxyDispatchTargets(path string) []string {
+	targets := []string{}
+	add := func(target string) {
+		if target == "" {
+			return
+		}
+		for _, existing := range targets {
+			if existing == target {
+				return
+			}
+		}
+		targets = append(targets, target)
+	}
+	withSlashVariants := func(target string) {
+		add(target)
+		if target != "/" {
+			trimmed := strings.TrimRight(target, "/")
+			add(trimmed)
+			add(trimmed + "/")
+		}
+	}
+	if s.config.ProxyPath != "" {
+		withSlashVariants(strings.TrimRight(s.config.ProxyPath, "/") + path)
+	}
+	withSlashVariants(path)
+	return targets
 }
 
 func (s *Server) resolveProxyOperation(req mcp.APIProxyRequest) (openAPIOperation, string, string, error) {
@@ -127,11 +179,21 @@ func (s *Server) resolveProxyOperation(req mcp.APIProxyRequest) (openAPIOperatio
 		return openAPIOperation{}, "", "", errors.New("path must be a local API path")
 	}
 	for _, op := range s.openapi.operation {
-		if op.Method == method && op.Path == path {
-			return op, method, path, nil
+		if op.Method == method && equivalentProxyPath(op.Path, path) {
+			return op, method, op.Path, nil
 		}
 	}
 	return openAPIOperation{}, "", "", fmt.Errorf("%s %s is not present in the OpenAPI document", method, path)
+}
+
+func equivalentProxyPath(openAPIPath, requestPath string) bool {
+	if openAPIPath == requestPath {
+		return true
+	}
+	if openAPIPath != "/" && strings.TrimRight(openAPIPath, "/") == strings.TrimRight(requestPath, "/") {
+		return true
+	}
+	return false
 }
 
 func applyProxyPathParams(path string, params map[string]any) (string, error) {

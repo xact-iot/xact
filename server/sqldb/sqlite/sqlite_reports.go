@@ -74,7 +74,10 @@ func (db *SQLiteDB) CreatePDFTemplate(ctx context.Context, org string, t *sqldb.
 	if vars == nil {
 		vars = json.RawMessage("[]")
 	}
-	id := newUUID()
+	id := t.ID
+	if id == "" {
+		id = newUUID()
+	}
 	now := formatTimestamp(time.Now())
 	_, err := db.db.ExecContext(ctx, `
 		INSERT INTO pdf_templates (id, org_name, name, description, template_json, variables, created_at, updated_at)
