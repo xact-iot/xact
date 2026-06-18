@@ -114,12 +114,14 @@ describe('REST API wrappers', () => {
       units: 'state',
       deadband: 1,
       enumValues: { 0: 'Off', 1: 'On' },
+      pipeline: [{ type: 'publish', parameters: {} }],
     });
     [, init] = lastFetch(fetchMock);
     const tagBody = JSON.parse(String(init?.body));
     expect(tagBody.path).toBe('/Devices/Pump/Mode');
     expect(tagBody.type).toBe(api.ScalarType.Enum);
     expect(tagBody.shared).toEqual({ description: 'Mode', units: 'state', deadband: 1, enumValues: { 0: 'Off', 1: 'On' } });
+    expect(tagBody.pipeline).toEqual([{ type: 'publish', parameters: {} }]);
 
     await api.updateTagValue('default.Devices.Pump.Mode', 1);
     [, init] = lastFetch(fetchMock);

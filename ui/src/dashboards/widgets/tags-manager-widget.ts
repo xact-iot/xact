@@ -140,6 +140,10 @@ function escapeHtml(value: any): string {
     .replace(/>/g, '&gt;');
 }
 
+function defaultTagPipeline(): PipelineBlockUI[] {
+  return [{ type: 'publish', params: {} }];
+}
+
 // ─── Widget ───────────────────────────────────────────────────────────────────
 
 export class TagsManagerWidget extends BaseComponent {
@@ -1505,7 +1509,7 @@ export class TagsManagerWidget extends BaseComponent {
     this.tagModalParentPath = parentPath;
     this.editingTagPath = null;
     this.editingTagData = { path: parentPath, name: '', description: '', units: '', deadband: '', type: 'float', enumValues: {} };
-    this.tagPipeline = [];
+    this.tagPipeline = defaultTagPipeline();
     this.expandedPipelineBlocks = new Set();
     this.tagValidationErrors.clear();
     this.tagArrayMode = false;
@@ -1738,12 +1742,11 @@ export class TagsManagerWidget extends BaseComponent {
           await createNode(newPath, undefined, true);
           for (let i = 0; i < size; i++) {
             const elemPath = `${newPath}.${i}`;
-            await createTag(elemPath, type, { description, units, deadband, enumValues });
+            await createTag(elemPath, type, { description, units, deadband, enumValues, pipeline });
             if (units || deadband !== 0) await updateTag(elemPath, { description, units, deadband });
           }
         } else {
-          await createTag(newPath, type, { description, units, deadband, enumValues });
-          if (pipeline.length > 0) await updateTag(newPath, { pipeline });
+          await createTag(newPath, type, { description, units, deadband, enumValues, pipeline });
         }
         if (parent) this.expandedNodes.add(parent);
       } else if (this.pipelineMode === 'inherited') {

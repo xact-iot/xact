@@ -11,11 +11,12 @@ import (
 
 // CreateTagRequest represents a create tag request
 type CreateTagRequest struct {
-	Path   string          `json:"path"`
-	Type   tree.ScalarType `json:"type"`
-	Config tree.TagConfig  `json:"config,omitempty"`
-	Shared tree.TagShared  `json:"shared,omitempty"`
-	Value  interface{}     `json:"value,omitempty"`
+	Path     string                       `json:"path"`
+	Type     tree.ScalarType              `json:"type"`
+	Config   tree.TagConfig               `json:"config,omitempty"`
+	Shared   tree.TagShared               `json:"shared,omitempty"`
+	Pipeline *[]tree.ProcessBlockEnvelope `json:"pipeline,omitempty"`
+	Value    interface{}                  `json:"value,omitempty"`
 }
 
 // TagSharedJSON is the JSON-serialisable form of TagShared, including pipeline envelopes.
@@ -76,8 +77,19 @@ func (s *Server) handleCreateTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	shared := req.Shared
+	if req.Pipeline != nil && len(*req.Pipeline) > 0 {
+		pipeline, err := tree.UnmarshalPipeline(*req.Pipeline)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid pipeline: " + err.Error()})
+			return
+		}
+		shared.Pipeline = pipeline
+	}
+
 	// Create the tag
-	err := s.tree.CreateTag(path, req.Type, req.Config, req.Shared)
+	err := s.tree.CreateTag(path, req.Type, req.Config, shared)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})

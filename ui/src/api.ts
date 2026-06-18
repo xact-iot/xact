@@ -180,6 +180,7 @@ export async function createTag(path: string, type: string, metadata?: any): Pro
       type: parseScalarType(type),
       config: { type: parseScalarType(type) },
       shared,
+      ...(metadata?.pipeline !== undefined ? { pipeline: metadata.pipeline } : {}),
     }),
   });
 

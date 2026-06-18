@@ -432,6 +432,9 @@ func TestCreateTag(t *testing.T) {
 	if response.Value != 22.5 {
 		t.Errorf("expected value 22.5, got %v", response.Value)
 	}
+	if len(response.Shared.Pipeline) != 1 || response.Shared.Pipeline[0].Type != "publish" {
+		t.Fatalf("expected default publish pipeline, got %#v", response.Shared.Pipeline)
+	}
 }
 
 func TestCreateTemplateTagPropagatesToDeviceInstances(t *testing.T) {

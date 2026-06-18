@@ -139,6 +139,10 @@ func TestCreateTag(t *testing.T) {
 	if leaf.GetConfig().Name != "Temperature" {
 		t.Errorf("Expected Name 'Temperature', got '%s'", leaf.GetConfig().Name)
 	}
+	pipeline := leaf.GetPipeline()
+	if len(pipeline) != 1 || pipeline[0].GetType() != "publish" {
+		t.Fatalf("new tag pipeline = %#v, want default publish block", pipeline)
+	}
 }
 
 func TestCreateTagWithAutoParent(t *testing.T) {

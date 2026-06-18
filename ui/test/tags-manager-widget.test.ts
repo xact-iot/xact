@@ -14,6 +14,7 @@ const apiMock = vi.hoisted(() => ({
     finalOutput: 4,
   })),
   loadBlockSchemas: vi.fn(async () => [
+    { type: 'publish', label: 'Publish', params: {} },
     { type: 'scale', label: 'Scale', params: { factor: { type: 'number', default: 1 } } },
   ]),
   listNotificationProfiles: vi.fn(async () => []),
@@ -355,6 +356,7 @@ describe('tags-manager-widget search', () => {
     await flushMicrotasks();
     let tagModal = widget.querySelector<HTMLElement>('#tag-editor-modal')!;
     expect(tagModal.textContent).toContain('Add Tag');
+    expect(tagModal.textContent).toContain('Publish');
     expect(Number(tagModal.style.zIndex)).toBeGreaterThan(100);
     expect(Number(widgetBody.style.zIndex)).toBeGreaterThan(100);
     expect(Number(gridItem.style.zIndex)).toBeGreaterThan(3000);
@@ -369,8 +371,14 @@ describe('tags-manager-widget search', () => {
     await flushMicrotasks();
 
     expect(apiMock.createNode).toHaveBeenCalledWith('default.Area.Device.samples', undefined, true);
-    expect(apiMock.createTag).toHaveBeenCalledWith('default.Area.Device.samples.0', 'float', expect.objectContaining({ deadband: 0 }));
-    expect(apiMock.createTag).toHaveBeenCalledWith('default.Area.Device.samples.1', 'float', expect.objectContaining({ deadband: 0 }));
+    expect(apiMock.createTag).toHaveBeenCalledWith('default.Area.Device.samples.0', 'float', expect.objectContaining({
+      deadband: 0,
+      pipeline: [{ type: 'publish', parameters: {} }],
+    }));
+    expect(apiMock.createTag).toHaveBeenCalledWith('default.Area.Device.samples.1', 'float', expect.objectContaining({
+      deadband: 0,
+      pipeline: [{ type: 'publish', parameters: {} }],
+    }));
 
     widget.querySelector<HTMLElement>('[data-leaf-path="default.Area.Device.temperature"] .tv-edit-tag[data-action="edit-tag"]')!.click();
     await flushMicrotasks();
