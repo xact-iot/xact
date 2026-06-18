@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/robfig/cron/v3"
+	"github.com/xact-iot/xact/openapischema"
 	"github.com/xact-iot/xact/scheduler"
 	"github.com/xact-iot/xact/sqldb"
 )
@@ -22,6 +23,14 @@ func NewScheduleHandlers(db sqldb.DB, engine *scheduler.Engine, getOrg func(r *h
 	return &ScheduleHandlers{DB: db, Engine: engine, GetOrg: getOrg}
 }
 
+type runNowResponse struct {
+	Status string `json:"status"`
+}
+
+func (h *ScheduleHandlers) HandleListWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleList, nil, []sqldb.ScheduledTask{}, "schedules")
+}
+
 func (h *ScheduleHandlers) HandleList(w http.ResponseWriter, r *http.Request) {
 	org := h.GetOrg(r)
 	tasks, err := h.DB.ListScheduledTasks(r.Context(), org)
@@ -33,6 +42,10 @@ func (h *ScheduleHandlers) HandleList(w http.ResponseWriter, r *http.Request) {
 		tasks = []sqldb.ScheduledTask{}
 	}
 	json.NewEncoder(w).Encode(tasks)
+}
+
+func (h *ScheduleHandlers) HandleGetWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleGet, nil, sqldb.ScheduledTask{}, "schedules")
 }
 
 func (h *ScheduleHandlers) HandleGet(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +61,15 @@ func (h *ScheduleHandlers) HandleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(t)
+}
+
+func (h *ScheduleHandlers) HandleCreateWithSchema() openapischema.Handler {
+	return openapischema.Handler{
+		Handler:     h.HandleCreate,
+		RequestBody: openapischema.JSONRequestBody(sqldb.ScheduledTask{}),
+		Responses:   openapischema.ResponseSchema(http.StatusCreated, sqldb.ScheduledTask{}),
+		Tags:        []string{"schedules"},
+	}
 }
 
 func (h *ScheduleHandlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
@@ -81,6 +103,10 @@ func (h *ScheduleHandlers) HandleCreate(w http.ResponseWriter, r *http.Request) 
 	}
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(t)
+}
+
+func (h *ScheduleHandlers) HandleUpdateWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleUpdate, sqldb.ScheduledTask{}, sqldb.ScheduledTask{}, "schedules")
 }
 
 func (h *ScheduleHandlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +145,10 @@ func (h *ScheduleHandlers) unsafeTaskDisabled(taskType string) bool {
 	return scheduler.IsUnsafeTaskType(taskType) && (h.Engine == nil || !h.Engine.AllowUnsafeTasks())
 }
 
+func (h *ScheduleHandlers) HandleDeleteWithSchema() openapischema.Handler {
+	return openapischema.WithResponses(h.HandleDelete, map[int]any{http.StatusNoContent: nil}, "schedules")
+}
+
 func (h *ScheduleHandlers) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	org := h.GetOrg(r)
 	id := chi.URLParam(r, "id")
@@ -130,6 +160,14 @@ func (h *ScheduleHandlers) HandleDelete(w http.ResponseWriter, r *http.Request) 
 		h.Engine.Remove(id)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *ScheduleHandlers) HandleRunNowWithSchema() openapischema.Handler {
+	return openapischema.Handler{
+		Handler:   h.HandleRunNow,
+		Responses: openapischema.ResponseSchema(http.StatusAccepted, runNowResponse{}),
+		Tags:      []string{"schedules"},
+	}
 }
 
 func (h *ScheduleHandlers) HandleRunNow(w http.ResponseWriter, r *http.Request) {
@@ -144,7 +182,11 @@ func (h *ScheduleHandlers) HandleRunNow(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]any{"status": "started"})
+	json.NewEncoder(w).Encode(runNowResponse{Status: "started"})
+}
+
+func (h *ScheduleHandlers) HandleHistoryWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleHistory, nil, []sqldb.ScheduleRunLog{}, "schedules")
 }
 
 func (h *ScheduleHandlers) HandleHistory(w http.ResponseWriter, r *http.Request) {

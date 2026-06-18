@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/xact-iot/xact/openapischema"
 	"github.com/xact-iot/xact/sqldb"
 )
 
@@ -61,6 +62,10 @@ func isMetadataUpdate(raw map[string]json.RawMessage) bool {
 	return false
 }
 
+func (h *DashboardHandlers) HandleListDashboardsWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleListDashboards, nil, []sqldb.DashboardMeta{}, "dashboards")
+}
+
 // HandleListDashboards returns dashboard metadata (without widgets) for the organisation.
 func (h *DashboardHandlers) HandleListDashboards(w http.ResponseWriter, r *http.Request) {
 	org, ok := h.getTenantID(r.Context())
@@ -77,6 +82,10 @@ func (h *DashboardHandlers) HandleListDashboards(w http.ResponseWriter, r *http.
 		dashboards = []sqldb.DashboardMeta{}
 	}
 	json.NewEncoder(w).Encode(dashboards)
+}
+
+func (h *DashboardHandlers) HandleGetDashboardWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleGetDashboard, nil, sqldb.Dashboard{}, "dashboards")
 }
 
 // HandleGetDashboard returns a single dashboard with full data including widgets.
@@ -101,6 +110,15 @@ func (h *DashboardHandlers) HandleGetDashboard(w http.ResponseWriter, r *http.Re
 		return
 	}
 	json.NewEncoder(w).Encode(dashboard)
+}
+
+func (h *DashboardHandlers) HandleCreateDashboardWithSchema() openapischema.Handler {
+	return openapischema.Handler{
+		Handler:     h.HandleCreateDashboard,
+		RequestBody: openapischema.JSONRequestBody(dashboardRequest{}),
+		Responses:   openapischema.ResponseSchema(http.StatusCreated, sqldb.Dashboard{}),
+		Tags:        []string{"dashboards"},
+	}
 }
 
 // HandleCreateDashboard creates a new dashboard.
@@ -140,6 +158,10 @@ func (h *DashboardHandlers) HandleCreateDashboard(w http.ResponseWriter, r *http
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(dashboard)
+}
+
+func (h *DashboardHandlers) HandleUpdateDashboardWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleUpdateDashboard, dashboardRequest{}, sqldb.Dashboard{}, "dashboards")
 }
 
 // HandleUpdateDashboard updates an existing dashboard by id.
@@ -223,6 +245,10 @@ func (h *DashboardHandlers) HandleUpdateDashboard(w http.ResponseWriter, r *http
 	}
 
 	json.NewEncoder(w).Encode(dashboard)
+}
+
+func (h *DashboardHandlers) HandleDeleteDashboardWithSchema() openapischema.Handler {
+	return openapischema.WithResponses(h.HandleDeleteDashboard, map[int]any{http.StatusNoContent: nil}, "dashboards")
 }
 
 // HandleDeleteDashboard deletes a dashboard by id.

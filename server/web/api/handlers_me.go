@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/xact-iot/xact/openapischema"
 	"github.com/xact-iot/xact/sqldb"
 	"github.com/xact-iot/xact/sqldb/psql"
 )
@@ -32,6 +33,10 @@ type changePasswordRequest struct {
 	NewPassword string `json:"newPassword"`
 }
 
+func (h *MeHandlers) HandleGetMeWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleGetMe, nil, sqldb.User{}, "me")
+}
+
 // HandleGetMe returns the current user's profile.
 func (h *MeHandlers) HandleGetMe(w http.ResponseWriter, r *http.Request) {
 	id, ok := h.getUserID(r.Context())
@@ -49,6 +54,10 @@ func (h *MeHandlers) HandleGetMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(user)
+}
+
+func (h *MeHandlers) HandleUpdateMeWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleUpdateMe, updateProfileRequest{}, sqldb.User{}, "me")
 }
 
 // HandleUpdateMe updates mutable profile fields of the current user.
@@ -93,6 +102,15 @@ func (h *MeHandlers) HandleUpdateMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(user)
+}
+
+func (h *MeHandlers) HandleChangePasswordWithSchema() openapischema.Handler {
+	return openapischema.Handler{
+		Handler:     h.HandleChangePassword,
+		RequestBody: openapischema.JSONRequestBody(changePasswordRequest{}),
+		Responses:   openapischema.ResponseSchemas(map[int]any{http.StatusNoContent: nil}),
+		Tags:        []string{"me"},
+	}
 }
 
 // HandleChangePassword verifies the current password and sets a new one.

@@ -29,6 +29,10 @@ type commandResponse struct {
 	Message string `json:"message"`
 }
 
+func (s *Server) handleCommandWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleCommand, commandRequest{}, commandResponse{}, "commands")
+}
+
 func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 	if s.nc == nil {
 		http.Error(w, "NATS connection is unavailable", http.StatusServiceUnavailable)

@@ -49,6 +49,14 @@ type NodeResponse struct {
 	Children     []ChildInfo `json:"children,omitempty"`
 }
 
+type UpdateNodeRequest struct {
+	Name         string `json:"name,omitempty"`
+	Description  string `json:"description,omitempty"`
+	TemplateName string `json:"templateName,omitempty"`
+	IsDevice     bool   `json:"isDevice,omitempty"`
+	Locked       *bool  `json:"locked,omitempty"`
+}
+
 // ChildInfo represents child node info
 type ChildInfo struct {
 	Name        string          `json:"name"`
@@ -85,6 +93,15 @@ func buildTagSharedJSON(leaf tree.Leaf) TagSharedJSON {
 		}
 	}
 	return s
+}
+
+func (s *Server) handleCreateNodeWithSchema() openAPIHandler {
+	return openAPIHandler{
+		Handler:     s.handleCreateNode,
+		RequestBody: jsonRequestBody(CreateNodeRequest{}),
+		Responses:   responseSchema(http.StatusCreated, CreateNodeResponse{}),
+		Tags:        []string{"nodes"},
+	}
 }
 
 // handleCreateNode creates a new node
@@ -163,6 +180,10 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		Description:  node.GetDescription(),
 		TemplateName: node.GetTemplateName(),
 	})
+}
+
+func (s *Server) handleGetNodeWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleGetNode, nil, NodeResponse{}, "nodes")
 }
 
 // handleGetNode retrieves node information with optional recursive depth.
@@ -257,6 +278,10 @@ func (s *Server) buildChildren(node *tree.Node, maxDepth int) []ChildInfo {
 	return result
 }
 
+func (s *Server) handleUpdateNodeWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleUpdateNode, UpdateNodeRequest{}, NodeResponse{}, "nodes")
+}
+
 // handleUpdateNode updates node metadata
 func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	path, ok := s.rtdbPathForRequest(r, chi.URLParam(r, "*"), false)
@@ -266,13 +291,7 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		Name         string `json:"name,omitempty"`
-		Description  string `json:"description,omitempty"`
-		TemplateName string `json:"templateName,omitempty"`
-		IsDevice     bool   `json:"isDevice,omitempty"`
-		Locked       *bool  `json:"locked"`
-	}
+	var req UpdateNodeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -353,6 +372,10 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		Locked:       node.IsLocked(),
 		IsArray:      node.GetIsArray(),
 	})
+}
+
+func (s *Server) handleDeleteNodeWithSchema() openAPIHandler {
+	return handlerWithResponses(s.handleDeleteNode, map[int]any{http.StatusNoContent: nil}, "nodes")
 }
 
 // handleDeleteNode deletes a node (cascade)

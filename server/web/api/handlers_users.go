@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/xact-iot/xact/openapischema"
 	"github.com/xact-iot/xact/sqldb"
 	"github.com/xact-iot/xact/sqldb/psql"
 )
@@ -48,6 +49,10 @@ type resetPasswordResponse struct {
 	Password string `json:"password"`
 }
 
+func (h *UserHandlers) HandleListUsersWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleListUsers, nil, []sqldb.User{}, "users")
+}
+
 // HandleListUsers returns all users with their org/role memberships.
 func (h *UserHandlers) HandleListUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := h.DB.ListUsers(r.Context())
@@ -60,6 +65,15 @@ func (h *UserHandlers) HandleListUsers(w http.ResponseWriter, r *http.Request) {
 		users = []sqldb.User{}
 	}
 	json.NewEncoder(w).Encode(users)
+}
+
+func (h *UserHandlers) HandleCreateUserWithSchema() openapischema.Handler {
+	return openapischema.Handler{
+		Handler:     h.HandleCreateUser,
+		RequestBody: openapischema.JSONRequestBody(createUserRequest{}),
+		Responses:   openapischema.ResponseSchema(http.StatusCreated, sqldb.User{}),
+		Tags:        []string{"users"},
+	}
 }
 
 // HandleCreateUser creates a new user, adds them to an org, and assigns roles.
@@ -116,6 +130,10 @@ func (h *UserHandlers) HandleCreateUser(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(user)
 }
 
+func (h *UserHandlers) HandleGetUserWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleGetUser, nil, sqldb.User{}, "users")
+}
+
 // HandleGetUser returns a single user by ID.
 func (h *UserHandlers) HandleGetUser(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUserID(r)
@@ -139,6 +157,10 @@ func (h *UserHandlers) HandleGetUser(w http.ResponseWriter, r *http.Request) {
 	}
 	user.Orgs = h.filterVisibleOrgs(r, user.Orgs)
 	json.NewEncoder(w).Encode(user)
+}
+
+func (h *UserHandlers) HandleUpdateUserWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleUpdateUser, updateUserRequest{}, sqldb.User{}, "users")
 }
 
 // HandleUpdateUser updates mutable user fields.
@@ -225,6 +247,10 @@ func (h *UserHandlers) HandleUpdateUser(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(user)
 }
 
+func (h *UserHandlers) HandleResetPasswordWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleResetPassword, nil, resetPasswordResponse{}, "users")
+}
+
 // HandleResetPassword generates a new random password, stores it, and returns the plaintext.
 func (h *UserHandlers) HandleResetPassword(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUserID(r)
@@ -264,6 +290,10 @@ func (h *UserHandlers) HandleResetPassword(w http.ResponseWriter, r *http.Reques
 	}
 
 	json.NewEncoder(w).Encode(resetPasswordResponse{Password: newPass})
+}
+
+func (h *UserHandlers) HandleListRolesWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleListRoles, nil, []sqldb.Role{}, "users")
 }
 
 // HandleListRoles returns all defined roles.

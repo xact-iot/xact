@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/xact-iot/xact/openapischema"
 	"github.com/xact-iot/xact/sqldb"
 )
 
@@ -27,6 +28,10 @@ type PermissionHandlers struct {
 // NewPermissionHandlers creates a new PermissionHandlers instance.
 func NewPermissionHandlers(database sqldb.DB, getRoles RolesExtractor, getTenantID TenantExtractor) *PermissionHandlers {
 	return &PermissionHandlers{DB: database, GetRoles: getRoles, getTenantID: getTenantID}
+}
+
+func (h *PermissionHandlers) HandleGetMyPermissionsWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleGetMyPermissions, nil, map[string]map[string]bool{}, "permissions")
 }
 
 // HandleGetMyPermissions returns merged UI permissions for the current user's roles.
@@ -79,6 +84,10 @@ func (h *PermissionHandlers) HandleGetMyPermissions(w http.ResponseWriter, r *ht
 	json.NewEncoder(w).Encode(merged)
 }
 
+func (h *PermissionHandlers) HandleListRolePermissionsWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleListRolePermissions, nil, []sqldb.RolePermissions{}, "permissions")
+}
+
 // HandleListRolePermissions returns all role permission records for the admin widget.
 func (h *PermissionHandlers) HandleListRolePermissions(w http.ResponseWriter, r *http.Request) {
 	org, ok := h.getTenantID(r.Context())
@@ -95,6 +104,10 @@ func (h *PermissionHandlers) HandleListRolePermissions(w http.ResponseWriter, r 
 		perms = []sqldb.RolePermissions{}
 	}
 	json.NewEncoder(w).Encode(perms)
+}
+
+func (h *PermissionHandlers) HandleUpdateRolePermissionsWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleUpdateRolePermissions, sqldb.RolePermissions{}, sqldb.RolePermissions{}, "permissions")
 }
 
 // HandleUpdateRolePermissions updates a specific role's permissions.

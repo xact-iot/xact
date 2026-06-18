@@ -53,6 +53,14 @@ type orgSummary struct {
 	Favicon     string `json:"favicon,omitempty"`
 }
 
+type MyOrgsResponse struct {
+	Orgs []orgSummary `json:"orgs"`
+}
+
+func (s *Server) handleLoginWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleLogin, LoginRequest{}, LoginResponse{}, "auth")
+}
+
 // handleLogin validates credentials against the database and issues a JWT.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
@@ -110,6 +118,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+func (s *Server) handleBootstrapAdminStatusWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleBootstrapAdminStatus, nil, BootstrapAdminStatusResponse{}, "auth")
+}
+
 func (s *Server) handleBootstrapAdminStatus(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		http.Error(w, `{"error":"database not available"}`, http.StatusServiceUnavailable)
@@ -126,6 +138,10 @@ func (s *Server) handleBootstrapAdminStatus(w http.ResponseWriter, r *http.Reque
 		SetupRequired: setupRequired,
 		PasswordSet:   user != nil && !setupRequired,
 	})
+}
+
+func (s *Server) handleSetBootstrapAdminPasswordWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleSetBootstrapAdminPassword, SetBootstrapAdminPasswordRequest{}, LoginResponse{}, "auth")
 }
 
 func (s *Server) handleSetBootstrapAdminPassword(w http.ResponseWriter, r *http.Request) {
@@ -240,6 +256,10 @@ func (s *Server) loginResponseForUser(ctx context.Context, user *sqldb.User) (Lo
 // For SystemAdmin users this is all orgs; for others it is their assigned orgs.
 // This is intentionally re-queried from the DB rather than read from the JWT so
 // that orgs created after login are immediately visible.
+func (s *Server) handleMyOrgsWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleMyOrgs, nil, MyOrgsResponse{}, "auth")
+}
+
 func (s *Server) handleMyOrgs(w http.ResponseWriter, r *http.Request) {
 	claims, ok := GetClaimsFromContext(r.Context())
 	if !ok {
@@ -319,12 +339,16 @@ func (s *Server) handleMyOrgs(w http.ResponseWriter, r *http.Request) {
 			Favicon:     org.Favicon,
 		})
 	}
-	json.NewEncoder(w).Encode(map[string]any{"orgs": orgs})
+	json.NewEncoder(w).Encode(MyOrgsResponse{Orgs: orgs})
 }
 
 // SwitchOrgRequest is the body for the switch-org endpoint.
 type SwitchOrgRequest struct {
 	Org string `json:"org"`
+}
+
+func (s *Server) handleSwitchOrgWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleSwitchOrg, SwitchOrgRequest{}, LoginResponse{}, "auth")
 }
 
 // handleSwitchOrg issues a new JWT for a different organisation.

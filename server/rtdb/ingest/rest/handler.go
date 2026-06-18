@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	natsgo "github.com/nats-io/nats.go"
+	"github.com/xact-iot/xact/openapischema"
 	"github.com/xact-iot/xact/rtdb/ingest"
 	"github.com/xact-iot/xact/sqldb"
 )
@@ -38,15 +39,42 @@ func New(nc *natsgo.Conn, db sqldb.DB) *Handler {
 	return &Handler{nc: nc, db: db, apiKeyCache: newAPIKeyCache(apiKeyCacheTTLFromEnv())}
 }
 
+func (h *Handler) HandleIngestWithSchema() openapischema.Handler {
+	return ingestSchemaHandler(h.HandleIngest)
+}
+
 // HandleIngest processes an incoming device data request (zoneless variant).
 func (h *Handler) HandleIngest(w http.ResponseWriter, r *http.Request) {
 	h.handleIngest(w, r, "")
+}
+
+func (h *Handler) HandleIngestWithZoneWithSchema() openapischema.Handler {
+	return ingestSchemaHandler(h.HandleIngestWithZone)
 }
 
 // HandleIngestWithZone processes an incoming device data request (zoned variant).
 func (h *Handler) HandleIngestWithZone(w http.ResponseWriter, r *http.Request) {
 	zone := chi.URLParam(r, "zone")
 	h.handleIngest(w, r, zone)
+}
+
+func ingestSchemaHandler(handler http.HandlerFunc) openapischema.Handler {
+	return openapischema.Handler{
+		Handler: handler,
+		RequestBody: map[string]any{
+			"required": true,
+			"content": map[string]any{
+				"application/json": map[string]any{
+					"schema": map[string]any{
+						"type":                 "object",
+						"additionalProperties": true,
+					},
+				},
+			},
+		},
+		Responses: openapischema.ResponseSchemas(map[int]any{http.StatusNoContent: nil}),
+		Tags:      []string{"ingest"},
+	}
 }
 
 func (h *Handler) handleIngest(w http.ResponseWriter, r *http.Request, zone string) {
@@ -124,6 +152,14 @@ func (h *Handler) resolveAPIKey(r *http.Request) (string, error) {
 // ── API key management handlers ───────────────────────────────────────────────
 // These are mounted under /api/v1/api-keys and use the current JWT org.
 
+type createAPIKeyRequest struct {
+	Name string `json:"name"`
+}
+
+func (h *Handler) HandleListAPIKeysWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleListAPIKeys, nil, []sqldb.APIKey{}, "api-keys")
+}
+
 // HandleListAPIKeys returns all API keys for an organisation.
 func (h *Handler) HandleListAPIKeys(w http.ResponseWriter, r *http.Request) {
 	orgName := h.requestOrg(r)
@@ -145,6 +181,15 @@ func (h *Handler) HandleListAPIKeys(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(keys)
 }
 
+func (h *Handler) HandleCreateAPIKeyWithSchema() openapischema.Handler {
+	return openapischema.Handler{
+		Handler:     h.HandleCreateAPIKey,
+		RequestBody: openapischema.JSONRequestBody(createAPIKeyRequest{}),
+		Responses:   openapischema.ResponseSchema(http.StatusCreated, sqldb.APIKey{}),
+		Tags:        []string{"api-keys"},
+	}
+}
+
 // HandleCreateAPIKey generates a new API key for an organisation.
 // The raw key value is only returned in this response.
 func (h *Handler) HandleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
@@ -154,9 +199,7 @@ func (h *Handler) HandleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		Name string `json:"name"`
-	}
+	var req createAPIKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
@@ -182,6 +225,10 @@ func (h *Handler) HandleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(key)
+}
+
+func (h *Handler) HandleDeleteAPIKeyWithSchema() openapischema.Handler {
+	return openapischema.WithResponses(h.HandleDeleteAPIKey, map[int]any{http.StatusNoContent: nil}, "api-keys")
 }
 
 // HandleDeleteAPIKey removes an API key by numeric ID.

@@ -460,10 +460,152 @@ func TestOpenAPIDocumentTracksRouterRoutes(t *testing.T) {
 		if _, ok := item[strings.ToLower(method)]; !ok {
 			t.Fatalf("OpenAPI document missing operation %s %s", method, path)
 		}
+		op, ok := item[strings.ToLower(method)].(map[string]any)
+		if !ok {
+			t.Fatalf("OpenAPI operation %s %s is not an object", method, path)
+		}
+		if op["operationId"] == "" {
+			t.Fatalf("OpenAPI operation %s %s is missing operationId", method, path)
+		}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestOpenAPIDocumentHasValidOperationRegistry(t *testing.T) {
+	treeOps := tree.NewTreeWithOperations(nil)
+	server := NewServer(ServerConfig{}, treeOps, nil, nil, "test-secret", nil, "")
+	doc := server.OpenAPIDocument()
+
+	if got := doc["openapi"]; got != "3.0.0" {
+		t.Fatalf("openapi = %v", got)
+	}
+	if _, ok := doc["info"].(map[string]any); !ok {
+		t.Fatalf("info object missing: %#v", doc["info"])
+	}
+	paths, ok := doc["paths"].(map[string]any)
+	if !ok || len(paths) == 0 {
+		t.Fatalf("paths object missing: %#v", doc["paths"])
+	}
+
+	seen := map[string]string{}
+	operations := 0
+	for path, pathItemAny := range paths {
+		pathItem, ok := pathItemAny.(map[string]any)
+		if !ok {
+			t.Fatalf("path item %s is not an object", path)
+		}
+		for method, opAny := range pathItem {
+			op, ok := opAny.(map[string]any)
+			if !ok {
+				t.Fatalf("operation %s %s is not an object", method, path)
+			}
+			opID, ok := op["operationId"].(string)
+			if !ok || opID == "" {
+				t.Fatalf("operation %s %s missing operationId", method, path)
+			}
+			if previous := seen[opID]; previous != "" {
+				t.Fatalf("duplicate operationId %q for %s %s and %s", opID, method, path, previous)
+			}
+			seen[opID] = strings.ToUpper(method) + " " + path
+			if _, ok := op["responses"].(map[string]any); !ok {
+				t.Fatalf("operation %s %s missing responses object", method, path)
+			}
+			operations++
+		}
+	}
+	if operations == 0 {
+		t.Fatal("OpenAPI document has no operations")
+	}
+	if server.openapi == nil {
+		t.Fatal("server OpenAPI registry missing")
+	}
+	if len(server.openapi.operation) != operations {
+		t.Fatalf("operation registry has %d entries, document has %d", len(server.openapi.operation), operations)
+	}
+	for opID, op := range server.openapi.operation {
+		key := op.Method + " " + op.Path
+		if seen[opID] != key {
+			t.Fatalf("operation registry mismatch for %s: registry=%s document=%s", opID, key, seen[opID])
+		}
+	}
+}
+
+func TestOpenAPIDocumentIncludesHandlerSchemas(t *testing.T) {
+	treeOps := tree.NewTreeWithOperations(nil)
+	server := NewServer(ServerConfig{}, treeOps, nil, nil, "test-secret", nil, "")
+	doc := server.OpenAPIDocument()
+	paths := doc["paths"].(map[string]any)
+	op := paths["/api/v1/tags/"].(map[string]any)["post"].(map[string]any)
+
+	requestBody, ok := op["requestBody"].(map[string]any)
+	if !ok {
+		t.Fatalf("create tag requestBody missing: %#v", op)
+	}
+	content := requestBody["content"].(map[string]any)
+	requestSchema := content["application/json"].(map[string]any)["schema"].(map[string]any)
+	properties := requestSchema["properties"].(map[string]any)
+	if _, ok := properties["path"]; !ok {
+		t.Fatalf("create tag request schema missing path property: %#v", properties)
+	}
+	if _, ok := properties["type"]; !ok {
+		t.Fatalf("create tag request schema missing type property: %#v", properties)
+	}
+
+	responses := op["responses"].(map[string]any)
+	created := responses["201"].(map[string]any)
+	responseContent := created["content"].(map[string]any)
+	responseSchema := responseContent["application/json"].(map[string]any)["schema"].(map[string]any)
+	responseProps := responseSchema["properties"].(map[string]any)
+	if _, ok := responseProps["value_type"]; !ok {
+		t.Fatalf("create tag response schema missing value_type property: %#v", responseProps)
+	}
+	if tags, ok := op["tags"].([]any); !ok || len(tags) == 0 || tags[0] != "tags" {
+		t.Fatalf("create tag operation tags missing: %#v", op["tags"])
+	}
+}
+
+func TestOpenAPIDocumentSchemasForDatabaseRoutes(t *testing.T) {
+	treeOps := tree.NewTreeWithOperations(nil)
+	server := NewServer(ServerConfig{ExposeNATSInternalConfig: true}, treeOps, nil, nil, "test-secret", newTestDB("admin", "password"), "")
+	doc := server.OpenAPIDocument()
+	paths := doc["paths"].(map[string]any)
+
+	noBodyMutations := map[string]bool{
+		"post /api/v1/schedules/{id}/run":        true,
+		"post /api/v1/users/{id}/reset-password": true,
+	}
+	for path, pathItemAny := range paths {
+		pathItem := pathItemAny.(map[string]any)
+		for method, opAny := range pathItem {
+			op := opAny.(map[string]any)
+			if tags, ok := op["tags"].([]any); !ok || len(tags) == 0 {
+				t.Fatalf("%s %s missing explicit tags", method, path)
+			}
+			if method == "post" || method == "put" {
+				key := method + " " + path
+				if !noBodyMutations[key] {
+					if _, ok := op["requestBody"].(map[string]any); !ok {
+						t.Fatalf("%s missing requestBody schema", key)
+					}
+				}
+			}
+		}
+	}
+
+	assertOperationHasRequestSchema := func(path, method string) {
+		t.Helper()
+		op := paths[path].(map[string]any)[method].(map[string]any)
+		if _, ok := op["requestBody"].(map[string]any); !ok {
+			t.Fatalf("%s %s missing requestBody", method, path)
+		}
+	}
+	assertOperationHasRequestSchema("/api/v1/dashboards/", "post")
+	assertOperationHasRequestSchema("/api/v1/users/", "post")
+	assertOperationHasRequestSchema("/api/v1/reports/templates/", "post")
+	assertOperationHasRequestSchema("/api/v1/notifications/channels", "put")
+	assertOperationHasRequestSchema("/api/v1/api-keys/", "post")
 }
 
 func TestMCPAPIProxyDeletesRTDBNodeThroughREST(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/xact-iot/xact/openapischema"
 	"github.com/xact-iot/xact/reporting"
 	"github.com/xact-iot/xact/sqldb"
 )
@@ -32,6 +33,19 @@ func NewReportHandlers(
 	}
 }
 
+type previewTemplateRequest struct {
+	Variables map[string]string `json:"variables"`
+}
+
+type generatePDFRequest struct {
+	TemplateID string            `json:"templateId"`
+	Variables  map[string]string `json:"variables"`
+}
+
+func (h *ReportHandlers) HandleListTemplatesWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleListTemplates, nil, []sqldb.PDFTemplate{}, "reports")
+}
+
 // HandleListTemplates returns all PDF templates for the organisation.
 func (h *ReportHandlers) HandleListTemplates(w http.ResponseWriter, r *http.Request) {
 	org, ok := h.getTenantID(r.Context())
@@ -45,6 +59,10 @@ func (h *ReportHandlers) HandleListTemplates(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	json.NewEncoder(w).Encode(templates)
+}
+
+func (h *ReportHandlers) HandleGetTemplateWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleGetTemplate, nil, sqldb.PDFTemplate{}, "reports")
 }
 
 // HandleGetTemplate returns a single PDF template by ID.
@@ -65,6 +83,15 @@ func (h *ReportHandlers) HandleGetTemplate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	json.NewEncoder(w).Encode(t)
+}
+
+func (h *ReportHandlers) HandleCreateTemplateWithSchema() openapischema.Handler {
+	return openapischema.Handler{
+		Handler:     h.HandleCreateTemplate,
+		RequestBody: openapischema.JSONRequestBody(sqldb.PDFTemplate{}),
+		Responses:   openapischema.ResponseSchema(http.StatusCreated, sqldb.PDFTemplate{}),
+		Tags:        []string{"reports"},
+	}
 }
 
 // HandleCreateTemplate creates a new PDF template.
@@ -89,6 +116,10 @@ func (h *ReportHandlers) HandleCreateTemplate(w http.ResponseWriter, r *http.Req
 	}
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(t)
+}
+
+func (h *ReportHandlers) HandleUpdateTemplateWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleUpdateTemplate, sqldb.PDFTemplate{}, sqldb.PDFTemplate{}, "reports")
 }
 
 // HandleUpdateTemplate replaces an existing PDF template.
@@ -116,6 +147,10 @@ func (h *ReportHandlers) HandleUpdateTemplate(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(t)
 }
 
+func (h *ReportHandlers) HandleDeleteTemplateWithSchema() openapischema.Handler {
+	return openapischema.WithResponses(h.HandleDeleteTemplate, map[int]any{http.StatusNoContent: nil}, "reports")
+}
+
 // HandleDeleteTemplate removes a PDF template.
 func (h *ReportHandlers) HandleDeleteTemplate(w http.ResponseWriter, r *http.Request) {
 	org, ok := h.getTenantID(r.Context())
@@ -129,6 +164,22 @@ func (h *ReportHandlers) HandleDeleteTemplate(w http.ResponseWriter, r *http.Req
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *ReportHandlers) HandlePreviewTemplateWithSchema() openapischema.Handler {
+	return openapischema.Handler{
+		Handler:     h.HandlePreviewTemplate,
+		RequestBody: openapischema.JSONRequestBody(previewTemplateRequest{}),
+		Responses: map[string]any{
+			"200": map[string]any{
+				"description": "PDF preview",
+				"content": map[string]any{
+					"application/pdf": map[string]any{"schema": map[string]any{"type": "string", "format": "binary"}},
+				},
+			},
+		},
+		Tags: []string{"reports"},
+	}
 }
 
 // HandlePreviewTemplate generates a PDF from a template with sample/override variable values.
@@ -152,9 +203,7 @@ func (h *ReportHandlers) HandlePreviewTemplate(w http.ResponseWriter, r *http.Re
 	}
 
 	// Optional override values from request body
-	var body struct {
-		Variables map[string]string `json:"variables"`
-	}
+	var body previewTemplateRequest
 	json.NewDecoder(r.Body).Decode(&body)
 
 	pdfBytes, err := h.resolveAndGenerate(r.Context(), t, org, body.Variables)
@@ -168,6 +217,22 @@ func (h *ReportHandlers) HandlePreviewTemplate(w http.ResponseWriter, r *http.Re
 	w.Write(pdfBytes)
 }
 
+func (h *ReportHandlers) HandleGeneratePDFWithSchema() openapischema.Handler {
+	return openapischema.Handler{
+		Handler:     h.HandleGeneratePDF,
+		RequestBody: openapischema.JSONRequestBody(generatePDFRequest{}),
+		Responses: map[string]any{
+			"200": map[string]any{
+				"description": "Generated PDF",
+				"content": map[string]any{
+					"application/pdf": map[string]any{"schema": map[string]any{"type": "string", "format": "binary"}},
+				},
+			},
+		},
+		Tags: []string{"reports"},
+	}
+}
+
 // HandleGeneratePDF generates a PDF on demand and streams it as a download.
 // Request body: { "templateId": "...", "variables": { "name": "value", ... } }
 func (h *ReportHandlers) HandleGeneratePDF(w http.ResponseWriter, r *http.Request) {
@@ -176,10 +241,7 @@ func (h *ReportHandlers) HandleGeneratePDF(w http.ResponseWriter, r *http.Reques
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
-	var body struct {
-		TemplateID string            `json:"templateId"`
-		Variables  map[string]string `json:"variables"`
-	}
+	var body generatePDFRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return

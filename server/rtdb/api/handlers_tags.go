@@ -42,6 +42,27 @@ type TagResponse struct {
 	Timestamp int64          `json:"timestamp"`
 }
 
+type UpdateTagRequest struct {
+	Name        string                       `json:"name,omitempty"`
+	Shared      tree.TagShared               `json:"shared,omitempty"`
+	Value       interface{}                  `json:"value,omitempty"`
+	Pipeline    *[]tree.ProcessBlockEnvelope `json:"pipeline,omitempty"`
+	Description string                       `json:"description,omitempty"`
+	Units       string                       `json:"units,omitempty"`
+	Deadband    *float64                     `json:"deadband,omitempty"`
+	EnumValues  *map[int]string              `json:"enumValues,omitempty"`
+}
+
+type DebugTagPipelineRequest struct {
+	Input interface{} `json:"input"`
+}
+
+type DebugTagPipelineResponse struct {
+	Steps       []DebugStepResult `json:"steps"`
+	FinalOutput interface{}       `json:"finalOutput"`
+	BlockCount  int               `json:"blockCount"`
+}
+
 func buildTagResponse(path string, leaf tree.Leaf) TagResponse {
 	return TagResponse{
 		Path:      path,
@@ -53,6 +74,15 @@ func buildTagResponse(path string, leaf tree.Leaf) TagResponse {
 		ValueType: leaf.ValueType().String(),
 		Status:    leaf.GetState(),
 		Timestamp: leaf.GetUpdatedTime().UnixMilli(),
+	}
+}
+
+func (s *Server) handleCreateTagWithSchema() openAPIHandler {
+	return openAPIHandler{
+		Handler:     s.handleCreateTag,
+		RequestBody: jsonRequestBody(CreateTagRequest{}),
+		Responses:   responseSchema(http.StatusCreated, TagResponse{}),
+		Tags:        []string{"tags"},
 	}
 }
 
@@ -115,6 +145,10 @@ func (s *Server) handleCreateTag(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(buildTagResponse(path, leaf))
 }
 
+func (s *Server) handleGetTagWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleGetTag, nil, TagResponse{}, "tags")
+}
+
 // handleGetTag retrieves tag information
 func (s *Server) handleGetTag(w http.ResponseWriter, r *http.Request) {
 	path, ok := s.rtdbPathForRequest(r, chi.URLParam(r, "*"), false)
@@ -134,6 +168,10 @@ func (s *Server) handleGetTag(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(buildTagResponse(path, leaf))
 }
 
+func (s *Server) handleUpdateTagWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleUpdateTag, UpdateTagRequest{}, TagResponse{}, "tags")
+}
+
 // handleUpdateTag updates tag metadata and value
 func (s *Server) handleUpdateTag(w http.ResponseWriter, r *http.Request) {
 	path, ok := s.rtdbPathForRequest(r, chi.URLParam(r, "*"), false)
@@ -143,16 +181,7 @@ func (s *Server) handleUpdateTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		Name        string                       `json:"name,omitempty"`
-		Shared      tree.TagShared               `json:"shared,omitempty"`
-		Value       interface{}                  `json:"value,omitempty"`
-		Pipeline    *[]tree.ProcessBlockEnvelope `json:"pipeline"`
-		Description string                       `json:"description,omitempty"`
-		Units       string                       `json:"units,omitempty"`
-		Deadband    *float64                     `json:"deadband,omitempty"`
-		EnumValues  *map[int]string              `json:"enumValues,omitempty"`
-	}
+	var req UpdateTagRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -286,6 +315,10 @@ type DebugStepResult struct {
 	StateChange string      `json:"stateChange,omitempty"`
 }
 
+func (s *Server) handleDebugTagPipelineWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleDebugTagPipeline, DebugTagPipelineRequest{}, DebugTagPipelineResponse{}, "tags")
+}
+
 // handleDebugTagPipeline runs the tag pipeline on a test input and returns step-by-step results
 func (s *Server) handleDebugTagPipeline(w http.ResponseWriter, r *http.Request) {
 	path, ok := s.rtdbPathForRequest(r, chi.URLParam(r, "*"), false)
@@ -295,9 +328,7 @@ func (s *Server) handleDebugTagPipeline(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var req struct {
-		Input interface{} `json:"input"`
-	}
+	var req DebugTagPipelineRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -342,17 +373,25 @@ func (s *Server) handleDebugTagPipeline(w http.ResponseWriter, r *http.Request) 
 		steps = append(steps, step)
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"steps":       steps,
-		"finalOutput": value,
-		"blockCount":  len(pipeline),
+	json.NewEncoder(w).Encode(DebugTagPipelineResponse{
+		Steps:       steps,
+		FinalOutput: value,
+		BlockCount:  len(pipeline),
 	})
 }
 
 // handleGetBlockSchemas returns the self-reported schemas for all registered ProcessBlock types.
+func (s *Server) handleGetBlockSchemasWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleGetBlockSchemas, nil, map[string]any{"type": "object", "additionalProperties": true}, "blocks")
+}
+
 func (s *Server) handleGetBlockSchemas(w http.ResponseWriter, r *http.Request) {
 	schemas := tree.GetRegisteredSchemas()
 	json.NewEncoder(w).Encode(schemas)
+}
+
+func (s *Server) handleDeleteTagWithSchema() openAPIHandler {
+	return handlerWithResponses(s.handleDeleteTag, map[int]any{http.StatusNoContent: nil}, "tags")
 }
 
 // handleDeleteTag deletes a tag

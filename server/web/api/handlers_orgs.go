@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/xact-iot/xact/openapischema"
 	"github.com/xact-iot/xact/sqldb"
 )
 
@@ -55,6 +56,10 @@ type updateOrgRequest struct {
 	Area        *sqldb.OrgArea `json:"area"`
 }
 
+func (h *OrgHandlers) HandleListOrganisationsWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleListOrganisations, nil, []sqldb.Organisation{}, "organisations")
+}
+
 // HandleListOrganisations returns all organisations.
 func (h *OrgHandlers) HandleListOrganisations(w http.ResponseWriter, r *http.Request) {
 	orgs, err := h.DB.ListOrganisations(r.Context())
@@ -67,6 +72,10 @@ func (h *OrgHandlers) HandleListOrganisations(w http.ResponseWriter, r *http.Req
 	}
 	orgs = h.filterVisibleOrgs(r, orgs)
 	json.NewEncoder(w).Encode(orgs)
+}
+
+func (h *OrgHandlers) HandleGetOrganisationWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleGetOrganisation, nil, sqldb.Organisation{}, "organisations")
 }
 
 // HandleGetOrganisation returns a single organisation by name.
@@ -86,6 +95,15 @@ func (h *OrgHandlers) HandleGetOrganisation(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	json.NewEncoder(w).Encode(org)
+}
+
+func (h *OrgHandlers) HandleCreateOrganisationWithSchema() openapischema.Handler {
+	return openapischema.Handler{
+		Handler:     h.HandleCreateOrganisation,
+		RequestBody: openapischema.JSONRequestBody(createOrgRequest{}),
+		Responses:   openapischema.ResponseSchema(http.StatusCreated, sqldb.Organisation{}),
+		Tags:        []string{"organisations"},
+	}
 }
 
 // HandleCreateOrganisation creates a new organisation.
@@ -132,6 +150,10 @@ func (h *OrgHandlers) HandleCreateOrganisation(w http.ResponseWriter, r *http.Re
 	json.NewEncoder(w).Encode(org)
 }
 
+func (h *OrgHandlers) HandleUpdateOrganisationWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleUpdateOrganisation, updateOrgRequest{}, sqldb.Organisation{}, "organisations")
+}
+
 // HandleUpdateOrganisation updates an existing organisation.
 // The name (URL parameter) is immutable; only displayName, active, and area are updated.
 func (h *OrgHandlers) HandleUpdateOrganisation(w http.ResponseWriter, r *http.Request) {
@@ -163,6 +185,10 @@ func (h *OrgHandlers) HandleUpdateOrganisation(w http.ResponseWriter, r *http.Re
 		h.NodeSync(org.Name, org.DisplayName, org.Area)
 	}
 	json.NewEncoder(w).Encode(org)
+}
+
+func (h *OrgHandlers) HandleDeleteOrganisationWithSchema() openapischema.Handler {
+	return openapischema.WithResponses(h.HandleDeleteOrganisation, map[int]any{http.StatusNoContent: nil}, "organisations")
 }
 
 // HandleDeleteOrganisation removes an organisation and its RTDB subtree.

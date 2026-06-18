@@ -101,6 +101,7 @@ type Server struct {
 	notifHandler         *events.NotificationHandler
 	eventPublisher       *events.Publisher
 	openapi              *openAPIRegistry
+	openAPIRoutes        []openAPIRouteSpec
 }
 
 // NewServer creates a new API server.
@@ -291,6 +292,7 @@ func NewServer(config ServerConfig, treeOps *tree.TreeWithOperations, treeSync *
 // setupRoutes configures all API routes
 func (s *Server) setupRoutes() {
 	s.router = chi.NewRouter()
+	s.openAPIRoutes = nil
 
 	s.router.Use(securityHeaders)
 	s.router.Use(limitRequestBody(s.maxRequestBodyBytes()))
@@ -319,7 +321,7 @@ func (s *Server) setupRoutes() {
 	} else {
 		s.buildRoutes(s.router, "")
 	}
-	s.openapi = buildOpenAPIRegistry(s.router, s.config.ProxyPath)
+	s.openapi = buildOpenAPIRegistry(s.openAPIRoutes)
 	// Get here when there is no proxy and default URL
 	s.router.Get("/", s.serveIndexFallback)
 
@@ -336,24 +338,25 @@ func (s *Server) setupRoutes() {
 func (s *Server) buildRoutes(r chi.Router, prefix string) {
 	// Public routes (no JWT required)
 	r.Group(func(r chi.Router) {
-		r.Get("/health", s.handleHealth)
-		r.Get("/api-docs", s.handleAPIDocs)
-		r.Get("/openapi.json", s.handleOpenAPI)
-		r.Get("/api/v1/openapi.json", s.handleOpenAPI)
-		r.Post("/login", s.handleLogin)
-		r.Get("/api/v1/bootstrap/admin", s.handleBootstrapAdminStatus)
-		r.Post("/api/v1/bootstrap/admin/password", s.handleSetBootstrapAdminPassword)
+		api := newAPIRoutes(r, &s.openAPIRoutes, "", true)
+		api.Get("/health", s.handleHealthWithSchema())
+		api.Get("/api-docs", s.handleAPIDocsWithSchema())
+		api.Get("/openapi.json", s.handleOpenAPIWithSchema())
+		api.Get("/api/v1/openapi.json", s.handleOpenAPIWithSchema())
+		api.Post("/login", s.handleLoginWithSchema())
+		api.Get("/api/v1/bootstrap/admin", s.handleBootstrapAdminStatusWithSchema())
+		api.Post("/api/v1/bootstrap/admin/password", s.handleSetBootstrapAdminPasswordWithSchema())
 		// Plugin discovery and static file serving (widgets + map layers + themes)
-		r.Get("/api/v1/plugins/widgets", s.handleListWidgetPlugins)
+		api.Get("/api/v1/plugins/widgets", s.handleListWidgetPluginsWithSchema())
 		r.Get("/plugins/widgets/{filename}", s.handleServeWidgetPlugin)
-		r.Get("/api/v1/plugins/map-layer", s.handleListMapLayerPlugins)
+		api.Get("/api/v1/plugins/map-layer", s.handleListMapLayerPluginsWithSchema())
 		r.Get("/plugins/map-layer/{filename}", s.handleServeMapLayerPlugin)
-		r.Get("/api/v1/plugins/themes", s.handleListThemePlugins)
+		api.Get("/api/v1/plugins/themes", s.handleListThemePluginsWithSchema())
 		r.Get("/plugins/themes/{filename}", s.handleServeThemePlugin)
 		// Device data ingest - authenticated via API key, not JWT
 		if s.ingestHandler != nil {
-			r.Post("/api/v1/ingest/{tenant}/{devicetype}/{devicename}", s.ingestHandler.HandleIngest)
-			r.Post("/api/v1/ingest/{tenant}/zone/{zone}/{devicetype}/{devicename}", s.ingestHandler.HandleIngestWithZone)
+			api.Post("/api/v1/ingest/{tenant}/{devicetype}/{devicename}", s.ingestHandler.HandleIngestWithSchema())
+			api.Post("/api/v1/ingest/{tenant}/zone/{zone}/{devicetype}/{devicename}", s.ingestHandler.HandleIngestWithZoneWithSchema())
 		}
 
 		// Static file serving (only when server serves files, not proxy/VITE)
@@ -381,10 +384,11 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 	r.Group(func(r chi.Router) {
 		r.Use(JWTAuth(s.jwtSecret, s.db))
 		r.Use(JSONContentType)
+		api := newAPIRoutes(r, &s.openAPIRoutes, "", false)
 
 		// Auth helpers
-		r.Get("/api/v1/auth/my-orgs", s.handleMyOrgs)
-		r.Post("/api/v1/auth/switch-org", s.handleSwitchOrg)
+		api.Get("/api/v1/auth/my-orgs", s.handleMyOrgsWithSchema())
+		api.Post("/api/v1/auth/switch-org", s.handleSwitchOrgWithSchema())
 
 		if s.config.MCP.Enabled {
 			mcpServer := mcp.New(s.config.MCP, mcp.Dependencies{
@@ -421,250 +425,243 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 		}
 
 		// System
-		r.Get("/api/v1/system/nats-config", s.handleNATSConfig)
+		api.Get("/api/v1/system/nats-config", s.handleNATSConfigWithSchema())
 		if s.config.ExposeNATSInternalConfig {
-			r.With(s.requireSystemAdmin()).
-				Get("/api/v1/system/nats-internal-config", s.handleNATSInternalConfig)
+			api.With(s.requireSystemAdmin()).
+				Get("/api/v1/system/nats-internal-config", s.handleNATSInternalConfigWithSchema())
 		}
 
 		// Node operations
-		r.Route("/api/v1/nodes", func(r chi.Router) {
-			r.Use(OrgSandbox(prefix + "/api/v1/nodes/"))
-			r.Group(func(r chi.Router) {
-				r.Use(s.requireUIPermission("nodes", "read"))
-				r.Get("/*", s.handleGetNode)
+		api.Route("/api/v1/nodes", func(api apiRoutes) {
+			api.Use(OrgSandbox(prefix + "/api/v1/nodes/"))
+			api.Group(func(api apiRoutes) {
+				api.Use(s.requireUIPermission("nodes", "read"))
+				api.Get("/*", s.handleGetNodeWithSchema())
 			})
-			r.Group(func(r chi.Router) {
-				r.Use(s.requireUIPermission("nodes", "write"))
-				r.Post("/", s.handleCreateNode)
-				r.Put("/*", s.handleUpdateNode)
-				r.Delete("/*", s.handleDeleteNode)
+			api.Group(func(api apiRoutes) {
+				api.Use(s.requireUIPermission("nodes", "write"))
+				api.Post("/", s.handleCreateNodeWithSchema())
+				api.Put("/*", s.handleUpdateNodeWithSchema())
+				api.Delete("/*", s.handleDeleteNodeWithSchema())
 			})
 		})
 
 		// Tag operations
-		r.Route("/api/v1/tags", func(r chi.Router) {
-			r.Use(OrgSandbox(prefix + "/api/v1/tags/"))
-			r.Group(func(r chi.Router) {
-				r.Use(s.requireUIPermission("tags", "read"))
-				r.Get("/*", s.handleGetTag)
+		api.Route("/api/v1/tags", func(api apiRoutes) {
+			api.Use(OrgSandbox(prefix + "/api/v1/tags/"))
+			api.Group(func(api apiRoutes) {
+				api.Use(s.requireUIPermission("tags", "read"))
+				api.Get("/*", s.handleGetTagWithSchema())
 			})
-			r.Group(func(r chi.Router) {
-				r.Use(s.requireUIPermission("tags", "write"))
-				r.Post("/", s.handleCreateTag)
-				r.Put("/*", s.handleUpdateTag)
-				r.Delete("/*", s.handleDeleteTag)
+			api.Group(func(api apiRoutes) {
+				api.Use(s.requireUIPermission("tags", "write"))
+				api.Post("/", s.handleCreateTagWithSchema())
+				api.Put("/*", s.handleUpdateTagWithSchema())
+				api.Delete("/*", s.handleDeleteTagWithSchema())
 			})
 		})
 
 		// Tag pipeline debug (separate route to avoid wildcard conflict)
-		r.Group(func(r chi.Router) {
-			r.Use(OrgSandbox(prefix + "/api/v1/debug/tags/"))
-			r.Use(s.requireUIPermission("tags", "write"))
-			r.Post("/api/v1/debug/tags/*", s.handleDebugTagPipeline)
+		api.Group(func(api apiRoutes) {
+			api.Use(OrgSandbox(prefix + "/api/v1/debug/tags/"))
+			api.Use(s.requireUIPermission("tags", "write"))
+			api.Post("/api/v1/debug/tags/*", s.handleDebugTagPipelineWithSchema())
 		})
 
-		r.With(s.requireUIPermission("tags", "write")).
-			Post("/api/v1/commands/{deviceName}", s.handleCommand)
+		api.With(s.requireUIPermission("tags", "write")).
+			Post("/api/v1/commands/{deviceName}", s.handleCommandWithSchema())
 
 		// Block schema discovery
-		r.Get("/api/v1/blocks/schemas", s.handleGetBlockSchemas)
+		api.Get("/api/v1/blocks/schemas", s.handleGetBlockSchemasWithSchema())
 
 		// Dashboard operations (requires database)
 		if s.dashboardHandlers != nil {
-			registerDashboardRoutes := func(r chi.Router) {
+			registerDashboardRoutes := func(api apiRoutes) {
 				// Any authenticated user can load dashboard navigation/content.
-				r.Get("/", s.dashboardHandlers.HandleListDashboards)
-				r.Get("/{id}", s.dashboardHandlers.HandleGetDashboard)
-				r.Group(func(r chi.Router) {
-					r.Use(s.requireUIPermission("dashboards-setup", "edit"))
-					r.Post("/", s.dashboardHandlers.HandleCreateDashboard)
-					r.Put("/{id}", s.dashboardHandlers.HandleUpdateDashboard)
-					r.Delete("/{id}", s.dashboardHandlers.HandleDeleteDashboard)
+				api.Get("/", s.dashboardHandlers.HandleListDashboardsWithSchema())
+				api.Get("/{id}", s.dashboardHandlers.HandleGetDashboardWithSchema())
+				api.Group(func(api apiRoutes) {
+					api.Use(s.requireUIPermission("dashboards-setup", "edit"))
+					api.Post("/", s.dashboardHandlers.HandleCreateDashboardWithSchema())
+					api.Put("/{id}", s.dashboardHandlers.HandleUpdateDashboardWithSchema())
+					api.Delete("/{id}", s.dashboardHandlers.HandleDeleteDashboardWithSchema())
 				})
 			}
-			r.Route("/api/v1/dashboards", registerDashboardRoutes)
+			api.Route("/api/v1/dashboards", registerDashboardRoutes)
 			// Compatibility alias for clients that have not moved to dashboard terminology yet.
-			r.Route("/api/v1/panels", registerDashboardRoutes)
+			api.Route("/api/v1/panels", registerDashboardRoutes)
 		}
 
 		// Permission operations (requires database)
 		if s.permissionHandlers != nil {
-			r.Route("/api/v1/permissions", func(r chi.Router) {
+			api.Route("/api/v1/permissions", func(api apiRoutes) {
 				// Open - fetching your own permissions
-				r.Get("/", s.permissionHandlers.HandleGetMyPermissions)
-				r.With(s.requireAnyUIPermission("permissions", "view", "manage")).
-					Get("/roles", s.permissionHandlers.HandleListRolePermissions)
-				r.With(s.requireUIPermission("permissions", "manage")).
-					Put("/roles/{role}", s.permissionHandlers.HandleUpdateRolePermissions)
+				api.Get("/", s.permissionHandlers.HandleGetMyPermissionsWithSchema())
+				api.With(s.requireAnyUIPermission("permissions", "view", "manage")).
+					Get("/roles", s.permissionHandlers.HandleListRolePermissionsWithSchema())
+				api.With(s.requireUIPermission("permissions", "manage")).
+					Put("/roles/{role}", s.permissionHandlers.HandleUpdateRolePermissionsWithSchema())
 			})
 		}
 
 		// Log query (requires database)
 		if s.logHandlers != nil {
-			r.With(s.requireUIPermission("logs", "read")).
-				Get("/api/v1/logs", s.logHandlers.HandleQueryLogs)
-			r.With(s.requireUIPermission("logs", "write")).
-				Post("/api/v1/logs", s.logHandlers.HandleCreateLog)
+			api.With(s.requireUIPermission("logs", "read")).
+				Get("/api/v1/logs", s.logHandlers.HandleQueryLogsWithSchema())
+			api.With(s.requireUIPermission("logs", "write")).
+				Post("/api/v1/logs", s.logHandlers.HandleCreateLogWithSchema())
 		}
 
 		// API key management for the current organisation.
 		if s.ingestHandler != nil {
-			r.Route("/api/v1/api-keys", func(r chi.Router) {
-				r.With(s.requireAnyUIPermission("organisations", "view", "change")).
-					Get("/", s.ingestHandler.HandleListAPIKeys)
-				r.With(s.requireUIPermission("organisations", "change")).
-					Post("/", s.ingestHandler.HandleCreateAPIKey)
-				r.With(s.requireUIPermission("organisations", "change")).
-					Delete("/{id}", s.ingestHandler.HandleDeleteAPIKey)
+			api.Route("/api/v1/api-keys", func(api apiRoutes) {
+				api.With(s.requireAnyUIPermission("organisations", "view", "change")).
+					Get("/", s.ingestHandler.HandleListAPIKeysWithSchema())
+				api.With(s.requireUIPermission("organisations", "change")).
+					Post("/", s.ingestHandler.HandleCreateAPIKeyWithSchema())
+				api.With(s.requireUIPermission("organisations", "change")).
+					Delete("/{id}", s.ingestHandler.HandleDeleteAPIKeyWithSchema())
 			})
 		}
 
-		r.Route("/api/v1/agent-tokens", func(r chi.Router) {
-			r.With(s.requireAnyUIPermission("agentkeys", "manage", "personal", "access")).
-				Get("/", s.handleListAgentTokens)
-			r.With(s.requireUIPermission("agentkeys", "manage")).
-				Get("/users", s.handleListAgentTokenUsers)
-			r.With(s.requireAnyUIPermission("agentkeys", "manage", "personal")).
-				Post("/", s.handleCreateAgentToken)
-			r.With(s.requireAnyUIPermission("agentkeys", "manage", "access")).
-				Get("/{id}", s.handleGetAgentToken)
-			r.With(s.requireAnyUIPermission("agentkeys", "manage", "personal")).
-				Delete("/{id}", s.handleDeleteAgentToken)
+		api.Route("/api/v1/agent-tokens", func(api apiRoutes) {
+			api.With(s.requireAnyUIPermission("agentkeys", "manage", "personal", "access")).
+				Get("/", s.handleListAgentTokensWithSchema())
+			api.With(s.requireUIPermission("agentkeys", "manage")).
+				Get("/users", s.handleListAgentTokenUsersWithSchema())
+			api.With(s.requireAnyUIPermission("agentkeys", "manage", "personal")).
+				Post("/", s.handleCreateAgentTokenWithSchema())
+			api.With(s.requireAnyUIPermission("agentkeys", "manage", "access")).
+				Get("/{id}", s.handleGetAgentTokenWithSchema())
+			api.With(s.requireAnyUIPermission("agentkeys", "manage", "personal")).
+				Delete("/{id}", s.handleDeleteAgentTokenWithSchema())
 		})
 
 		// User management (requires database)
 		if s.userHandlers != nil {
-			r.With(s.requireAnyUIPermission("users", "view", "manage")).
-				Get("/api/v1/roles", s.userHandlers.HandleListRoles)
-			r.Route("/api/v1/users", func(r chi.Router) {
-				r.With(s.requireAnyUIPermission("users", "view", "manage")).
-					Get("/", s.userHandlers.HandleListUsers)
-				r.With(s.requireUIPermission("users", "manage")).
-					Post("/", s.userHandlers.HandleCreateUser)
-				r.With(s.requireAnyUIPermission("users", "view", "manage")).
-					Get("/{id}", s.userHandlers.HandleGetUser)
-				r.With(s.requireUIPermission("users", "manage")).
-					Put("/{id}", s.userHandlers.HandleUpdateUser)
-				r.With(s.requireUIPermission("users", "manage")).
-					Post("/{id}/reset-password", s.userHandlers.HandleResetPassword)
+			api.With(s.requireAnyUIPermission("users", "view", "manage")).
+				Get("/api/v1/roles", s.userHandlers.HandleListRolesWithSchema())
+			api.Route("/api/v1/users", func(api apiRoutes) {
+				api.With(s.requireAnyUIPermission("users", "view", "manage")).
+					Get("/", s.userHandlers.HandleListUsersWithSchema())
+				api.With(s.requireUIPermission("users", "manage")).
+					Post("/", s.userHandlers.HandleCreateUserWithSchema())
+				api.With(s.requireAnyUIPermission("users", "view", "manage")).
+					Get("/{id}", s.userHandlers.HandleGetUserWithSchema())
+				api.With(s.requireUIPermission("users", "manage")).
+					Put("/{id}", s.userHandlers.HandleUpdateUserWithSchema())
+				api.With(s.requireUIPermission("users", "manage")).
+					Post("/{id}/reset-password", s.userHandlers.HandleResetPasswordWithSchema())
 			})
 		}
 
 		// Current user profile (requires database)
 		if s.meHandlers != nil {
-			r.Route("/api/v1/me", func(r chi.Router) {
-				r.Get("/", s.meHandlers.HandleGetMe)
-				r.With(s.requireUIPermission("profile", "change")).
-					Put("/", s.meHandlers.HandleUpdateMe)
-				r.With(s.requireUIPermission("profile", "change")).
-					Post("/change-password", s.meHandlers.HandleChangePassword)
+			api.Route("/api/v1/me", func(api apiRoutes) {
+				api.Get("/", s.meHandlers.HandleGetMeWithSchema())
+				api.With(s.requireUIPermission("profile", "change")).
+					Put("/", s.meHandlers.HandleUpdateMeWithSchema())
+				api.With(s.requireUIPermission("profile", "change")).
+					Post("/change-password", s.meHandlers.HandleChangePasswordWithSchema())
 			})
 		}
 
 		// Metrics (time-series) query endpoints (requires database)
 		if s.metricHandlers != nil {
-			r.Get("/api/v1/metrics/*", func(w http.ResponseWriter, req *http.Request) {
-				rest := chi.URLParam(req, "*")
-				if strings.HasSuffix(rest, "/since") {
-					s.metricHandlers.HandleQuerySince(w, req)
-				} else {
-					s.metricHandlers.HandleQueryRange(w, req)
-				}
-			})
+			api.Get("/api/v1/metrics/*", s.metricHandlers.HandleQueryMetricsWithSchema())
 		}
 
 		// PDF report templates (requires database)
 		if s.reportHandlers != nil {
-			r.Route("/api/v1/reports/templates", func(r chi.Router) {
-				r.With(s.requireAnyUIPermission("reports", "view", "manage")).
-					Get("/", s.reportHandlers.HandleListTemplates)
-				r.With(s.requireUIPermission("reports", "manage")).
-					Post("/", s.reportHandlers.HandleCreateTemplate)
-				r.With(s.requireAnyUIPermission("reports", "view", "manage")).
-					Get("/{id}", s.reportHandlers.HandleGetTemplate)
-				r.With(s.requireUIPermission("reports", "manage")).
-					Put("/{id}", s.reportHandlers.HandleUpdateTemplate)
-				r.With(s.requireUIPermission("reports", "manage")).
-					Delete("/{id}", s.reportHandlers.HandleDeleteTemplate)
-				r.With(s.requireAnyUIPermission("reports", "view", "manage")).
-					Post("/{id}/preview", s.reportHandlers.HandlePreviewTemplate)
+			api.Route("/api/v1/reports/templates", func(api apiRoutes) {
+				api.With(s.requireAnyUIPermission("reports", "view", "manage")).
+					Get("/", s.reportHandlers.HandleListTemplatesWithSchema())
+				api.With(s.requireUIPermission("reports", "manage")).
+					Post("/", s.reportHandlers.HandleCreateTemplateWithSchema())
+				api.With(s.requireAnyUIPermission("reports", "view", "manage")).
+					Get("/{id}", s.reportHandlers.HandleGetTemplateWithSchema())
+				api.With(s.requireUIPermission("reports", "manage")).
+					Put("/{id}", s.reportHandlers.HandleUpdateTemplateWithSchema())
+				api.With(s.requireUIPermission("reports", "manage")).
+					Delete("/{id}", s.reportHandlers.HandleDeleteTemplateWithSchema())
+				api.With(s.requireAnyUIPermission("reports", "view", "manage")).
+					Post("/{id}/preview", s.reportHandlers.HandlePreviewTemplateWithSchema())
 			})
-			r.With(s.requireAnyUIPermission("reports", "view", "manage")).
-				Post("/api/v1/reports/generate", s.reportHandlers.HandleGeneratePDF)
+			api.With(s.requireAnyUIPermission("reports", "view", "manage")).
+				Post("/api/v1/reports/generate", s.reportHandlers.HandleGeneratePDFWithSchema())
 		}
 
 		// Notification management (requires database)
 		if s.notificationHandlers != nil {
-			r.Route("/api/v1/notifications", func(r chi.Router) {
-				r.With(s.requireAnyUIPermission("notifications", "view", "manage")).
-					Get("/profiles", s.notificationHandlers.HandleListProfiles)
-				r.With(s.requireUIPermission("notifications", "manage")).
-					Post("/profiles", s.notificationHandlers.HandleCreateProfile)
-				r.With(s.requireAnyUIPermission("notifications", "view", "manage")).
-					Get("/profiles/{id}", s.notificationHandlers.HandleGetProfile)
-				r.With(s.requireUIPermission("notifications", "manage")).
-					Put("/profiles/{id}", s.notificationHandlers.HandleUpdateProfile)
-				r.With(s.requireUIPermission("notifications", "manage")).
-					Delete("/profiles/{id}", s.notificationHandlers.HandleDeleteProfile)
-				r.With(s.requireAnyUIPermission("notifications", "view", "manage")).
-					Get("/channels", s.notificationHandlers.HandleGetChannels)
-				r.With(s.requireUIPermission("notifications", "manage")).
-					Put("/channels", s.notificationHandlers.HandleSaveChannels)
+			api.Route("/api/v1/notifications", func(api apiRoutes) {
+				api.With(s.requireAnyUIPermission("notifications", "view", "manage")).
+					Get("/profiles", s.notificationHandlers.HandleListProfilesWithSchema())
+				api.With(s.requireUIPermission("notifications", "manage")).
+					Post("/profiles", s.notificationHandlers.HandleCreateProfileWithSchema())
+				api.With(s.requireAnyUIPermission("notifications", "view", "manage")).
+					Get("/profiles/{id}", s.notificationHandlers.HandleGetProfileWithSchema())
+				api.With(s.requireUIPermission("notifications", "manage")).
+					Put("/profiles/{id}", s.notificationHandlers.HandleUpdateProfileWithSchema())
+				api.With(s.requireUIPermission("notifications", "manage")).
+					Delete("/profiles/{id}", s.notificationHandlers.HandleDeleteProfileWithSchema())
+				api.With(s.requireAnyUIPermission("notifications", "view", "manage")).
+					Get("/channels", s.notificationHandlers.HandleGetChannelsWithSchema())
+				api.With(s.requireUIPermission("notifications", "manage")).
+					Put("/channels", s.notificationHandlers.HandleSaveChannelsWithSchema())
 			})
 		}
 
 		// Tag scripts (requires database)
 		if s.tagCalcHandlers != nil {
-			r.Route("/api/v1/tagcalcs", func(r chi.Router) {
-				r.With(s.requireAnyUIPermission("tagcalcs", "view", "manage")).
-					Get("/", s.tagCalcHandlers.HandleList)
-				r.With(s.requireUIPermission("tagcalcs", "manage")).
-					Post("/", s.tagCalcHandlers.HandleCreate)
-				r.With(s.requireUIPermission("tagcalcs", "manage")).
-					Post("/test", s.tagCalcHandlers.HandleTest)
-				r.With(s.requireAnyUIPermission("tagcalcs", "view", "manage")).
-					Get("/{id}", s.tagCalcHandlers.HandleGet)
-				r.With(s.requireUIPermission("tagcalcs", "manage")).
-					Put("/{id}", s.tagCalcHandlers.HandleUpdate)
-				r.With(s.requireUIPermission("tagcalcs", "manage")).
-					Delete("/{id}", s.tagCalcHandlers.HandleDelete)
+			api.Route("/api/v1/tagcalcs", func(api apiRoutes) {
+				api.With(s.requireAnyUIPermission("tagcalcs", "view", "manage")).
+					Get("/", s.tagCalcHandlers.HandleListWithSchema())
+				api.With(s.requireUIPermission("tagcalcs", "manage")).
+					Post("/", s.tagCalcHandlers.HandleCreateWithSchema())
+				api.With(s.requireUIPermission("tagcalcs", "manage")).
+					Post("/test", s.tagCalcHandlers.HandleTestWithSchema())
+				api.With(s.requireAnyUIPermission("tagcalcs", "view", "manage")).
+					Get("/{id}", s.tagCalcHandlers.HandleGetWithSchema())
+				api.With(s.requireUIPermission("tagcalcs", "manage")).
+					Put("/{id}", s.tagCalcHandlers.HandleUpdateWithSchema())
+				api.With(s.requireUIPermission("tagcalcs", "manage")).
+					Delete("/{id}", s.tagCalcHandlers.HandleDeleteWithSchema())
 			})
 		}
 
 		// Scheduler (requires database)
 		if s.scheduleHandlers != nil {
-			r.Route("/api/v1/schedules", func(r chi.Router) {
-				r.With(s.requireAnyUIPermission("scheduler", "view", "manage")).
-					Get("/", s.scheduleHandlers.HandleList)
-				r.With(s.requireUIPermission("scheduler", "manage")).
-					Post("/", s.scheduleHandlers.HandleCreate)
-				r.With(s.requireAnyUIPermission("scheduler", "view", "manage")).
-					Get("/{id}", s.scheduleHandlers.HandleGet)
-				r.With(s.requireUIPermission("scheduler", "manage")).
-					Put("/{id}", s.scheduleHandlers.HandleUpdate)
-				r.With(s.requireUIPermission("scheduler", "manage")).
-					Delete("/{id}", s.scheduleHandlers.HandleDelete)
-				r.With(s.requireUIPermission("scheduler", "manage")).
-					Post("/{id}/run", s.scheduleHandlers.HandleRunNow)
-				r.With(s.requireAnyUIPermission("scheduler", "view", "manage")).
-					Get("/{id}/history", s.scheduleHandlers.HandleHistory)
+			api.Route("/api/v1/schedules", func(api apiRoutes) {
+				api.With(s.requireAnyUIPermission("scheduler", "view", "manage")).
+					Get("/", s.scheduleHandlers.HandleListWithSchema())
+				api.With(s.requireUIPermission("scheduler", "manage")).
+					Post("/", s.scheduleHandlers.HandleCreateWithSchema())
+				api.With(s.requireAnyUIPermission("scheduler", "view", "manage")).
+					Get("/{id}", s.scheduleHandlers.HandleGetWithSchema())
+				api.With(s.requireUIPermission("scheduler", "manage")).
+					Put("/{id}", s.scheduleHandlers.HandleUpdateWithSchema())
+				api.With(s.requireUIPermission("scheduler", "manage")).
+					Delete("/{id}", s.scheduleHandlers.HandleDeleteWithSchema())
+				api.With(s.requireUIPermission("scheduler", "manage")).
+					Post("/{id}/run", s.scheduleHandlers.HandleRunNowWithSchema())
+				api.With(s.requireAnyUIPermission("scheduler", "view", "manage")).
+					Get("/{id}/history", s.scheduleHandlers.HandleHistoryWithSchema())
 			})
 		}
 
 		// Organisation management (requires database)
 		if s.orgHandlers != nil {
-			r.Route("/api/v1/organisations", func(r chi.Router) {
-				r.With(s.requireAnyUIPermission("organisations", "view", "change")).
-					Get("/", s.orgHandlers.HandleListOrganisations)
-				r.With(s.requireUIPermission("organisations", "change"), s.requireSystemAdmin()).
-					Post("/", s.orgHandlers.HandleCreateOrganisation)
-				r.With(s.requireAnyUIPermission("organisations", "view", "change"), s.requireTargetOrgParam("name")).
-					Get("/{name}", s.orgHandlers.HandleGetOrganisation)
-				r.With(s.requireUIPermission("organisations", "change"), s.requireTargetOrgParam("name")).
-					Put("/{name}", s.orgHandlers.HandleUpdateOrganisation)
-				r.With(s.requireUIPermission("organisations", "change"), s.requireSystemAdmin()).
-					Delete("/{name}", s.orgHandlers.HandleDeleteOrganisation)
+			api.Route("/api/v1/organisations", func(api apiRoutes) {
+				api.With(s.requireAnyUIPermission("organisations", "view", "change")).
+					Get("/", s.orgHandlers.HandleListOrganisationsWithSchema())
+				api.With(s.requireUIPermission("organisations", "change"), s.requireSystemAdmin()).
+					Post("/", s.orgHandlers.HandleCreateOrganisationWithSchema())
+				api.With(s.requireAnyUIPermission("organisations", "view", "change"), s.requireTargetOrgParam("name")).
+					Get("/{name}", s.orgHandlers.HandleGetOrganisationWithSchema())
+				api.With(s.requireUIPermission("organisations", "change"), s.requireTargetOrgParam("name")).
+					Put("/{name}", s.orgHandlers.HandleUpdateOrganisationWithSchema())
+				api.With(s.requireUIPermission("organisations", "change"), s.requireSystemAdmin()).
+					Delete("/{name}", s.orgHandlers.HandleDeleteOrganisationWithSchema())
 			})
 		}
 	})
@@ -803,6 +800,10 @@ func JSONContentType(next http.Handler) http.Handler {
 }
 
 // handleNATSConfig returns the WebSocket NATS credentials for browser clients.
+func (s *Server) handleNATSConfigWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleNATSConfig, nil, NATSBrowserConfig{}, "system")
+}
+
 func (s *Server) handleNATSConfig(w http.ResponseWriter, r *http.Request) {
 	s.natsCfgMu.RLock()
 	cfg := s.natsBrowserConfig
@@ -836,6 +837,10 @@ func (s *Server) directNATSWebSocketURL(r *http.Request) string {
 }
 
 // handleNATSInternalConfig returns the internal NATS credentials for test harness connections.
+func (s *Server) handleNATSInternalConfigWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleNATSInternalConfig, nil, NATSInternalConfig{}, "system")
+}
+
 func (s *Server) handleNATSInternalConfig(w http.ResponseWriter, r *http.Request) {
 	s.natsCfgMu.RLock()
 	cfg := s.natsInternalConfig
@@ -843,15 +848,28 @@ func (s *Server) handleNATSInternalConfig(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(cfg)
 }
 
+type healthResponse struct {
+	Status     string `json:"status"`
+	Service    string `json:"service"`
+	Timestamp  int64  `json:"timestamp"`
+	Timezone   string `json:"timezone"`
+	AppVersion string `json:"appVersion"`
+	GoVersion  string `json:"goVersion"`
+}
+
+func (s *Server) handleHealthWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleHealth, nil, healthResponse{}, "system")
+}
+
 // handleHealth returns server health status
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":     "healthy",
-		"service":    "xact-rtdb-api",
-		"timestamp":  time.Now().Unix(),
-		"timezone":   serverTimezone(),
-		"appVersion": strings.TrimSpace(s.config.AppVersion),
-		"goVersion":  runtime.Version(),
+	json.NewEncoder(w).Encode(healthResponse{
+		Status:     "healthy",
+		Service:    "xact-rtdb-api",
+		Timestamp:  time.Now().Unix(),
+		Timezone:   serverTimezone(),
+		AppVersion: strings.TrimSpace(s.config.AppVersion),
+		GoVersion:  runtime.Version(),
 	})
 }
 
@@ -1049,14 +1067,29 @@ func (s *Server) makeOrgNodeDeleter() func(name string) {
 }
 
 // handleAPIDocs returns API documentation
+type apiDocsResponse struct {
+	Title       string `json:"title"`
+	Version     string `json:"version"`
+	OpenAPI     string `json:"openapi"`
+	Description string `json:"description"`
+}
+
+func (s *Server) handleAPIDocsWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleAPIDocs, nil, apiDocsResponse{}, "system")
+}
+
 func (s *Server) handleAPIDocs(w http.ResponseWriter, r *http.Request) {
-	docs := map[string]interface{}{
-		"title":       "XACT REST API",
-		"version":     "1.0.0",
-		"openapi":     "/api/v1/openapi.json",
-		"description": "Generated OpenAPI 3.0 document is available at /api/v1/openapi.json.",
+	docs := apiDocsResponse{
+		Title:       "XACT REST API",
+		Version:     "1.0.0",
+		OpenAPI:     "/api/v1/openapi.json",
+		Description: "Generated OpenAPI 3.0 document is available at /api/v1/openapi.json.",
 	}
 	json.NewEncoder(w).Encode(docs)
+}
+
+func (s *Server) handleOpenAPIWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleOpenAPI, nil, map[string]any{"type": "object", "additionalProperties": true}, "system")
 }
 
 func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {

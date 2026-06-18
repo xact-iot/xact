@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/xact-iot/xact/events"
+	"github.com/xact-iot/xact/openapischema"
 	"github.com/xact-iot/xact/sqldb"
 )
 
@@ -29,6 +30,29 @@ func NewLogHandlers(database sqldb.DB, maxQueryLimit int) *LogHandlers {
 	return &LogHandlers{DB: database, MaxQueryLimit: maxQueryLimit}
 }
 
+type createLogRequest struct {
+	Timestamp      *time.Time     `json:"timestamp"`
+	OrgName        string         `json:"orgName"`
+	Severity       string         `json:"severity"`
+	NotificationID int            `json:"notificationId"`
+	Device         string         `json:"device"`
+	Message        string         `json:"message"`
+	Params         map[string]any `json:"params"`
+}
+
+type okResponse struct {
+	OK bool `json:"ok"`
+}
+
+func (h *LogHandlers) HandleCreateLogWithSchema() openapischema.Handler {
+	return openapischema.Handler{
+		Handler:     h.HandleCreateLog,
+		RequestBody: openapischema.JSONRequestBody(createLogRequest{}),
+		Responses:   openapischema.ResponseSchema(http.StatusAccepted, okResponse{}),
+		Tags:        []string{"logs"},
+	}
+}
+
 // HandleCreateLog handles POST /api/v1/logs. It publishes through the events
 // pipeline so the entry is echoed to the console and persisted by the
 // notification handler.
@@ -37,15 +61,7 @@ func (h *LogHandlers) HandleCreateLog(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "event publisher unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	var req struct {
-		Timestamp      *time.Time     `json:"timestamp"`
-		OrgName        string         `json:"orgName"`
-		Severity       string         `json:"severity"`
-		NotificationID int            `json:"notificationId"`
-		Device         string         `json:"device"`
-		Message        string         `json:"message"`
-		Params         map[string]any `json:"params"`
-	}
+	var req createLogRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
@@ -95,7 +111,11 @@ func (h *LogHandlers) HandleCreateLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	_ = json.NewEncoder(w).Encode(okResponse{OK: true})
+}
+
+func (h *LogHandlers) HandleQueryLogsWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleQueryLogs, nil, []events.EventEntry{}, "logs")
 }
 
 // HandleQueryLogs handles GET /api/v1/logs with optional query parameters.

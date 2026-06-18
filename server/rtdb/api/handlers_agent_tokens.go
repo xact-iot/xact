@@ -25,6 +25,23 @@ func (s *Server) agentTokenStore() (agentTokenStore, bool) {
 	return store, ok
 }
 
+type createAgentTokenRequest struct {
+	Name      string `json:"name"`
+	UserID    int    `json:"userId"`
+	ExpiresAt string `json:"expiresAt"`
+}
+
+type agentTokenUser struct {
+	ID          int      `json:"id"`
+	LoginName   string   `json:"loginName"`
+	DisplayName string   `json:"displayName"`
+	Roles       []string `json:"roles"`
+}
+
+func (s *Server) handleListAgentTokensWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleListAgentTokens, nil, []sqldb.AgentToken{}, "agent-tokens")
+}
+
 func (s *Server) handleListAgentTokens(w http.ResponseWriter, r *http.Request) {
 	store, ok := s.agentTokenStore()
 	if !ok {
@@ -53,6 +70,15 @@ func (s *Server) handleListAgentTokens(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(tokens)
 }
 
+func (s *Server) handleCreateAgentTokenWithSchema() openAPIHandler {
+	return openAPIHandler{
+		Handler:     s.handleCreateAgentToken,
+		RequestBody: jsonRequestBody(createAgentTokenRequest{}),
+		Responses:   responseSchema(http.StatusCreated, sqldb.AgentToken{}),
+		Tags:        []string{"agent-tokens"},
+	}
+}
+
 func (s *Server) handleCreateAgentToken(w http.ResponseWriter, r *http.Request) {
 	store, ok := s.agentTokenStore()
 	if !ok {
@@ -64,11 +90,7 @@ func (s *Server) handleCreateAgentToken(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, `{"error":"organisation not found in token"}`, http.StatusUnauthorized)
 		return
 	}
-	var req struct {
-		Name      string `json:"name"`
-		UserID    int    `json:"userId"`
-		ExpiresAt string `json:"expiresAt"`
-	}
+	var req createAgentTokenRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
 		return
@@ -115,6 +137,10 @@ func (s *Server) handleCreateAgentToken(w http.ResponseWriter, r *http.Request) 
 	_ = json.NewEncoder(w).Encode(token)
 }
 
+func (s *Server) handleListAgentTokenUsersWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleListAgentTokenUsers, nil, []agentTokenUser{}, "agent-tokens")
+}
+
 func (s *Server) handleListAgentTokenUsers(w http.ResponseWriter, r *http.Request) {
 	orgName := currentOrgFromContext(r)
 	if orgName == "" {
@@ -126,13 +152,7 @@ func (s *Server) handleListAgentTokenUsers(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	type tokenUser struct {
-		ID          int      `json:"id"`
-		LoginName   string   `json:"loginName"`
-		DisplayName string   `json:"displayName"`
-		Roles       []string `json:"roles"`
-	}
-	out := []tokenUser{}
+	out := []agentTokenUser{}
 	for _, user := range users {
 		if !user.Active {
 			continue
@@ -156,7 +176,7 @@ func (s *Server) handleListAgentTokenUsers(w http.ResponseWriter, r *http.Reques
 			if displayName == "" {
 				displayName = user.LoginName
 			}
-			out = append(out, tokenUser{
+			out = append(out, agentTokenUser{
 				ID:          user.ID,
 				LoginName:   user.LoginName,
 				DisplayName: displayName,
@@ -166,6 +186,10 @@ func (s *Server) handleListAgentTokenUsers(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+func (s *Server) handleGetAgentTokenWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleGetAgentToken, nil, sqldb.AgentToken{}, "agent-tokens")
 }
 
 func (s *Server) handleGetAgentToken(w http.ResponseWriter, r *http.Request) {
@@ -200,6 +224,10 @@ func (s *Server) handleGetAgentToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(token)
+}
+
+func (s *Server) handleDeleteAgentTokenWithSchema() openAPIHandler {
+	return handlerWithResponses(s.handleDeleteAgentToken, map[int]any{http.StatusNoContent: nil}, "agent-tokens")
 }
 
 func (s *Server) handleDeleteAgentToken(w http.ResponseWriter, r *http.Request) {

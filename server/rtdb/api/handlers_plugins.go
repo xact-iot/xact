@@ -16,6 +16,10 @@ type widgetPluginMeta struct {
 	URL  string `json:"url"`  // path to fetch the plugin JS (e.g. "/plugins/widgets/big-number.js")
 }
 
+func (s *Server) handleListWidgetPluginsWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleListWidgetPlugins, nil, []widgetPluginMeta{}, "plugins")
+}
+
 // handleListWidgetPlugins returns a JSON array of .js files found in the
 // plugins/widgets directory. Returns an empty array if the directory is absent.
 func (s *Server) handleListWidgetPlugins(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +68,10 @@ func (s *Server) handleServeWidgetPlugin(w http.ResponseWriter, r *http.Request)
 
 // handleListMapLayerPlugins returns a JSON array of .js files found in the
 // plugins/map-layer directory. These scripts register layer-level map plugins.
+func (s *Server) handleListMapLayerPluginsWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleListMapLayerPlugins, nil, []widgetPluginMeta{}, "plugins")
+}
+
 func (s *Server) handleListMapLayerPlugins(w http.ResponseWriter, r *http.Request) {
 	s.handleListPlugins(w, "map-layer")
 }
@@ -76,6 +84,10 @@ func (s *Server) handleServeMapLayerPlugin(w http.ResponseWriter, r *http.Reques
 
 // handleListThemePlugins returns a JSON array of .js files found in the
 // plugins/themes directory. Returns an empty array if the directory is absent.
+func (s *Server) handleListThemePluginsWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleListThemePlugins, nil, []widgetPluginMeta{}, "plugins")
+}
+
 func (s *Server) handleListThemePlugins(w http.ResponseWriter, r *http.Request) {
 	s.handleListPlugins(w, "themes")
 }

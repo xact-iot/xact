@@ -9,19 +9,24 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/xact-iot/xact/notifications"
+	"github.com/xact-iot/xact/openapischema"
 	"github.com/xact-iot/xact/sqldb"
 )
 
 // NotificationHandlers holds dependencies for notification REST endpoints.
 type NotificationHandlers struct {
-	DB           sqldb.DB
-	GetOrg       func(r *http.Request) string
+	DB              sqldb.DB
+	GetOrg          func(r *http.Request) string
 	ReloadNotifiers func(ctx context.Context, org string) error
 }
 
 // NewNotificationHandlers creates a new NotificationHandlers instance.
 func NewNotificationHandlers(database sqldb.DB, getOrg func(r *http.Request) string, reloadNotifiers func(ctx context.Context, org string) error) *NotificationHandlers {
 	return &NotificationHandlers{DB: database, GetOrg: getOrg, ReloadNotifiers: reloadNotifiers}
+}
+
+func (h *NotificationHandlers) HandleListProfilesWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleListProfiles, nil, []sqldb.NotificationProfile{}, "notifications")
 }
 
 // HandleListProfiles returns all notification profiles for the org.
@@ -36,6 +41,10 @@ func (h *NotificationHandlers) HandleListProfiles(w http.ResponseWriter, r *http
 		profiles = []sqldb.NotificationProfile{}
 	}
 	json.NewEncoder(w).Encode(profiles)
+}
+
+func (h *NotificationHandlers) HandleGetProfileWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleGetProfile, nil, sqldb.NotificationProfile{}, "notifications")
 }
 
 // HandleGetProfile returns a single notification profile by ID.
@@ -59,6 +68,15 @@ func (h *NotificationHandlers) HandleGetProfile(w http.ResponseWriter, r *http.R
 	json.NewEncoder(w).Encode(profile)
 }
 
+func (h *NotificationHandlers) HandleCreateProfileWithSchema() openapischema.Handler {
+	return openapischema.Handler{
+		Handler:     h.HandleCreateProfile,
+		RequestBody: openapischema.JSONRequestBody(sqldb.NotificationProfile{}),
+		Responses:   openapischema.ResponseSchema(http.StatusCreated, sqldb.NotificationProfile{}),
+		Tags:        []string{"notifications"},
+	}
+}
+
 // HandleCreateProfile creates a new notification profile.
 func (h *NotificationHandlers) HandleCreateProfile(w http.ResponseWriter, r *http.Request) {
 	org := h.GetOrg(r)
@@ -79,6 +97,10 @@ func (h *NotificationHandlers) HandleCreateProfile(w http.ResponseWriter, r *htt
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(p)
+}
+
+func (h *NotificationHandlers) HandleUpdateProfileWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleUpdateProfile, sqldb.NotificationProfile{}, sqldb.NotificationProfile{}, "notifications")
 }
 
 // HandleUpdateProfile updates an existing notification profile.
@@ -110,6 +132,10 @@ func (h *NotificationHandlers) HandleUpdateProfile(w http.ResponseWriter, r *htt
 	}
 }
 
+func (h *NotificationHandlers) HandleDeleteProfileWithSchema() openapischema.Handler {
+	return openapischema.WithResponses(h.HandleDeleteProfile, map[int]any{http.StatusNoContent: nil}, "notifications")
+}
+
 // HandleDeleteProfile removes a notification profile.
 func (h *NotificationHandlers) HandleDeleteProfile(w http.ResponseWriter, r *http.Request) {
 	org := h.GetOrg(r)
@@ -126,6 +152,10 @@ func (h *NotificationHandlers) HandleDeleteProfile(w http.ResponseWriter, r *htt
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *NotificationHandlers) HandleGetChannelsWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleGetChannels, nil, notifications.ChannelConfig{}, "notifications")
+}
+
 // HandleGetChannels returns the notification channel configuration.
 func (h *NotificationHandlers) HandleGetChannels(w http.ResponseWriter, r *http.Request) {
 	org := h.GetOrg(r)
@@ -135,6 +165,10 @@ func (h *NotificationHandlers) HandleGetChannels(w http.ResponseWriter, r *http.
 		return
 	}
 	json.NewEncoder(w).Encode(cfg)
+}
+
+func (h *NotificationHandlers) HandleSaveChannelsWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleSaveChannels, notifications.ChannelConfig{}, notifications.ChannelConfig{}, "notifications")
 }
 
 // HandleSaveChannels saves the notification channel configuration.

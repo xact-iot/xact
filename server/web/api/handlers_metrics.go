@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/xact-iot/xact/openapischema"
 	"github.com/xact-iot/xact/sqldb"
 )
 
@@ -25,8 +26,33 @@ func NewMetricHandlers(db sqldb.DB, orgFromContext func(ctx context.Context) (st
 
 // metricSeriesJSON is the ECharts-compatible wire format: data points are [ms, value] tuples.
 type metricSeriesJSON struct {
-	Name string      `json:"name"`
-	Data [][2]any    `json:"data"`
+	Name string   `json:"name"`
+	Data [][2]any `json:"data"`
+}
+
+type metricRangeResponse struct {
+	Device string             `json:"device"`
+	Start  string             `json:"start"`
+	End    string             `json:"end"`
+	Series []metricSeriesJSON `json:"series"`
+}
+
+type metricSinceResponse struct {
+	Device string             `json:"device"`
+	After  string             `json:"after"`
+	Series []metricSeriesJSON `json:"series"`
+}
+
+func (h *MetricHandlers) HandleQueryMetricsWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.handleQueryMetricsOpenAPI, nil, metricRangeResponse{}, "metrics")
+}
+
+func (h *MetricHandlers) handleQueryMetricsOpenAPI(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(chi.URLParam(r, "*"), "/since") {
+		h.HandleQuerySince(w, r)
+		return
+	}
+	h.HandleQueryRange(w, r)
 }
 
 func toJSONSeries(series []sqldb.MetricSeries, maxPoints int) []metricSeriesJSON {
@@ -118,19 +144,12 @@ func (h *MetricHandlers) HandleQueryRange(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	type response struct {
-		Device string             `json:"device"`
-		Start  string             `json:"start"`
-		End    string             `json:"end"`
-		Series []metricSeriesJSON `json:"series"`
-	}
-
 	endTime := end
 	if endTime.IsZero() {
 		endTime = time.Now()
 	}
 
-	json.NewEncoder(w).Encode(response{
+	json.NewEncoder(w).Encode(metricRangeResponse{
 		Device: device,
 		Start:  start.UTC().Format(time.RFC3339),
 		End:    endTime.UTC().Format(time.RFC3339),
@@ -181,13 +200,7 @@ func (h *MetricHandlers) HandleQuerySince(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	type response struct {
-		Device string             `json:"device"`
-		After  string             `json:"after"`
-		Series []metricSeriesJSON `json:"series"`
-	}
-
-	json.NewEncoder(w).Encode(response{
+	json.NewEncoder(w).Encode(metricSinceResponse{
 		Device: device,
 		After:  after.UTC().Format(time.RFC3339),
 		Series: toJSONSeries(series, 0),

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/xact-iot/xact/openapischema"
 )
 
 type openAPIOperation struct {
@@ -22,7 +23,121 @@ type openAPIRegistry struct {
 	operation map[string]openAPIOperation
 }
 
-func buildOpenAPIRegistry(router chi.Routes, proxyPath string) *openAPIRegistry {
+type openAPIRouteSpec struct {
+	Method      string
+	Path        string
+	OperationID string
+	Summary     string
+	Public      bool
+	RequestBody map[string]any
+	Responses   map[string]any
+	Tags        []string
+}
+
+type openAPIHandler = openapischema.Handler
+
+type apiRoutes struct {
+	router chi.Router
+	specs  *[]openAPIRouteSpec
+	base   string
+	public bool
+}
+
+func newAPIRoutes(router chi.Router, specs *[]openAPIRouteSpec, base string, public bool) apiRoutes {
+	return apiRoutes{router: router, specs: specs, base: cleanRoutePath(base), public: public}
+}
+
+func (r apiRoutes) Group(fn func(apiRoutes)) {
+	r.router.Group(func(cr chi.Router) {
+		fn(apiRoutes{router: cr, specs: r.specs, base: r.base, public: r.public})
+	})
+}
+
+func (r apiRoutes) Route(pattern string, fn func(apiRoutes)) {
+	r.router.Route(pattern, func(cr chi.Router) {
+		fn(apiRoutes{
+			router: cr,
+			specs:  r.specs,
+			base:   joinRoutePath(r.base, pattern),
+			public: r.public,
+		})
+	})
+}
+
+func (r apiRoutes) With(middlewares ...func(http.Handler) http.Handler) apiRoutes {
+	return apiRoutes{router: r.router.With(middlewares...), specs: r.specs, base: r.base, public: r.public}
+}
+
+func (r apiRoutes) Use(middlewares ...func(http.Handler) http.Handler) {
+	r.router.Use(middlewares...)
+}
+
+func (r apiRoutes) Get(pattern string, handler any) {
+	r.register(http.MethodGet, pattern, handler)
+}
+
+func (r apiRoutes) Post(pattern string, handler any) {
+	r.register(http.MethodPost, pattern, handler)
+}
+
+func (r apiRoutes) Put(pattern string, handler any) {
+	r.register(http.MethodPut, pattern, handler)
+}
+
+func (r apiRoutes) Delete(pattern string, handler any) {
+	r.register(http.MethodDelete, pattern, handler)
+}
+
+func (r apiRoutes) register(method, pattern string, handler any) {
+	h := normalizeOpenAPIHandler(handler)
+	r.router.MethodFunc(method, pattern, h.Handler)
+	path := canonicalRoutePattern(joinRoutePath(r.base, pattern))
+	*r.specs = append(*r.specs, openAPIRouteSpec{
+		Method:      method,
+		Path:        path,
+		OperationID: operationID(strings.ToLower(method), path),
+		Summary:     operationSummary(method, path),
+		Public:      r.public,
+		RequestBody: h.RequestBody,
+		Responses:   h.Responses,
+		Tags:        h.Tags,
+	})
+}
+
+func normalizeOpenAPIHandler(handler any) openAPIHandler {
+	switch h := handler.(type) {
+	case openAPIHandler:
+		return h
+	case http.HandlerFunc:
+		return openAPIHandler{Handler: h, Responses: defaultOpenAPIResponses()}
+	case func(http.ResponseWriter, *http.Request):
+		return openAPIHandler{Handler: h, Responses: defaultOpenAPIResponses()}
+	default:
+		panic(fmt.Sprintf("unsupported API handler type %T", handler))
+	}
+}
+
+func handlerWithSchema(handler http.HandlerFunc, request any, response any, tags ...string) openAPIHandler {
+	h := openAPIHandler{
+		Handler:   handler,
+		Responses: responseSchema(http.StatusOK, response),
+		Tags:      tags,
+	}
+	if request != nil {
+		h.RequestBody = jsonRequestBody(request)
+	}
+	return h
+}
+
+func handlerWithResponses(handler http.HandlerFunc, responses map[int]any, tags ...string) openAPIHandler {
+	return openAPIHandler{
+		Handler:   handler,
+		Responses: responseSchemas(responses),
+		Tags:      tags,
+	}
+}
+
+func buildOpenAPIRegistry(specs []openAPIRouteSpec) *openAPIRegistry {
 	reg := &openAPIRegistry{
 		doc: map[string]any{
 			"openapi": "3.0.0",
@@ -46,45 +161,61 @@ func buildOpenAPIRegistry(router chi.Routes, proxyPath string) *openAPIRegistry 
 		operation: map[string]openAPIOperation{},
 	}
 
-	_ = chi.Walk(router, func(method string, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		path, ok := canonicalOpenAPIPath(route, proxyPath)
-		if !ok {
-			return nil
-		}
-		method = strings.ToLower(method)
-		opID := operationID(method, path)
-		public := publicOpenAPIPath(path)
+	for _, spec := range specs {
+		method := strings.ToLower(spec.Method)
 		paths := reg.doc["paths"].(map[string]any)
-		item, _ := paths[path].(map[string]any)
+		item, _ := paths[spec.Path].(map[string]any)
 		if item == nil {
 			item = map[string]any{}
-			paths[path] = item
+			paths[spec.Path] = item
 		}
 		op := map[string]any{
-			"operationId": opID,
-			"summary":     operationSummary(method, path),
-			"responses": map[string]any{
-				"200": map[string]any{"description": "Successful response"},
-			},
+			"operationId": spec.OperationID,
+			"summary":     spec.Summary,
+			"responses":   defaultOpenAPIResponses(),
 		}
-		if public {
+		if len(spec.Responses) > 0 {
+			op["responses"] = spec.Responses
+		}
+		if len(spec.RequestBody) > 0 {
+			op["requestBody"] = spec.RequestBody
+		}
+		if len(spec.Tags) > 0 {
+			op["tags"] = spec.Tags
+		}
+		if spec.Public {
 			op["security"] = []any{}
 		}
-		if strings.Contains(path, "{") {
-			op["parameters"] = pathParameters(path)
+		if strings.Contains(spec.Path, "{") {
+			op["parameters"] = pathParameters(spec.Path)
 		}
 		item[method] = op
-		reg.operation[opID] = openAPIOperation{
-			Method:      strings.ToUpper(method),
-			Path:        path,
-			OperationID: opID,
-			Public:      public,
+		reg.operation[spec.OperationID] = openAPIOperation{
+			Method:      strings.ToUpper(spec.Method),
+			Path:        spec.Path,
+			OperationID: spec.OperationID,
+			Public:      spec.Public,
 		}
-		return nil
-	})
+	}
 
 	sortOpenAPIPaths(reg.doc)
 	return reg
+}
+
+func defaultOpenAPIResponses() map[string]any {
+	return map[string]any{"200": map[string]any{"description": "Successful response"}}
+}
+
+func jsonRequestBody(v any) map[string]any {
+	return openapischema.JSONRequestBody(v)
+}
+
+func responseSchema(status int, v any) map[string]any {
+	return openapischema.ResponseSchema(status, v)
+}
+
+func responseSchemas(responses map[int]any) map[string]any {
+	return openapischema.ResponseSchemas(responses)
 }
 
 func canonicalOpenAPIPath(route, proxyPath string) (string, bool) {
@@ -112,14 +243,40 @@ func canonicalOpenAPIPath(route, proxyPath string) (string, bool) {
 	}
 }
 
-func publicOpenAPIPath(path string) bool {
-	return path == "/health" || path == "/login" || path == "/api-docs" || path == "/openapi.json" || path == "/api/v1/openapi.json" ||
-		strings.HasPrefix(path, "/api/v1/bootstrap/") ||
-		strings.HasPrefix(path, "/api/v1/plugins/") ||
-		strings.HasPrefix(path, "/api/v1/ingest/")
+func canonicalRoutePattern(path string) string {
+	path = strings.ReplaceAll(path, "/*", "/{path}")
+	path = strings.ReplaceAll(path, "{path:.*}", "{path}")
+	return cleanRoutePath(path)
+}
+
+func cleanRoutePath(path string) string {
+	if path == "" {
+		return ""
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return path
+}
+
+func joinRoutePath(base, pattern string) string {
+	base = cleanRoutePath(base)
+	if pattern == "" || pattern == "/" {
+		if base == "" {
+			return "/"
+		}
+		return strings.TrimRight(base, "/") + "/"
+	}
+	if base == "" || base == "/" {
+		return cleanRoutePath(pattern)
+	}
+	return cleanRoutePath(strings.TrimRight(base, "/") + "/" + strings.TrimLeft(pattern, "/"))
 }
 
 func operationID(method, path string) string {
+	if path == "/api/v1/openapi.json" {
+		return method + "_api_v1_openapi_json"
+	}
 	parts := []string{method}
 	for _, part := range strings.Split(strings.Trim(path, "/"), "/") {
 		if part == "" || part == "api" || part == "v1" {
