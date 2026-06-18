@@ -364,6 +364,8 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.tree.PropagateTemplateNodeDelete(path)
+
 	// Publish deletion to NATS before deleting (convert path to dot notation)
 	if s.treeSync != nil {
 		natsPath := pathToNatsSubject(path)

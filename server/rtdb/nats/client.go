@@ -45,6 +45,32 @@ func normalizeSubjectPath(path string) string {
 	return strings.Join(segments, ".")
 }
 
+type treeChangeTagShared struct {
+	Description       string                      `json:"description,omitempty"`
+	Units             string                      `json:"units,omitempty"`
+	Deadband          float64                     `json:"deadband,omitempty"`
+	EnumValues        map[int]string              `json:"enumValues,omitempty"`
+	Pipeline          []tree.ProcessBlockEnvelope `json:"pipeline,omitempty"`
+	PipelineInherited bool                        `json:"pipelineInherited,omitempty"`
+}
+
+func treeChangeSharedForLeaf(leaf tree.Leaf) *treeChangeTagShared {
+	shared := leaf.GetShared()
+	out := &treeChangeTagShared{
+		Description: leaf.GetDescription(),
+		Units:       shared.Units,
+		Deadband:    shared.Deadband,
+		EnumValues:  shared.EnumValues,
+	}
+	if pipeline := leaf.GetPipeline(); len(pipeline) > 0 {
+		if envelopes, err := tree.MarshalPipeline(pipeline); err == nil {
+			out.Pipeline = envelopes
+			out.PipelineInherited = len(shared.Pipeline) == 0
+		}
+	}
+	return out
+}
+
 // PublishChange publishes a tree change to NATS
 func (ts *TreeSync) PublishChange(path string, node tree.TreeNode) error {
 	subject := ts.SubjectForPath(path)
@@ -64,7 +90,7 @@ func (ts *TreeSync) PublishChange(path string, node tree.TreeNode) error {
 			Description  string          `json:"description,omitempty"`
 			TemplateName string          `json:"templateName,omitempty"`
 			Config       *tree.TagConfig `json:"config,omitempty"`
-			Shared       *tree.TagShared `json:"shared,omitempty"`
+			Shared       any             `json:"shared,omitempty"`
 			ValueType    string          `json:"value_type,omitempty"`
 			Value        any             `json:"value,omitempty"`
 			Status       string          `json:"status"`
@@ -78,9 +104,8 @@ func (ts *TreeSync) PublishChange(path string, node tree.TreeNode) error {
 		if leaf, ok := node.(tree.Leaf); ok {
 			event.Type = "leaf"
 			config := leaf.GetConfig()
-			shared := leaf.GetShared()
 			event.Config = &config
-			event.Shared = &shared
+			event.Shared = treeChangeSharedForLeaf(leaf)
 			event.Description = leaf.GetDescription()
 			event.ValueType = leaf.ValueType().String()
 			event.Value = leaf.GetAnyValue()

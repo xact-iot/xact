@@ -389,6 +389,7 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 				Ingest:           s.ingestProcessor,
 				ScheduleHandlers: s.scheduleHandlers,
 				TagCalcHandlers:  s.tagCalcHandlers,
+				TreePublisher:    s.treeSync,
 				RequireAny: func(ctx context.Context, resource string, actions ...string) bool {
 					for _, action := range actions {
 						if s.checkUIPermission(ctx, resource, action) {

@@ -10,6 +10,22 @@ import (
 	"github.com/xact-iot/xact/rtdb/tree"
 )
 
+type testProcessBlock struct{}
+
+func (testProcessBlock) GetType() string { return "stalecheck" }
+func (testProcessBlock) Init(tree.Leaf)  {}
+func (testProcessBlock) Close(tree.Leaf) {}
+func (testProcessBlock) Process(_ tree.Leaf, value any) (any, error) {
+	return value, nil
+}
+func (testProcessBlock) GetParameters() json.RawMessage {
+	return json.RawMessage(`{"timeoutSeconds":30}`)
+}
+func (testProcessBlock) SetParameters(json.RawMessage) error { return nil }
+func (testProcessBlock) Schema() tree.BlockSchema {
+	return tree.BlockSchema{Type: "stalecheck"}
+}
+
 func requireEmbeddedServer(t *testing.T) *testEmbeddedServer {
 	t.Helper()
 	cfg := testDefaultConfig()
@@ -224,6 +240,70 @@ func TestTreeSyncPublishChangeIncludesNodeTemplateName(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timeout waiting for node change")
+	}
+}
+
+func TestTreeSyncPublishChangeIncludesTagPipeline(t *testing.T) {
+	server := requireEmbeddedServer(t)
+	defer server.Shutdown()
+
+	sync := NewTreeSync(server.Conn(), "")
+
+	received := make(chan []byte, 1)
+	sub, err := server.Subscribe("default.Device.temperature", func(msg *nats.Msg) {
+		received <- msg.Data
+	})
+	if err != nil {
+		t.Fatalf("Failed to subscribe: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	leaf := tree.NewFloatLeaf("temperature", tree.TagConfig{Name: "temperature", Type: tree.TypeFloat}, tree.TagShared{
+		Description: "Temperature",
+		Units:       "degC",
+		Pipeline:    []tree.ProcessBlock{testProcessBlock{}},
+	})
+	if err := sync.PublishChange("default.Device.temperature", leaf); err != nil {
+		t.Fatalf("PublishChange: %v", err)
+	}
+
+	select {
+	case data := <-received:
+		var event struct {
+			Type   string `json:"type"`
+			Shared struct {
+				Description string                      `json:"description"`
+				Units       string                      `json:"units"`
+				Pipeline    []tree.ProcessBlockEnvelope `json:"pipeline"`
+			} `json:"shared"`
+		}
+		if err := json.Unmarshal(data, &event); err != nil {
+			t.Fatalf("unmarshal event: %v", err)
+		}
+		if event.Type != "leaf" {
+			t.Fatalf("type = %q, want leaf", event.Type)
+		}
+		if event.Shared.Description != "Temperature" {
+			t.Fatalf("shared.description = %q", event.Shared.Description)
+		}
+		if event.Shared.Units != "degC" {
+			t.Fatalf("shared.units = %q", event.Shared.Units)
+		}
+		if len(event.Shared.Pipeline) != 1 {
+			t.Fatalf("pipeline length = %d, want 1; data=%s", len(event.Shared.Pipeline), data)
+		}
+		if event.Shared.Pipeline[0].Type != "stalecheck" {
+			t.Fatalf("pipeline type = %q, want stalecheck", event.Shared.Pipeline[0].Type)
+		}
+		var params map[string]int
+		if err := json.Unmarshal(event.Shared.Pipeline[0].Parameters, &params); err != nil {
+			t.Fatalf("unmarshal pipeline params: %v", err)
+		}
+		if params["timeoutSeconds"] != 30 {
+			t.Fatalf("timeoutSeconds = %d, want 30", params["timeoutSeconds"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("Timeout waiting for tree change")
 	}
 }
 

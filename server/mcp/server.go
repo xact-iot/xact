@@ -43,8 +43,11 @@ type Dependencies struct {
 	}
 	ScheduleHandlers *webapi.ScheduleHandlers
 	TagCalcHandlers  *webapi.TagCalcHandlers
-	RequireAny       func(ctx context.Context, resource string, actions ...string) bool
-	CurrentOrg       func(ctx context.Context) (string, bool)
+	TreePublisher    interface {
+		PublishChange(path string, node tree.TreeNode) error
+	}
+	RequireAny func(ctx context.Context, resource string, actions ...string) bool
+	CurrentOrg func(ctx context.Context) (string, bool)
 }
 
 type Server struct {
@@ -193,6 +196,22 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 	var result any
 	var err error
 	switch call.Name {
+	case "xact_get_rtdb_item":
+		result, err = s.toolGetRTDBItem(ctx, call.Arguments)
+	case "xact_create_node":
+		result, err = s.toolCreateNode(ctx, call.Arguments)
+	case "xact_update_node":
+		result, err = s.toolUpdateNode(ctx, call.Arguments)
+	case "xact_delete_node":
+		result, err = s.toolDeleteNode(ctx, call.Arguments)
+	case "xact_create_tag":
+		result, err = s.toolCreateTag(ctx, call.Arguments)
+	case "xact_update_tag":
+		result, err = s.toolUpdateTag(ctx, call.Arguments)
+	case "xact_delete_tag":
+		result, err = s.toolDeleteTag(ctx, call.Arguments)
+	case "xact_delete_rtdb_item":
+		result, err = s.toolDeleteRTDBItem(ctx, call.Arguments)
 	case "xact_get_tag":
 		result, err = s.toolGetTag(ctx, call.Arguments)
 	case "xact_browse_tree":
@@ -238,6 +257,14 @@ func toolResult(v any) (map[string]any, error) {
 
 func (s *Server) tools() []map[string]any {
 	return []map[string]any{
+		tool("xact_get_rtdb_item", "Fetch an RTDB node or tag by path.", object(map[string]any{"path": stringSchema("RTDB path, org-relative or absolute."), "depth": numberSchema("Node depth when the item is a node; -1 returns the full subtree.")}, "path")),
+		tool("xact_create_node", "Create an RTDB node in the current organisation.", object(map[string]any{"path": stringSchema("Node path, org-relative or absolute."), "description": stringSchema("Node description."), "templateName": stringSchema("Template name."), "nodeType": stringSchema("Standard, Device, or Organisation."), "isArray": boolSchema("Mark as an array container."), "locked": boolSchema("Lock the node after creation."), "dryRun": boolSchema("Preview mutation only when true.")}, "path")),
+		tool("xact_update_node", "Update RTDB node metadata, lock state, or name.", object(map[string]any{"path": stringSchema("Node path, org-relative or absolute."), "name": stringSchema("New node name within the same parent."), "description": stringSchema("Node description."), "templateName": stringSchema("Template name."), "nodeType": stringSchema("Standard, Device, or Organisation."), "isArray": boolSchema("Mark/unmark as an array container."), "locked": boolSchema("Set lock state."), "dryRun": boolSchema("Preview mutation only when true.")}, "path")),
+		tool("xact_delete_node", "Delete an RTDB node and its descendants.", object(map[string]any{"path": stringSchema("Node path, org-relative or absolute."), "dryRun": boolSchema("Preview mutation only when true.")}, "path")),
+		tool("xact_create_tag", "Create an RTDB tag in the current organisation.", object(map[string]any{"path": stringSchema("Tag path, org-relative or absolute."), "type": stringSchema("integer, float, string, boolean, enum, or numeric scalar type."), "config": mapSchema("Tag config; supports name and templateName."), "shared": mapSchema("Tag shared metadata: description, units, deadband, enumValues, pipeline."), "metadata": mapSchema("Alias for shared metadata."), "value": mapSchema("Initial value."), "dryRun": boolSchema("Preview mutation only when true.")}, "path", "type")),
+		tool("xact_update_tag", "Update RTDB tag metadata, pipeline, value, or name.", object(map[string]any{"path": stringSchema("Tag path, org-relative or absolute."), "name": stringSchema("New tag name within the same parent."), "shared": mapSchema("Tag shared metadata: description, units, deadband, enumValues, pipeline."), "metadata": mapSchema("Alias for shared metadata."), "description": stringSchema("Tag description."), "units": stringSchema("Engineering units."), "deadband": numberSchema("Deadband."), "enumValues": mapSchema("Enum value labels."), "pipeline": arraySchema("Processing block envelopes."), "value": mapSchema("New tag value."), "dryRun": boolSchema("Preview mutation only when true.")}, "path")),
+		tool("xact_delete_tag", "Delete an RTDB tag.", object(map[string]any{"path": stringSchema("Tag path, org-relative or absolute."), "dryRun": boolSchema("Preview mutation only when true.")}, "path")),
+		tool("xact_delete_rtdb_item", "Delete an RTDB node or tag by path.", object(map[string]any{"path": stringSchema("RTDB path, org-relative or absolute."), "dryRun": boolSchema("Preview mutation only when true.")}, "path")),
 		tool("xact_get_tag", "Fetch current value and metadata for an RTDB tag.", object(map[string]any{"path": stringSchema("Tag path, org-relative or absolute.")}, "path")),
 		tool("xact_browse_tree", "Browse RTDB nodes and tags.", object(map[string]any{"path": stringSchema("Tree path, org-relative or absolute."), "depth": numberSchema("Depth; -1 returns the full subtree.")})),
 		tool("xact_find_tags", "Search the RTDB tree for matching tags.", object(map[string]any{"query": stringSchema("Search phrase."), "types": arraySchema("Allowed value types."), "historicalOnly": boolSchema("Only return tags with history recorder blocks.")})),
@@ -313,6 +340,616 @@ func (s *Server) fullPath(ctx context.Context, path string) (string, string, err
 		return p, org, nil
 	}
 	return org + "." + p, org, nil
+}
+
+func (s *Server) publishTreeChange(path string, node tree.TreeNode) {
+	if s.deps.TreePublisher == nil {
+		return
+	}
+	_ = s.deps.TreePublisher.PublishChange(path, node)
+}
+
+type rtdbNodeMutationRequest struct {
+	Path         string  `json:"path"`
+	Name         string  `json:"name"`
+	Description  *string `json:"description"`
+	TemplateName *string `json:"templateName"`
+	NodeType     string  `json:"nodeType"`
+	IsDevice     bool    `json:"isDevice"`
+	IsArray      *bool   `json:"isArray"`
+	Locked       *bool   `json:"locked"`
+	DryRun       *bool   `json:"dryRun"`
+}
+
+type rtdbTagSharedInput struct {
+	Description *string                      `json:"description"`
+	Units       *string                      `json:"units"`
+	Deadband    *float64                     `json:"deadband"`
+	EnumValues  map[int]string               `json:"enumValues"`
+	Pipeline    *[]tree.ProcessBlockEnvelope `json:"pipeline"`
+}
+
+type rtdbTagMutationRequest struct {
+	Path        string                       `json:"path"`
+	Name        string                       `json:"name"`
+	Type        json.RawMessage              `json:"type"`
+	Config      json.RawMessage              `json:"config"`
+	Shared      rtdbTagSharedInput           `json:"shared"`
+	Metadata    rtdbTagSharedInput           `json:"metadata"`
+	Description *string                      `json:"description"`
+	Units       *string                      `json:"units"`
+	Deadband    *float64                     `json:"deadband"`
+	EnumValues  map[int]string               `json:"enumValues"`
+	Pipeline    *[]tree.ProcessBlockEnvelope `json:"pipeline"`
+	Value       json.RawMessage              `json:"value"`
+	DryRun      *bool                        `json:"dryRun"`
+}
+
+func isDryRun(v *bool) bool {
+	return v != nil && *v
+}
+
+func normalizeNodeType(raw string, legacyDevice bool) tree.NodeType {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "device":
+		return tree.NodeTypeDevice
+	case "organisation", "organization":
+		return tree.NodeTypeOrganisation
+	case "standard":
+		return tree.NodeTypeStandard
+	default:
+		if legacyDevice {
+			return tree.NodeTypeDevice
+		}
+		return tree.NodeTypeStandard
+	}
+}
+
+func parentAndChildName(path string) (string, string, error) {
+	components := tree.ResolvePath(path)
+	if len(components) == 0 {
+		return "", "", errors.New("path must include a child name")
+	}
+	if len(components) == 1 {
+		return "/", components[0], nil
+	}
+	return "/" + strings.Join(components[:len(components)-1], "/"), components[len(components)-1], nil
+}
+
+func replacePathName(path, name string) string {
+	components := tree.ResolvePath(path)
+	if len(components) == 0 {
+		return path
+	}
+	components[len(components)-1] = name
+	return strings.Join(components, ".")
+}
+
+func parseScalarType(raw json.RawMessage) (tree.ScalarType, error) {
+	if len(raw) == 0 {
+		return 0, errors.New("type is required")
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		switch strings.ToLower(strings.TrimSpace(text)) {
+		case "integer", "int":
+			return tree.TypeInteger, nil
+		case "float", "double", "number":
+			return tree.TypeFloat, nil
+		case "string":
+			return tree.TypeString, nil
+		case "boolean", "bool":
+			return tree.TypeBoolean, nil
+		case "enum":
+			return tree.TypeEnum, nil
+		default:
+			return 0, fmt.Errorf("unknown scalar type %q", text)
+		}
+	}
+	var num int
+	if err := json.Unmarshal(raw, &num); err == nil {
+		t := tree.ScalarType(num)
+		if t < tree.TypeInteger || t > tree.TypeEnum {
+			return 0, fmt.Errorf("unknown scalar type %d", num)
+		}
+		return t, nil
+	}
+	return 0, errors.New("type must be a string or numeric scalar type")
+}
+
+func tagConfigFromRaw(raw json.RawMessage, scalarType tree.ScalarType) (tree.TagConfig, error) {
+	cfg := tree.TagConfig{Type: scalarType}
+	if len(raw) == 0 || string(raw) == "null" {
+		return cfg, nil
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return cfg, fmt.Errorf("invalid config: %w", err)
+	}
+	if rawName, ok := m["name"]; ok {
+		_ = json.Unmarshal(rawName, &cfg.Name)
+	}
+	if rawTemplate, ok := m["templateName"]; ok {
+		_ = json.Unmarshal(rawTemplate, &cfg.TemplateName)
+	}
+	if rawType, ok := m["type"]; ok {
+		configType, err := parseScalarType(rawType)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid config.type: %w", err)
+		}
+		if configType != scalarType {
+			return cfg, fmt.Errorf("config.type %s does not match type %s", configType.String(), scalarType.String())
+		}
+		cfg.Type = configType
+	}
+	return cfg, nil
+}
+
+func (in rtdbTagSharedInput) applyTo(shared tree.TagShared) (tree.TagShared, bool, error) {
+	changed := false
+	if in.Description != nil {
+		shared.Description = *in.Description
+		changed = true
+	}
+	if in.Units != nil {
+		shared.Units = *in.Units
+		changed = true
+	}
+	if in.Deadband != nil {
+		shared.Deadband = *in.Deadband
+		changed = true
+	}
+	if in.EnumValues != nil {
+		shared.EnumValues = in.EnumValues
+		changed = true
+	}
+	if in.Pipeline != nil {
+		if len(*in.Pipeline) == 0 {
+			shared.Pipeline = nil
+		} else {
+			pipeline, err := tree.UnmarshalPipeline(*in.Pipeline)
+			if err != nil {
+				return shared, changed, fmt.Errorf("invalid pipeline: %w", err)
+			}
+			shared.Pipeline = pipeline
+		}
+		changed = true
+	}
+	return shared, changed, nil
+}
+
+func (req rtdbTagMutationRequest) sharedInput() rtdbTagSharedInput {
+	in := req.Shared
+	if req.Metadata.Description != nil {
+		in.Description = req.Metadata.Description
+	}
+	if req.Metadata.Units != nil {
+		in.Units = req.Metadata.Units
+	}
+	if req.Metadata.Deadband != nil {
+		in.Deadband = req.Metadata.Deadband
+	}
+	if req.Metadata.EnumValues != nil {
+		in.EnumValues = req.Metadata.EnumValues
+	}
+	if req.Metadata.Pipeline != nil {
+		in.Pipeline = req.Metadata.Pipeline
+	}
+	if req.Description != nil {
+		in.Description = req.Description
+	}
+	if req.Units != nil {
+		in.Units = req.Units
+	}
+	if req.Deadband != nil {
+		in.Deadband = req.Deadband
+	}
+	if req.EnumValues != nil {
+		in.EnumValues = req.EnumValues
+	}
+	if req.Pipeline != nil {
+		in.Pipeline = req.Pipeline
+	}
+	return in
+}
+
+func (s *Server) toolGetRTDBItem(ctx context.Context, raw json.RawMessage) (any, error) {
+	var req struct {
+		Path  string `json:"path"`
+		Depth int    `json:"depth"`
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, err
+	}
+	path, _, err := s.fullPath(ctx, req.Path)
+	if err != nil {
+		return nil, err
+	}
+	item, err := s.deps.Tree.FindNodeOrLeaf(path)
+	if err != nil {
+		return nil, err
+	}
+	if item.IsNode() {
+		if err := s.require(ctx, "nodes", "read"); err != nil {
+			return nil, err
+		}
+		return nodeResponse(path, item.(*tree.Node), req.Depth), nil
+	}
+	if err := s.require(ctx, "tags", "read"); err != nil {
+		return nil, err
+	}
+	return tagResponse(path, item.(tree.Leaf)), nil
+}
+
+func (s *Server) toolCreateNode(ctx context.Context, raw json.RawMessage) (any, error) {
+	if err := s.requireWrite(ctx, "nodes", "write"); err != nil {
+		return nil, err
+	}
+	var req rtdbNodeMutationRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, err
+	}
+	if req.Path == "" {
+		return nil, errors.New("path is required")
+	}
+	path, _, err := s.fullPath(ctx, req.Path)
+	if err != nil {
+		return nil, err
+	}
+	if isDryRun(req.DryRun) {
+		return map[string]any{"dryRun": true, "operation": "create_node", "path": path, "nodeType": string(normalizeNodeType(req.NodeType, req.IsDevice))}, nil
+	}
+	nodeType := normalizeNodeType(req.NodeType, req.IsDevice)
+	switch nodeType {
+	case tree.NodeTypeDevice:
+		err = s.deps.Tree.CreateDeviceNode(path, stringPtrValue(req.TemplateName))
+	case tree.NodeTypeOrganisation:
+		err = s.deps.Tree.CreateOrganisationNode(path, stringPtrValue(req.TemplateName))
+	default:
+		err = s.deps.Tree.CreateNode(path, stringPtrValue(req.TemplateName))
+	}
+	if err != nil {
+		return nil, err
+	}
+	node, err := s.deps.Tree.FindNode(path)
+	if err != nil {
+		return nil, err
+	}
+	if req.Description != nil {
+		node.SetDescription(*req.Description)
+	}
+	if req.TemplateName != nil {
+		node.SetTemplateName(*req.TemplateName)
+	}
+	if req.IsArray != nil {
+		node.SetIsArray(*req.IsArray)
+	}
+	if req.Locked != nil {
+		if *req.Locked {
+			if err := s.deps.Tree.LockNode(path); err != nil {
+				return nil, err
+			}
+		} else if err := s.deps.Tree.UnlockNode(path); err != nil {
+			return nil, err
+		}
+	}
+	s.deps.Tree.NotifyChange(path, node)
+	s.publishTreeChange(path, node)
+	return map[string]any{"status": "ok", "node": nodeResponse(path, node, 0)}, nil
+}
+
+func (s *Server) toolUpdateNode(ctx context.Context, raw json.RawMessage) (any, error) {
+	if err := s.requireWrite(ctx, "nodes", "write"); err != nil {
+		return nil, err
+	}
+	var req rtdbNodeMutationRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, err
+	}
+	if req.Path == "" {
+		return nil, errors.New("path is required")
+	}
+	path, _, err := s.fullPath(ctx, req.Path)
+	if err != nil {
+		return nil, err
+	}
+	if isDryRun(req.DryRun) {
+		return map[string]any{"dryRun": true, "operation": "update_node", "path": path, "name": req.Name}, nil
+	}
+	oldPath := ""
+	if req.Name != "" {
+		parent, oldName, err := parentAndChildName(path)
+		if err != nil {
+			return nil, err
+		}
+		if req.Name != oldName {
+			oldPath = path
+			if err := s.deps.Tree.RenameChild(parent, oldName, req.Name); err != nil {
+				return nil, err
+			}
+			path = replacePathName(path, req.Name)
+		}
+	}
+	node, err := s.deps.Tree.FindNode(path)
+	if err != nil {
+		return nil, err
+	}
+	if req.Description != nil {
+		node.SetDescription(*req.Description)
+	}
+	if req.TemplateName != nil {
+		node.SetTemplateName(*req.TemplateName)
+	}
+	if req.NodeType != "" || req.IsDevice {
+		switch normalizeNodeType(req.NodeType, req.IsDevice) {
+		case tree.NodeTypeDevice:
+			if err := s.deps.Tree.CreateDeviceNode(path, node.GetTemplateName()); err != nil {
+				return nil, err
+			}
+		case tree.NodeTypeOrganisation:
+			if err := s.deps.Tree.CreateOrganisationNode(path, node.GetTemplateName()); err != nil {
+				return nil, err
+			}
+		default:
+			node.SetNodeType(tree.NodeTypeStandard)
+		}
+		node, err = s.deps.Tree.FindNode(path)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if req.IsArray != nil {
+		node.SetIsArray(*req.IsArray)
+	}
+	if req.Locked != nil {
+		if *req.Locked {
+			if err := s.deps.Tree.LockNode(path); err != nil {
+				return nil, err
+			}
+		} else if err := s.deps.Tree.UnlockNode(path); err != nil {
+			return nil, err
+		}
+	}
+	s.deps.Tree.NotifyChange(path, node)
+	if oldPath != "" {
+		s.publishTreeChange(oldPath, nil)
+	}
+	s.publishTreeChange(path, node)
+	return map[string]any{"status": "ok", "node": nodeResponse(path, node, 0)}, nil
+}
+
+func (s *Server) toolDeleteNode(ctx context.Context, raw json.RawMessage) (any, error) {
+	if err := s.requireWrite(ctx, "nodes", "write"); err != nil {
+		return nil, err
+	}
+	var req struct {
+		Path   string `json:"path"`
+		DryRun *bool  `json:"dryRun"`
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, err
+	}
+	if req.Path == "" {
+		return nil, errors.New("path is required")
+	}
+	path, _, err := s.fullPath(ctx, req.Path)
+	if err != nil {
+		return nil, err
+	}
+	if isDryRun(req.DryRun) {
+		return map[string]any{"dryRun": true, "operation": "delete_node", "path": path}, nil
+	}
+	propagated := s.deps.Tree.PropagateTemplateNodeDelete(path)
+	if err := s.deps.Tree.DeleteNode(path); err != nil {
+		return nil, err
+	}
+	s.publishTreeChange(path, nil)
+	return map[string]any{"status": "deleted", "path": path, "type": "node", "propagatedTo": propagated}, nil
+}
+
+func (s *Server) toolCreateTag(ctx context.Context, raw json.RawMessage) (any, error) {
+	if err := s.requireWrite(ctx, "tags", "write"); err != nil {
+		return nil, err
+	}
+	var req rtdbTagMutationRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, err
+	}
+	if req.Path == "" {
+		return nil, errors.New("path is required")
+	}
+	scalarType, err := parseScalarType(req.Type)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := tagConfigFromRaw(req.Config, scalarType)
+	if err != nil {
+		return nil, err
+	}
+	shared, _, err := req.sharedInput().applyTo(tree.TagShared{})
+	if err != nil {
+		return nil, err
+	}
+	path, _, err := s.fullPath(ctx, req.Path)
+	if err != nil {
+		return nil, err
+	}
+	if isDryRun(req.DryRun) {
+		return map[string]any{"dryRun": true, "operation": "create_tag", "path": path, "valueType": scalarType.String(), "config": cfg, "shared": shared}, nil
+	}
+	if err := s.deps.Tree.CreateTag(path, scalarType, cfg, shared); err != nil {
+		return nil, err
+	}
+	propagated := s.deps.Tree.PropagateTemplateTag(path)
+	leaf, err := s.deps.Tree.FindLeaf(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(req.Value) > 0 {
+		var value any
+		if err := json.Unmarshal(req.Value, &value); err != nil {
+			return nil, fmt.Errorf("invalid value: %w", err)
+		}
+		if err := s.deps.Tree.SetLeafValue(path, value); err != nil {
+			return nil, err
+		}
+		leaf, _ = s.deps.Tree.FindLeaf(path)
+	}
+	s.publishTreeChange(path, leaf)
+	return map[string]any{"status": "ok", "tag": tagResponse(path, leaf), "propagatedTo": propagated}, nil
+}
+
+func (s *Server) toolUpdateTag(ctx context.Context, raw json.RawMessage) (any, error) {
+	if err := s.requireWrite(ctx, "tags", "write"); err != nil {
+		return nil, err
+	}
+	var req rtdbTagMutationRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, err
+	}
+	if req.Path == "" {
+		return nil, errors.New("path is required")
+	}
+	path, _, err := s.fullPath(ctx, req.Path)
+	if err != nil {
+		return nil, err
+	}
+	if isDryRun(req.DryRun) {
+		return map[string]any{"dryRun": true, "operation": "update_tag", "path": path, "name": req.Name}, nil
+	}
+	oldPath := ""
+	if req.Name != "" {
+		parent, oldName, err := parentAndChildName(path)
+		if err != nil {
+			return nil, err
+		}
+		if req.Name != oldName {
+			oldPath = path
+			if err := s.deps.Tree.RenameChild(parent, oldName, req.Name); err != nil {
+				return nil, err
+			}
+			path = replacePathName(path, req.Name)
+		}
+	}
+	leaf, err := s.deps.Tree.FindLeaf(path)
+	if err != nil {
+		return nil, err
+	}
+	sharedInput := req.sharedInput()
+	shared, structuralChange, err := sharedInput.applyTo(leaf.GetShared())
+	if err != nil {
+		return nil, err
+	}
+	if structuralChange {
+		leaf.SetShared(shared)
+		if sharedInput.EnumValues != nil {
+			if enumLeaf, ok := leaf.(interface{ SetEnumValues(map[int]string) }); ok {
+				enumLeaf.SetEnumValues(sharedInput.EnumValues)
+			}
+		}
+		if sharedInput.Pipeline != nil && len(*sharedInput.Pipeline) > 0 {
+			tree.InitPipelineBlocks(leaf, shared.Pipeline)
+		}
+		s.deps.Tree.NotifyChange(path, leaf)
+	}
+	if len(req.Value) > 0 {
+		var value any
+		if err := json.Unmarshal(req.Value, &value); err != nil {
+			return nil, fmt.Errorf("invalid value: %w", err)
+		}
+		if err := s.deps.Tree.SetLeafValue(path, value); err != nil {
+			return nil, err
+		}
+		leaf, _ = s.deps.Tree.FindLeaf(path)
+	}
+	if oldPath != "" {
+		s.publishTreeChange(oldPath, nil)
+	}
+	s.publishTreeChange(path, leaf)
+	return map[string]any{"status": "ok", "tag": tagResponse(path, leaf)}, nil
+}
+
+func (s *Server) toolDeleteTag(ctx context.Context, raw json.RawMessage) (any, error) {
+	if err := s.requireWrite(ctx, "tags", "write"); err != nil {
+		return nil, err
+	}
+	var req struct {
+		Path   string `json:"path"`
+		DryRun *bool  `json:"dryRun"`
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, err
+	}
+	if req.Path == "" {
+		return nil, errors.New("path is required")
+	}
+	path, _, err := s.fullPath(ctx, req.Path)
+	if err != nil {
+		return nil, err
+	}
+	if isDryRun(req.DryRun) {
+		return map[string]any{"dryRun": true, "operation": "delete_tag", "path": path}, nil
+	}
+	propagated := s.deps.Tree.PropagateTemplateTagDelete(path)
+	if err := s.deps.Tree.DeleteTag(path); err != nil {
+		return nil, err
+	}
+	s.publishTreeChange(path, nil)
+	return map[string]any{"status": "deleted", "path": path, "type": "tag", "propagatedTo": propagated}, nil
+}
+
+func (s *Server) toolDeleteRTDBItem(ctx context.Context, raw json.RawMessage) (any, error) {
+	var req struct {
+		Path   string `json:"path"`
+		DryRun *bool  `json:"dryRun"`
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, err
+	}
+	if req.Path == "" {
+		return nil, errors.New("path is required")
+	}
+	path, _, err := s.fullPath(ctx, req.Path)
+	if err != nil {
+		return nil, err
+	}
+	item, err := s.deps.Tree.FindNodeOrLeaf(path)
+	if err != nil {
+		return nil, err
+	}
+	if item.IsNode() {
+		if err := s.requireWrite(ctx, "nodes", "write"); err != nil {
+			return nil, err
+		}
+		if isDryRun(req.DryRun) {
+			return map[string]any{"dryRun": true, "operation": "delete_node", "path": path}, nil
+		}
+		propagated := s.deps.Tree.PropagateTemplateNodeDelete(path)
+		if err := s.deps.Tree.DeleteNode(path); err != nil {
+			return nil, err
+		}
+		s.publishTreeChange(path, nil)
+		return map[string]any{"status": "deleted", "path": path, "type": "node", "propagatedTo": propagated}, nil
+	}
+	if err := s.requireWrite(ctx, "tags", "write"); err != nil {
+		return nil, err
+	}
+	if isDryRun(req.DryRun) {
+		return map[string]any{"dryRun": true, "operation": "delete_tag", "path": path}, nil
+	}
+	propagated := s.deps.Tree.PropagateTemplateTagDelete(path)
+	if err := s.deps.Tree.DeleteTag(path); err != nil {
+		return nil, err
+	}
+	s.publishTreeChange(path, nil)
+	return map[string]any{"status": "deleted", "path": path, "type": "tag", "propagatedTo": propagated}, nil
+}
+
+func stringPtrValue(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
 }
 
 func (s *Server) toolGetTag(ctx context.Context, raw json.RawMessage) (any, error) {

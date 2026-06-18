@@ -434,6 +434,145 @@ func TestCreateTag(t *testing.T) {
 	}
 }
 
+func TestCreateTemplateTagPropagatesToDeviceInstances(t *testing.T) {
+	treeOps := tree.NewTreeWithOperations(nil)
+	server := NewServer(ServerConfig{}, treeOps, nil, nil, "test-secret", nil, "")
+	token := generateTestToken([]byte("test-secret"), "user1")
+
+	if err := treeOps.CreateDeviceNode("tenant1.AirQuality.AQ001", "Templates.AirQualityStandard"); err != nil {
+		t.Fatalf("create AQ001: %v", err)
+	}
+	if err := treeOps.CreateDeviceNode("tenant1.AirQuality.AQ002", "Templates.AirQualityStandard"); err != nil {
+		t.Fatalf("create AQ002: %v", err)
+	}
+
+	body, _ := json.Marshal(CreateTagRequest{
+		Path: "tenant1/Templates/AirQualityStandard/metrics/pm25",
+		Type: tree.TypeFloat,
+		Shared: tree.TagShared{
+			Description: "Template PM2.5",
+			Units:       "ug/m3",
+		},
+	})
+	req := httptest.NewRequest("POST", "/api/v1/tags/", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	server.Router().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rr.Code, http.StatusCreated, rr.Body.String())
+	}
+	tmplLeaf, err := treeOps.FindLeaf("tenant1.Templates.AirQualityStandard.metrics.pm25")
+	if err != nil {
+		t.Fatalf("template leaf: %v", err)
+	}
+	for _, path := range []string{
+		"tenant1.AirQuality.AQ001.metrics.pm25",
+		"tenant1.AirQuality.AQ002.metrics.pm25",
+	} {
+		leaf, err := treeOps.FindLeaf(path)
+		if err != nil {
+			t.Fatalf("instance leaf %s: %v", path, err)
+		}
+		if leaf.GetTemplate() != tmplLeaf {
+			t.Fatalf("%s template pointer not linked", path)
+		}
+		if leaf.GetConfig().TemplateName != "Templates.AirQualityStandard" {
+			t.Fatalf("%s templateName = %q", path, leaf.GetConfig().TemplateName)
+		}
+		if leaf.GetDescription() != "Template PM2.5" {
+			t.Fatalf("%s description = %q", path, leaf.GetDescription())
+		}
+	}
+}
+
+func TestDeleteTemplateTagPropagatesToDeviceInstances(t *testing.T) {
+	treeOps := tree.NewTreeWithOperations(nil)
+	server := NewServer(ServerConfig{}, treeOps, nil, nil, "test-secret", nil, "")
+	token := generateTestToken([]byte("test-secret"), "user1")
+
+	for _, path := range []string{
+		"tenant1.AirQuality.AQ001",
+		"tenant1.AirQuality.AQ002",
+	} {
+		if err := treeOps.CreateDeviceNode(path, "Templates.AirQualityStandard"); err != nil {
+			t.Fatalf("create device %s: %v", path, err)
+		}
+	}
+
+	body, _ := json.Marshal(CreateTagRequest{
+		Path: "tenant1/Templates/AirQualityStandard/metrics/pm25",
+		Type: tree.TypeFloat,
+	})
+	createReq := httptest.NewRequest("POST", "/api/v1/tags/", bytes.NewReader(body))
+	createReq.Header.Set("Authorization", "Bearer "+token)
+	createRR := httptest.NewRecorder()
+	server.Router().ServeHTTP(createRR, createReq)
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d; body: %s", createRR.Code, http.StatusCreated, createRR.Body.String())
+	}
+
+	req := httptest.NewRequest("DELETE", "/api/v1/tags/tenant1/Templates/AirQualityStandard/metrics/pm25", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	server.Router().ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want %d; body: %s", rr.Code, http.StatusNoContent, rr.Body.String())
+	}
+	for _, path := range []string{
+		"tenant1.Templates.AirQualityStandard.metrics.pm25",
+		"tenant1.AirQuality.AQ001.metrics.pm25",
+		"tenant1.AirQuality.AQ002.metrics.pm25",
+	} {
+		if _, err := treeOps.FindLeaf(path); err == nil {
+			t.Fatalf("%s still exists after template tag delete", path)
+		}
+	}
+}
+
+func TestDeleteTemplateNodePropagatesToDeviceInstances(t *testing.T) {
+	treeOps := tree.NewTreeWithOperations(nil)
+	server := NewServer(ServerConfig{}, treeOps, nil, nil, "test-secret", nil, "")
+	token := generateTestToken([]byte("test-secret"), "user1")
+
+	for _, path := range []string{
+		"tenant1.AirQuality.AQ001",
+		"tenant1.AirQuality.AQ002",
+	} {
+		if err := treeOps.CreateDeviceNode(path, "Templates.AirQualityStandard"); err != nil {
+			t.Fatalf("create device %s: %v", path, err)
+		}
+	}
+	for _, path := range []string{
+		"tenant1.Templates.AirQualityStandard.metrics.pm25",
+		"tenant1.Templates.AirQualityStandard.metrics.temp",
+	} {
+		if err := treeOps.CreateTag(path, tree.TypeFloat, tree.TagConfig{}, tree.TagShared{}); err != nil {
+			t.Fatalf("create template tag %s: %v", path, err)
+		}
+		if propagated := treeOps.PropagateTemplateTag(path); len(propagated) != 2 {
+			t.Fatalf("propagated %s len = %d, want 2: %#v", path, len(propagated), propagated)
+		}
+	}
+
+	req := httptest.NewRequest("DELETE", "/api/v1/nodes/tenant1/Templates/AirQualityStandard/metrics", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	server.Router().ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want %d; body: %s", rr.Code, http.StatusNoContent, rr.Body.String())
+	}
+	for _, path := range []string{
+		"tenant1.Templates.AirQualityStandard.metrics",
+		"tenant1.AirQuality.AQ001.metrics",
+		"tenant1.AirQuality.AQ002.metrics",
+	} {
+		if _, err := treeOps.FindNode(path); err == nil {
+			t.Fatalf("%s still exists after template node delete", path)
+		}
+	}
+}
+
 func TestCreateTagScopesRelativeBodyPathToTenant(t *testing.T) {
 	treeOps := tree.NewTreeWithOperations(nil)
 	server := NewServer(ServerConfig{}, treeOps, nil, nil, "test-secret", nil, "")

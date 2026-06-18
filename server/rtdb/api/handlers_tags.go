@@ -83,13 +83,11 @@ func (s *Server) handleCreateTag(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+	s.tree.PropagateTemplateTag(path)
 
 	// Set initial value if provided
 	if req.Value != nil {
-		leaf, err := s.tree.FindLeaf(path)
-		if err == nil {
-			leaf.SetAnyValue(req.Value)
-		}
+		_ = s.tree.SetLeafValue(path, req.Value)
 	}
 
 	// Find the created tag
@@ -353,6 +351,8 @@ func (s *Server) handleDeleteTag(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": "path is required"})
 		return
 	}
+
+	s.tree.PropagateTemplateTagDelete(path)
 
 	// Publish deletion to NATS before deleting
 	if s.treeSync != nil {

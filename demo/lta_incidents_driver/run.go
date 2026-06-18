@@ -2,12 +2,14 @@ package lta_incidents_driver
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 )
 
 func Start() {
 	cfg := ConfigFromEnv()
+	fmt.Printf("config %+v\n", cfg)
 	log.Printf("[LTA Incidents] starting: lta=%s xact=%s tenant=%s zone=%s poll=%s",
 		cfg.LTABaseURL, cfg.XACTBaseURL, cfg.Tenant, cfg.Zone, cfg.PollInterval)
 

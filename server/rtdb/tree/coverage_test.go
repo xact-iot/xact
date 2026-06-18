@@ -339,6 +339,35 @@ func TestRenameChildNotifiesSubtree(t *testing.T) {
 	}
 }
 
+func TestDeleteNodeNotifiesSubtree(t *testing.T) {
+	tw := NewTreeWithOperations(nil)
+	if err := tw.CreateNode("default.device.group.room", ""); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	if err := tw.CreateTag("default.device.group.room.temp", TypeFloat, TagConfig{}); err != nil {
+		t.Fatalf("CreateTag: %v", err)
+	}
+
+	deleted := map[string]bool{}
+	tw.SetOnChange(func(path string, node TreeNode) {
+		if node == nil {
+			deleted[path] = true
+		}
+	})
+	if err := tw.DeleteNode("default.device.group"); err != nil {
+		t.Fatalf("DeleteNode: %v", err)
+	}
+	for _, path := range []string{
+		"default.device.group",
+		"default.device.group.room",
+		"default.device.group.room.temp",
+	} {
+		if !deleted[path] {
+			t.Fatalf("missing delete notification for %s; got %#v", path, deleted)
+		}
+	}
+}
+
 func TestPublishSuppressesValuesInsideDeadbandAcrossTimestampChanges(t *testing.T) {
 	oldPublisher := TagValuePublisher
 	defer func() { TagValuePublisher = oldPublisher }()
@@ -525,6 +554,129 @@ func TestEnsureDeviceNodeAutoCreatesDevType(t *testing.T) {
 	}
 	if node.GetNodeType() != NodeTypeDevice {
 		t.Errorf("NodeType = %q, want Device", node.GetNodeType())
+	}
+}
+
+func TestPropagateTemplateTagCreatesLinkedDeviceTags(t *testing.T) {
+	treeOps := NewTreeWithOperations(nil)
+	if err := treeOps.CreateOrganisationNode("default", ""); err != nil {
+		t.Fatalf("CreateOrganisationNode: %v", err)
+	}
+	if err := treeOps.CreateNode("default.Templates.AirQualityStandard", ""); err != nil {
+		t.Fatalf("CreateNode template: %v", err)
+	}
+	if err := treeOps.CreateDeviceNode("default.AirQuality.AQ001", "Templates.AirQualityStandard"); err != nil {
+		t.Fatalf("CreateDeviceNode AQ001: %v", err)
+	}
+	if err := treeOps.CreateDeviceNode("default.AirQuality.AQ002", "Templates.AirQualityStandard"); err != nil {
+		t.Fatalf("CreateDeviceNode AQ002: %v", err)
+	}
+	if err := treeOps.CreateDeviceNode("default.AirQuality.Other", "Templates.Other"); err != nil {
+		t.Fatalf("CreateDeviceNode Other: %v", err)
+	}
+
+	shared := TagShared{Description: "Template PM2.5", Units: "ug/m3"}
+	if err := treeOps.CreateTag("default.Templates.AirQualityStandard.metrics.pm25", TypeFloat, TagConfig{Name: "PM2.5"}, shared); err != nil {
+		t.Fatalf("CreateTag template: %v", err)
+	}
+	propagated := treeOps.PropagateTemplateTag("default.Templates.AirQualityStandard.metrics.pm25")
+	if len(propagated) != 2 {
+		t.Fatalf("propagated len = %d, want 2: %#v", len(propagated), propagated)
+	}
+
+	tmplLeaf, err := treeOps.FindLeaf("default.Templates.AirQualityStandard.metrics.pm25")
+	if err != nil {
+		t.Fatalf("FindLeaf template: %v", err)
+	}
+	for _, path := range []string{
+		"default.AirQuality.AQ001.metrics.pm25",
+		"default.AirQuality.AQ002.metrics.pm25",
+	} {
+		leaf, err := treeOps.FindLeaf(path)
+		if err != nil {
+			t.Fatalf("FindLeaf %s: %v", path, err)
+		}
+		if leaf.GetTemplate() != tmplLeaf {
+			t.Fatalf("%s template pointer not linked", path)
+		}
+		if leaf.GetConfig().TemplateName != "Templates.AirQualityStandard" {
+			t.Fatalf("%s templateName = %q", path, leaf.GetConfig().TemplateName)
+		}
+		if leaf.GetDescription() != "Template PM2.5" {
+			t.Fatalf("%s description = %q", path, leaf.GetDescription())
+		}
+	}
+	if _, err := treeOps.FindLeaf("default.AirQuality.Other.metrics.pm25"); err == nil {
+		t.Fatalf("unrelated template instance received propagated tag")
+	}
+}
+
+func TestPropagateTemplateDeleteRemovesLinkedDeviceTagsAndNodes(t *testing.T) {
+	treeOps := NewTreeWithOperations(nil)
+	if err := treeOps.CreateOrganisationNode("default", ""); err != nil {
+		t.Fatalf("CreateOrganisationNode: %v", err)
+	}
+	if err := treeOps.CreateNode("default.Templates.AirQualityStandard", ""); err != nil {
+		t.Fatalf("CreateNode template: %v", err)
+	}
+	for _, path := range []string{
+		"default.AirQuality.AQ001",
+		"default.AirQuality.AQ002",
+	} {
+		if err := treeOps.CreateDeviceNode(path, "Templates.AirQualityStandard"); err != nil {
+			t.Fatalf("CreateDeviceNode %s: %v", path, err)
+		}
+	}
+	if err := treeOps.CreateDeviceNode("default.AirQuality.Other", "Templates.Other"); err != nil {
+		t.Fatalf("CreateDeviceNode Other: %v", err)
+	}
+
+	if err := treeOps.CreateTag("default.Templates.AirQualityStandard.metrics.pm25", TypeFloat, TagConfig{Name: "PM2.5"}, TagShared{}); err != nil {
+		t.Fatalf("CreateTag pm25: %v", err)
+	}
+	if err := treeOps.CreateTag("default.Templates.AirQualityStandard.metrics.temp", TypeFloat, TagConfig{Name: "Temp"}, TagShared{}); err != nil {
+		t.Fatalf("CreateTag temp: %v", err)
+	}
+	if propagated := treeOps.PropagateTemplateTag("default.Templates.AirQualityStandard.metrics.pm25"); len(propagated) != 2 {
+		t.Fatalf("pm25 propagated len = %d, want 2: %#v", len(propagated), propagated)
+	}
+	if propagated := treeOps.PropagateTemplateTag("default.Templates.AirQualityStandard.metrics.temp"); len(propagated) != 2 {
+		t.Fatalf("temp propagated len = %d, want 2: %#v", len(propagated), propagated)
+	}
+
+	deletedTags := treeOps.PropagateTemplateTagDelete("default.Templates.AirQualityStandard.metrics.pm25")
+	if len(deletedTags) != 2 {
+		t.Fatalf("deletedTags len = %d, want 2: %#v", len(deletedTags), deletedTags)
+	}
+	if _, err := treeOps.FindLeaf("default.Templates.AirQualityStandard.metrics.pm25"); err != nil {
+		t.Fatalf("template pm25 should still exist before direct delete: %v", err)
+	}
+	for _, path := range []string{
+		"default.AirQuality.AQ001.metrics.pm25",
+		"default.AirQuality.AQ002.metrics.pm25",
+	} {
+		if _, err := treeOps.FindLeaf(path); err == nil {
+			t.Fatalf("%s still exists after propagated tag delete", path)
+		}
+	}
+	if _, err := treeOps.FindLeaf("default.AirQuality.AQ001.metrics.temp"); err != nil {
+		t.Fatalf("sibling template-linked tag should remain until node delete: %v", err)
+	}
+
+	deletedNodes := treeOps.PropagateTemplateNodeDelete("default.Templates.AirQualityStandard.metrics")
+	if len(deletedNodes) != 2 {
+		t.Fatalf("deletedNodes len = %d, want 2: %#v", len(deletedNodes), deletedNodes)
+	}
+	for _, path := range []string{
+		"default.AirQuality.AQ001.metrics",
+		"default.AirQuality.AQ002.metrics",
+	} {
+		if _, err := treeOps.FindNode(path); err == nil {
+			t.Fatalf("%s still exists after propagated node delete", path)
+		}
+	}
+	if _, err := treeOps.FindNode("default.AirQuality.Other.metrics"); err == nil {
+		t.Fatalf("unrelated template instance node was deleted")
 	}
 }
 

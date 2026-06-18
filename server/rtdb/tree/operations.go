@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // defaultPublishBlock is the default publish block that marks tags for publishing
@@ -377,17 +378,16 @@ func (t *TreeWithOperations) DeleteNode(path string) error {
 	// Close pipeline blocks on all leaf descendants before removal
 	closeLeafPipelinesRecursive(node)
 
-	// Cascade delete - mark all children as deleted recursively FIRST
-	// (before marking the node itself, because GetChildren returns nil for deleted nodes)
+	// Notify while the subtree is still readable; deleted nodes intentionally
+	// hide their children, so doing this later would lose descendant deletes.
+	t.notifyBoth(path, nil)
+	t.notifyDeleteRecursive(path, node)
+
+	// Cascade delete - mark all children as deleted recursively FIRST.
 	t.markDeletedRecursive(node)
 
 	// Mark the node as deleted
 	node.MarkDeleted()
-
-	// Notify about deletions if callback is set
-	if t.onChange != nil {
-		t.notifyDeleteRecursive(path, node)
-	}
 
 	// Remove from parent
 	if err := parent.RemoveChild(nodeName); err != nil {
@@ -607,6 +607,11 @@ func (t *TreeWithOperations) CreateTagWithTemplateLeaf(path string, scalarType S
 			shared.Pipeline = nil
 			existingLeaf.SetShared(shared)
 			existingLeaf.SetTemplate(tmplLeaf)
+			if leafNode, ok := existing.(*LeafNode); ok {
+				leafNode.mu.Lock()
+				leafNode.config = config
+				leafNode.mu.Unlock()
+			}
 		}
 		return nil
 	}
@@ -624,6 +629,160 @@ func (t *TreeWithOperations) CreateTagWithTemplateLeaf(path string, scalarType S
 	t.notifyBoth(path, newTag)
 
 	return nil
+}
+
+type templatePropagationTarget struct {
+	path         string
+	templateName string
+}
+
+func normalizeTemplatePath(path string) string {
+	return strings.Trim(strings.ReplaceAll(path, "/", "."), ".")
+}
+
+func normalizeTemplateName(name string) string {
+	return strings.Trim(strings.ReplaceAll(name, "/", "."), ".")
+}
+
+func (t *TreeWithOperations) templateTargetsForPath(templatePath string) []templatePropagationTarget {
+	templatePath = normalizeTemplatePath(templatePath)
+	components := ResolvePath(templatePath)
+	if len(components) < 3 {
+		return nil
+	}
+	org := components[0]
+	root, err := t.FindNode(org)
+	if err != nil {
+		return nil
+	}
+
+	targets := []templatePropagationTarget{}
+	var walk func(path string, node *Node)
+	walk = func(path string, node *Node) {
+		templateName := normalizeTemplateName(node.GetTemplateName())
+		if node.GetNodeType() == NodeTypeDevice && templateName != "" {
+			templatePrefix := org + "." + templateName + "."
+			if strings.HasPrefix(templatePath, templatePrefix) {
+				suffix := strings.TrimPrefix(templatePath, templatePrefix)
+				if suffix != "" {
+					targets = append(targets, templatePropagationTarget{
+						path:         path + "." + suffix,
+						templateName: templateName,
+					})
+				}
+			}
+		}
+		children := node.GetChildren()
+		names := make([]string, 0, len(children))
+		for name := range children {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			if childNode, ok := children[name].(*Node); ok {
+				walk(path+"."+name, childNode)
+			}
+		}
+	}
+	walk(org, root)
+	return targets
+}
+
+// PropagateTemplateTag creates a template-linked copy of templateTagPath on every
+// existing device node that references the template containing templateTagPath.
+// It returns the concrete device tag paths that were created or re-linked.
+func (t *TreeWithOperations) PropagateTemplateTag(templateTagPath string) []string {
+	templateTagPath = normalizeTemplatePath(templateTagPath)
+	tmplLeaf, err := t.FindLeaf(templateTagPath)
+	if err != nil {
+		return nil
+	}
+	targets := t.templateTargetsForPath(templateTagPath)
+
+	propagated := make([]string, 0, len(targets))
+	for _, target := range targets {
+		existed := false
+		if _, err := t.FindLeaf(target.path); err == nil {
+			existed = true
+		}
+		config := tmplLeaf.GetConfig()
+		config.Type = tmplLeaf.ValueType()
+		config.TemplateName = target.templateName
+		if config.Name == "" {
+			config.Name = tmplLeaf.GetName()
+		}
+		if err := t.CreateTagWithTemplateLeaf(target.path, tmplLeaf.ValueType(), config, tmplLeaf); err != nil {
+			continue
+		}
+		if existed {
+			if leaf, err := t.FindLeaf(target.path); err == nil {
+				t.NotifyChange(target.path, leaf)
+			}
+		}
+		propagated = append(propagated, target.path)
+	}
+	return propagated
+}
+
+func templateLinkedLeaf(leaf Leaf, tmplLeaf Leaf, templateName string) bool {
+	if tmplLeaf != nil && leaf.GetTemplate() == tmplLeaf {
+		return true
+	}
+	return normalizeTemplateName(leaf.GetConfig().TemplateName) == normalizeTemplateName(templateName)
+}
+
+func nodeHasTemplateLinkedLeaf(node *Node, templateName string) bool {
+	for _, child := range node.GetChildren() {
+		if leaf, ok := child.(Leaf); ok && templateLinkedLeaf(leaf, nil, templateName) {
+			return true
+		}
+		if childNode, ok := child.(*Node); ok && nodeHasTemplateLinkedLeaf(childNode, templateName) {
+			return true
+		}
+	}
+	return false
+}
+
+// PropagateTemplateTagDelete removes template-linked copies of templateTagPath
+// from existing device instances that reference the containing template.
+func (t *TreeWithOperations) PropagateTemplateTagDelete(templateTagPath string) []string {
+	templateTagPath = normalizeTemplatePath(templateTagPath)
+	tmplLeaf, _ := t.FindLeaf(templateTagPath)
+	deleted := []string{}
+	for _, target := range t.templateTargetsForPath(templateTagPath) {
+		leaf, err := t.FindLeaf(target.path)
+		if err != nil || !templateLinkedLeaf(leaf, tmplLeaf, target.templateName) {
+			continue
+		}
+		if err := t.DeleteTag(target.path); err == nil {
+			deleted = append(deleted, target.path)
+		}
+	}
+	return deleted
+}
+
+// PropagateTemplateNodeDelete removes corresponding instance nodes for devices
+// that reference the containing template. To avoid deleting unrelated device-local
+// content, non-empty nodes are removed only when they contain template-linked leaves.
+func (t *TreeWithOperations) PropagateTemplateNodeDelete(templateNodePath string) []string {
+	templateNodePath = normalizeTemplatePath(templateNodePath)
+	if _, err := t.FindNode(templateNodePath); err != nil {
+		return nil
+	}
+	deleted := []string{}
+	for _, target := range t.templateTargetsForPath(templateNodePath) {
+		node, err := t.FindNode(target.path)
+		if err != nil {
+			continue
+		}
+		if len(node.GetChildren()) > 0 && !nodeHasTemplateLinkedLeaf(node, target.templateName) {
+			continue
+		}
+		if err := t.DeleteNode(target.path); err == nil {
+			deleted = append(deleted, target.path)
+		}
+	}
+	return deleted
 }
 
 // DeleteTag deletes a tag/leaf
