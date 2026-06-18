@@ -100,6 +100,7 @@ type Server struct {
 	ingestProcessor      *ingest.Processor
 	notifHandler         *events.NotificationHandler
 	eventPublisher       *events.Publisher
+	openapi              *openAPIRegistry
 }
 
 // NewServer creates a new API server.
@@ -318,6 +319,7 @@ func (s *Server) setupRoutes() {
 	} else {
 		s.buildRoutes(s.router, "")
 	}
+	s.openapi = buildOpenAPIRegistry(s.router, s.config.ProxyPath)
 	// Get here when there is no proxy and default URL
 	s.router.Get("/", s.serveIndexFallback)
 
@@ -336,6 +338,8 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 	r.Group(func(r chi.Router) {
 		r.Get("/health", s.handleHealth)
 		r.Get("/api-docs", s.handleAPIDocs)
+		r.Get("/openapi.json", s.handleOpenAPI)
+		r.Get("/api/v1/openapi.json", s.handleOpenAPI)
 		r.Post("/login", s.handleLogin)
 		r.Get("/api/v1/bootstrap/admin", s.handleBootstrapAdminStatus)
 		r.Post("/api/v1/bootstrap/admin/password", s.handleSetBootstrapAdminPassword)
@@ -405,6 +409,8 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 					}
 					return claims.TenantID, claims.TenantID != ""
 				},
+				APIContext: s.mcpAPIContext,
+				APIProxy:   s.mcpAPIProxy,
 			})
 			route := s.config.MCP.Route
 			if route == "" {
@@ -732,6 +738,14 @@ func (s *Server) Router() chi.Router {
 	return s.router
 }
 
+// OpenAPIDocument returns the generated OpenAPI document for this server.
+func (s *Server) OpenAPIDocument() map[string]any {
+	if s.openapi == nil {
+		return map[string]any{}
+	}
+	return cloneOpenAPIDoc(s.openapi.doc)
+}
+
 // SetTagCalcHandlers injects the tag calc handlers after the engine is started.
 // Must be called before the server starts accepting requests.
 func (s *Server) SetTagCalcHandlers(h *api.TagCalcHandlers) {
@@ -1037,25 +1051,17 @@ func (s *Server) makeOrgNodeDeleter() func(name string) {
 // handleAPIDocs returns API documentation
 func (s *Server) handleAPIDocs(w http.ResponseWriter, r *http.Request) {
 	docs := map[string]interface{}{
-		"title":   "XACT REST API",
-		"version": "1.0.0",
-		"endpoints": []map[string]string{
-			{"method": "GET", "path": "/health", "description": "Health check"},
-			{"method": "POST", "path": "/login", "description": "Login (dev mode - any credentials accepted)"},
-			{"method": "POST", "path": "/api/v1/nodes/", "description": "Create a new current-organisation node"},
-			{"method": "GET", "path": "/api/v1/nodes/*path", "description": "Get current-organisation node metadata and children"},
-			{"method": "PUT", "path": "/api/v1/nodes/*path", "description": "Update current-organisation node metadata"},
-			{"method": "DELETE", "path": "/api/v1/nodes/*path", "description": "Delete current-organisation node (cascade)"},
-			{"method": "POST", "path": "/api/v1/tags/", "description": "Create a new current-organisation tag"},
-			{"method": "GET", "path": "/api/v1/tags/*path", "description": "Get current-organisation tag metadata and value"},
-			{"method": "PUT", "path": "/api/v1/tags/*path", "description": "Update current-organisation tag metadata/value"},
-			{"method": "DELETE", "path": "/api/v1/tags/*path", "description": "Delete current-organisation tag"},
-			{"method": "GET", "path": "/api/v1/api-keys", "description": "List API keys for the current organisation"},
-			{"method": "POST", "path": "/api/v1/api-keys", "description": "Create an API key for the current organisation"},
-			{"method": "DELETE", "path": "/api/v1/api-keys/{id}", "description": "Delete an API key from the current organisation"},
-		},
+		"title":       "XACT REST API",
+		"version":     "1.0.0",
+		"openapi":     "/api/v1/openapi.json",
+		"description": "Generated OpenAPI 3.0 document is available at /api/v1/openapi.json.",
 	}
 	json.NewEncoder(w).Encode(docs)
+}
+
+func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.OpenAPIDocument())
 }
 
 // serveIndexFallback serves index.html for SPA routing (fallback for non-API paths)

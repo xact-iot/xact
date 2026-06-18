@@ -30,6 +30,10 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
+      '/xact/openapi.json': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
       '/xact/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,

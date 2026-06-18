@@ -48,6 +48,24 @@ type Dependencies struct {
 	}
 	RequireAny func(ctx context.Context, resource string, actions ...string) bool
 	CurrentOrg func(ctx context.Context) (string, bool)
+	APIContext func(ctx context.Context) (any, error)
+	APIProxy   func(ctx context.Context, req APIProxyRequest) (APIProxyResponse, error)
+}
+
+type APIProxyRequest struct {
+	OperationID string          `json:"operationId,omitempty"`
+	Method      string          `json:"method,omitempty"`
+	Path        string          `json:"path,omitempty"`
+	PathParams  map[string]any  `json:"pathParams,omitempty"`
+	Query       map[string]any  `json:"query,omitempty"`
+	Body        json.RawMessage `json:"body,omitempty"`
+	Confirm     bool            `json:"confirm,omitempty"`
+}
+
+type APIProxyResponse struct {
+	Status  int            `json:"status"`
+	Headers map[string]any `json:"headers,omitempty"`
+	Body    any            `json:"body,omitempty"`
 }
 
 type Server struct {
@@ -196,6 +214,10 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 	var result any
 	var err error
 	switch call.Name {
+	case "xact_get_api_context":
+		result, err = s.toolGetAPIContext(ctx)
+	case "xact_api_proxy":
+		result, err = s.toolAPIProxy(ctx, call.Arguments)
 	case "xact_get_rtdb_item":
 		result, err = s.toolGetRTDBItem(ctx, call.Arguments)
 	case "xact_create_node":
@@ -257,6 +279,8 @@ func toolResult(v any) (map[string]any, error) {
 
 func (s *Server) tools() []map[string]any {
 	return []map[string]any{
+		tool("xact_get_api_context", "Return the generated OpenAPI document and current API context. Use this to discover available REST-backed operations.", object(map[string]any{})),
+		tool("xact_api_proxy", "Execute a local XACT REST API operation as the authenticated MCP caller. Prefer operationId plus pathParams/query/body. Mutating calls require confirm=true.", object(map[string]any{"operationId": stringSchema("OpenAPI operationId."), "method": stringSchema("HTTP method when operationId is not used."), "path": stringSchema("Canonical API path when operationId is not used."), "pathParams": mapSchema("Path parameter values."), "query": mapSchema("Query parameters."), "body": mapSchema("JSON request body."), "confirm": boolSchema("Required for POST, PUT, PATCH, and DELETE calls.")})),
 		tool("xact_get_rtdb_item", "Fetch an RTDB node or tag by path.", object(map[string]any{"path": stringSchema("RTDB path, org-relative or absolute."), "depth": numberSchema("Node depth when the item is a node; -1 returns the full subtree.")}, "path")),
 		tool("xact_create_node", "Create an RTDB node in the current organisation.", object(map[string]any{"path": stringSchema("Node path, org-relative or absolute."), "description": stringSchema("Node description."), "templateName": stringSchema("Template name."), "nodeType": stringSchema("Standard, Device, or Organisation."), "isArray": boolSchema("Mark as an array container."), "locked": boolSchema("Lock the node after creation."), "dryRun": boolSchema("Preview mutation only when true.")}, "path")),
 		tool("xact_update_node", "Update RTDB node metadata, lock state, or name.", object(map[string]any{"path": stringSchema("Node path, org-relative or absolute."), "name": stringSchema("New node name within the same parent."), "description": stringSchema("Node description."), "templateName": stringSchema("Template name."), "nodeType": stringSchema("Standard, Device, or Organisation."), "isArray": boolSchema("Mark/unmark as an array container."), "locked": boolSchema("Set lock state."), "dryRun": boolSchema("Preview mutation only when true.")}, "path")),
@@ -347,6 +371,80 @@ func (s *Server) publishTreeChange(path string, node tree.TreeNode) {
 		return
 	}
 	_ = s.deps.TreePublisher.PublishChange(path, node)
+}
+
+func (s *Server) toolGetAPIContext(ctx context.Context) (any, error) {
+	if s.deps.APIContext == nil {
+		return nil, errors.New("API context is not configured")
+	}
+	return s.deps.APIContext(ctx)
+}
+
+func (s *Server) toolAPIProxy(ctx context.Context, raw json.RawMessage) (any, error) {
+	if s.deps.APIProxy == nil {
+		return nil, errors.New("API proxy is not configured")
+	}
+	var req APIProxyRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, err
+	}
+	method := strings.ToUpper(strings.TrimSpace(req.Method))
+	if method == "" && req.OperationID == "" {
+		return nil, errors.New("operationId or method/path is required")
+	}
+	if method != "" && method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions && !req.Confirm {
+		return nil, errors.New("confirm=true is required for mutating API proxy calls")
+	}
+	if req.OperationID != "" && !req.Confirm {
+		// The API server repeats this check after resolving the operationId; this
+		// early guard keeps destructive intent explicit in MCP transcripts.
+		req.Confirm = false
+	}
+	return s.deps.APIProxy(ctx, req)
+}
+
+func (s *Server) proxyAPICall(ctx context.Context, operationID string, pathParams map[string]any, body any, confirm bool) (any, error) {
+	if s.deps.APIProxy == nil {
+		return nil, errors.New("API proxy is not configured")
+	}
+	var rawBody json.RawMessage
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		rawBody = data
+	}
+	resp, err := s.deps.APIProxy(ctx, APIProxyRequest{
+		OperationID: operationID,
+		PathParams:  pathParams,
+		Body:        rawBody,
+		Confirm:     confirm,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Status < 200 || resp.Status >= 300 {
+		return nil, fmt.Errorf("API %s failed with HTTP %d: %v", operationID, resp.Status, resp.Body)
+	}
+	return map[string]any{"status": resp.Status, "body": resp.Body}, nil
+}
+
+func tagSharedAPIMap(shared tree.TagShared) map[string]any {
+	out := map[string]any{}
+	if shared.Description != "" {
+		out["description"] = shared.Description
+	}
+	if shared.Units != "" {
+		out["units"] = shared.Units
+	}
+	if shared.Deadband != 0 {
+		out["deadband"] = shared.Deadband
+	}
+	if len(shared.EnumValues) > 0 {
+		out["enumValues"] = shared.EnumValues
+	}
+	return out
 }
 
 type rtdbNodeMutationRequest struct {
@@ -599,6 +697,15 @@ func (s *Server) toolCreateNode(ctx context.Context, raw json.RawMessage) (any, 
 	if isDryRun(req.DryRun) {
 		return map[string]any{"dryRun": true, "operation": "create_node", "path": path, "nodeType": string(normalizeNodeType(req.NodeType, req.IsDevice))}, nil
 	}
+	if s.deps.APIProxy != nil {
+		return s.proxyAPICall(ctx, "post_nodes", nil, map[string]any{
+			"path":         path,
+			"description":  stringPtrValue(req.Description),
+			"templateName": stringPtrValue(req.TemplateName),
+			"nodeType":     string(normalizeNodeType(req.NodeType, req.IsDevice)),
+			"isArray":      req.IsArray != nil && *req.IsArray,
+		}, true)
+	}
 	nodeType := normalizeNodeType(req.NodeType, req.IsDevice)
 	switch nodeType {
 	case tree.NodeTypeDevice:
@@ -655,6 +762,28 @@ func (s *Server) toolUpdateNode(ctx context.Context, raw json.RawMessage) (any, 
 	}
 	if isDryRun(req.DryRun) {
 		return map[string]any{"dryRun": true, "operation": "update_node", "path": path, "name": req.Name}, nil
+	}
+	if s.deps.APIProxy != nil {
+		body := map[string]any{}
+		if req.Name != "" {
+			body["name"] = req.Name
+		}
+		if req.Description != nil {
+			body["description"] = *req.Description
+		}
+		if req.TemplateName != nil {
+			body["templateName"] = *req.TemplateName
+		}
+		if req.NodeType != "" || req.IsDevice {
+			body["nodeType"] = string(normalizeNodeType(req.NodeType, req.IsDevice))
+		}
+		if req.IsArray != nil {
+			body["isArray"] = *req.IsArray
+		}
+		if req.Locked != nil {
+			body["locked"] = *req.Locked
+		}
+		return s.proxyAPICall(ctx, "put_nodes_by_path", map[string]any{"path": path}, body, true)
 	}
 	oldPath := ""
 	if req.Name != "" {
@@ -739,6 +868,9 @@ func (s *Server) toolDeleteNode(ctx context.Context, raw json.RawMessage) (any, 
 	if isDryRun(req.DryRun) {
 		return map[string]any{"dryRun": true, "operation": "delete_node", "path": path}, nil
 	}
+	if s.deps.APIProxy != nil {
+		return s.proxyAPICall(ctx, "delete_nodes_by_path", map[string]any{"path": path}, nil, true)
+	}
 	propagated := s.deps.Tree.PropagateTemplateNodeDelete(path)
 	if err := s.deps.Tree.DeleteNode(path); err != nil {
 		return nil, err
@@ -776,6 +908,25 @@ func (s *Server) toolCreateTag(ctx context.Context, raw json.RawMessage) (any, e
 	}
 	if isDryRun(req.DryRun) {
 		return map[string]any{"dryRun": true, "operation": "create_tag", "path": path, "valueType": scalarType.String(), "config": cfg, "shared": shared}, nil
+	}
+	if s.deps.APIProxy != nil {
+		body := map[string]any{
+			"path":   path,
+			"type":   scalarType,
+			"config": cfg,
+			"shared": tagSharedAPIMap(shared),
+		}
+		if sharedInput := req.sharedInput(); sharedInput.Pipeline != nil {
+			body["pipeline"] = *sharedInput.Pipeline
+		}
+		if len(req.Value) > 0 {
+			var value any
+			if err := json.Unmarshal(req.Value, &value); err != nil {
+				return nil, fmt.Errorf("invalid value: %w", err)
+			}
+			body["value"] = value
+		}
+		return s.proxyAPICall(ctx, "post_tags", nil, body, true)
 	}
 	if err := s.deps.Tree.CreateTag(path, scalarType, cfg, shared); err != nil {
 		return nil, err
@@ -816,6 +967,31 @@ func (s *Server) toolUpdateTag(ctx context.Context, raw json.RawMessage) (any, e
 	}
 	if isDryRun(req.DryRun) {
 		return map[string]any{"dryRun": true, "operation": "update_tag", "path": path, "name": req.Name}, nil
+	}
+	if s.deps.APIProxy != nil {
+		body := map[string]any{}
+		if req.Name != "" {
+			body["name"] = req.Name
+		}
+		sharedInput := req.sharedInput()
+		shared, changed, err := sharedInput.applyTo(tree.TagShared{})
+		if err != nil {
+			return nil, err
+		}
+		if changed {
+			body["shared"] = tagSharedAPIMap(shared)
+		}
+		if sharedInput.Pipeline != nil {
+			body["pipeline"] = *sharedInput.Pipeline
+		}
+		if len(req.Value) > 0 {
+			var value any
+			if err := json.Unmarshal(req.Value, &value); err != nil {
+				return nil, fmt.Errorf("invalid value: %w", err)
+			}
+			body["value"] = value
+		}
+		return s.proxyAPICall(ctx, "put_tags_by_path", map[string]any{"path": path}, body, true)
 	}
 	oldPath := ""
 	if req.Name != "" {
@@ -890,6 +1066,9 @@ func (s *Server) toolDeleteTag(ctx context.Context, raw json.RawMessage) (any, e
 	if isDryRun(req.DryRun) {
 		return map[string]any{"dryRun": true, "operation": "delete_tag", "path": path}, nil
 	}
+	if s.deps.APIProxy != nil {
+		return s.proxyAPICall(ctx, "delete_tags_by_path", map[string]any{"path": path}, nil, true)
+	}
 	propagated := s.deps.Tree.PropagateTemplateTagDelete(path)
 	if err := s.deps.Tree.DeleteTag(path); err != nil {
 		return nil, err
@@ -924,6 +1103,9 @@ func (s *Server) toolDeleteRTDBItem(ctx context.Context, raw json.RawMessage) (a
 		if isDryRun(req.DryRun) {
 			return map[string]any{"dryRun": true, "operation": "delete_node", "path": path}, nil
 		}
+		if s.deps.APIProxy != nil {
+			return s.proxyAPICall(ctx, "delete_nodes_by_path", map[string]any{"path": path}, nil, true)
+		}
 		propagated := s.deps.Tree.PropagateTemplateNodeDelete(path)
 		if err := s.deps.Tree.DeleteNode(path); err != nil {
 			return nil, err
@@ -936,6 +1118,9 @@ func (s *Server) toolDeleteRTDBItem(ctx context.Context, raw json.RawMessage) (a
 	}
 	if isDryRun(req.DryRun) {
 		return map[string]any{"dryRun": true, "operation": "delete_tag", "path": path}, nil
+	}
+	if s.deps.APIProxy != nil {
+		return s.proxyAPICall(ctx, "delete_tags_by_path", map[string]any{"path": path}, nil, true)
 	}
 	propagated := s.deps.Tree.PropagateTemplateTagDelete(path)
 	if err := s.deps.Tree.DeleteTag(path); err != nil {

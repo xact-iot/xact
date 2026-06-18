@@ -9,5 +9,6 @@ describe('vite dev proxy', () => {
     const config = readFileSync(resolve(here, '../vite.config.ts'), 'utf8');
 
     expect(config).toMatch(/'\/xact\/health':\s*{\s*target: 'http:\/\/localhost:8080',\s*changeOrigin: true,\s*}/);
+    expect(config).toMatch(/'\/xact\/openapi\.json':\s*{\s*target: 'http:\/\/localhost:8080',\s*changeOrigin: true,\s*}/);
   });
 });

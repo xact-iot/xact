@@ -11,9 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/xact-iot/xact/backups"
 	"github.com/xact-iot/xact/events"
+	"github.com/xact-iot/xact/mcp"
 	"github.com/xact-iot/xact/rtdb/tree"
 	"github.com/xact-iot/xact/sqldb"
 	"github.com/xact-iot/xact/sqldb/psql"
@@ -434,6 +436,64 @@ func TestCreateTag(t *testing.T) {
 	}
 	if len(response.Shared.Pipeline) != 1 || response.Shared.Pipeline[0].Type != "publish" {
 		t.Fatalf("expected default publish pipeline, got %#v", response.Shared.Pipeline)
+	}
+}
+
+func TestOpenAPIDocumentTracksRouterRoutes(t *testing.T) {
+	treeOps := tree.NewTreeWithOperations(nil)
+	server := NewServer(ServerConfig{}, treeOps, nil, nil, "test-secret", nil, "")
+	doc := server.OpenAPIDocument()
+	paths, ok := doc["paths"].(map[string]any)
+	if !ok || len(paths) == 0 {
+		t.Fatalf("OpenAPI paths missing: %#v", doc["paths"])
+	}
+
+	if err := chi.Walk(server.Router(), func(method string, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		path, include := canonicalOpenAPIPath(route, server.config.ProxyPath)
+		if !include {
+			return nil
+		}
+		item, ok := paths[path].(map[string]any)
+		if !ok {
+			t.Fatalf("OpenAPI document missing path %s for route %s %s", path, method, route)
+		}
+		if _, ok := item[strings.ToLower(method)]; !ok {
+			t.Fatalf("OpenAPI document missing operation %s %s", method, path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMCPAPIProxyDeletesRTDBNodeThroughREST(t *testing.T) {
+	treeOps := tree.NewTreeWithOperations(nil)
+	server := NewServer(ServerConfig{MCP: mcp.Config{WriteTools: true}}, treeOps, nil, nil, "test-secret", nil, "")
+	if err := treeOps.CreateNode("tenant1.BENCH.Bench000001.analog", ""); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	ctx := context.WithValue(context.Background(), claimsContextKey, &JWTClaims{
+		UserID:       "1",
+		Username:     "testuser",
+		TenantID:     "tenant1",
+		Roles:        []string{"SystemAdmin"},
+		AllowedOrgs:  []string{"tenant1"},
+		TokenVersion: 1,
+	})
+
+	resp, err := server.mcpAPIProxy(ctx, mcp.APIProxyRequest{
+		OperationID: "delete_nodes_by_path",
+		PathParams:  map[string]any{"path": "tenant1.BENCH.Bench000001.analog"},
+		Confirm:     true,
+	})
+	if err != nil {
+		t.Fatalf("mcpAPIProxy: %v", err)
+	}
+	if resp.Status != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%#v", resp.Status, http.StatusNoContent, resp.Body)
+	}
+	if _, err := treeOps.FindNode("tenant1.BENCH.Bench000001.analog"); err == nil {
+		t.Fatal("node still exists after proxied delete")
 	}
 }
 
