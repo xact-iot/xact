@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -156,21 +158,30 @@ func (e *Engine) evaluate(cs *compiledScript) {
 		return
 	}
 
-	result, err := normaliseResult(out)
-	if err != nil {
-		log.Printf("tagcalcs: result %q/%q: %v", cs.script.OrgName, cs.script.Name, err)
-		return
-	}
-
 	outputPath := dotToSlash(cs.script.OrgName, cs.script.OutputTag)
-	if err := e.writeOutput(outputPath, result); err != nil {
-		log.Printf("tagcalcs: write %q → %q: %v", cs.script.Name, outputPath, err)
+
+	var writeErr error
+	switch result := out.(type) {
+	case []ListEntry:
+		writeErr = e.writeListOutput(outputPath, result)
+	default:
+		var numeric float64
+		numeric, writeErr = normaliseResult(out)
+		if writeErr == nil {
+			writeErr = e.writeOutput(outputPath, numeric)
+		}
+	}
+	if writeErr != nil {
+		log.Printf("tagcalcs: write %q → %q: %v", cs.script.Name, outputPath, writeErr)
 	}
 }
 
 // writeOutput creates the output tag (if absent) and sets its value.
 func (e *Engine) writeOutput(path string, value float64) error {
 	if _, err := e.treeOps.FindLeaf(path); err != nil {
+		if _, nodeErr := e.treeOps.FindNode(path); nodeErr == nil {
+			return fmt.Errorf("output path %q is a node, not a numeric tag", path)
+		}
 		// Tag does not exist yet - create it once.
 		parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
 		name := parts[len(parts)-1]
@@ -181,6 +192,107 @@ func (e *Engine) writeOutput(path string, value float64) error {
 	return e.treeOps.SetLeafValue(path, value)
 }
 
+func (e *Engine) writeListOutput(path string, entries []ListEntry) error {
+	if _, err := e.treeOps.FindLeaf(path); err == nil {
+		return fmt.Errorf("output path %q is a tag, not an array node", path)
+	}
+
+	if err := e.treeOps.CreateNode(path, ""); err != nil {
+		return fmt.Errorf("create output array node: %w", err)
+	}
+	node, err := e.treeOps.FindNode(path)
+	if err != nil {
+		return fmt.Errorf("find output array node: %w", err)
+	}
+	if !node.GetIsArray() {
+		node.SetIsArray(true)
+		e.treeOps.NotifyChange(path, node)
+	}
+
+	for i, entry := range entries {
+		elementPath := path + "/" + strconv.Itoa(i)
+		if err := e.treeOps.CreateNode(elementPath, ""); err != nil {
+			return fmt.Errorf("create list element %d: %w", i, err)
+		}
+		if err := e.writeStringField(elementPath+"/deviceName", entry.DeviceName); err != nil {
+			return err
+		}
+		if err := e.writeStringField(elementPath+"/deviceDescriptor", entry.DeviceDescriptor); err != nil {
+			return err
+		}
+		if err := e.writeStringField(elementPath+"/tagName", entry.TagName); err != nil {
+			return err
+		}
+		if err := e.writeFloatField(elementPath+"/tagValue", entry.TagValue); err != nil {
+			return err
+		}
+	}
+
+	return e.pruneListOutput(path, len(entries))
+}
+
+func (e *Engine) writeStringField(path, value string) error {
+	return e.writeScalarField(path, tree.TypeString, value)
+}
+
+func (e *Engine) writeFloatField(path string, value float64) error {
+	return e.writeScalarField(path, tree.TypeFloat, value)
+}
+
+func (e *Engine) writeScalarField(path string, scalarType tree.ScalarType, value any) error {
+	if node, err := e.treeOps.FindNodeOrLeaf(path); err == nil {
+		if leaf, ok := node.(tree.Leaf); ok {
+			if leaf.ValueType() == scalarType {
+				return e.treeOps.SetLeafValue(path, value)
+			}
+			if err := e.treeOps.DeleteTag(path); err != nil {
+				return fmt.Errorf("replace list field %q: %w", path, err)
+			}
+		} else if node.IsNode() {
+			if err := e.treeOps.DeleteNode(path); err != nil {
+				return fmt.Errorf("replace list field node %q: %w", path, err)
+			}
+		}
+	}
+
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	name := parts[len(parts)-1]
+	if err := e.treeOps.CreateTag(path, scalarType, tree.TagConfig{Name: name}); err != nil {
+		return fmt.Errorf("create list field %q: %w", path, err)
+	}
+	return e.treeOps.SetLeafValue(path, value)
+}
+
+func (e *Engine) pruneListOutput(path string, keep int) error {
+	node, err := e.treeOps.FindNode(path)
+	if err != nil {
+		return err
+	}
+	children := node.GetChildren()
+	names := make([]string, 0, len(children))
+	for name := range children {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		idx, err := strconv.Atoi(name)
+		if err != nil || idx < keep {
+			continue
+		}
+		childPath := path + "/" + name
+		if child, ok := children[name]; ok && child.IsNode() {
+			if err := e.treeOps.DeleteNode(childPath); err != nil {
+				return err
+			}
+		} else {
+			if err := e.treeOps.DeleteTag(childPath); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // dotToSlash converts an org-relative dot-notation output tag path to a tree path.
 func dotToSlash(org, dotPath string) string {
 	return "/" + org + "/" + strings.ReplaceAll(dotPath, ".", "/")
@@ -189,6 +301,17 @@ func dotToSlash(org, dotPath string) string {
 // EvaluateNow evaluates a script immediately and returns the result without
 // writing to the tree. Used by the test endpoint.
 func (e *Engine) EvaluateNow(orgName, expression string) (float64, error) {
+	out, err := e.EvaluateAny(orgName, expression)
+	if err != nil {
+		return 0, err
+	}
+	return normaliseResult(out)
+}
+
+// EvaluateAny evaluates a script immediately and returns the raw expression
+// result. It is used to validate expressions that return non-numeric values
+// such as listHighest/listLowest.
+func (e *Engine) EvaluateAny(orgName, expression string) (any, error) {
 	prog, err := compileExpression(expression)
 	if err != nil {
 		return 0, err
@@ -199,7 +322,7 @@ func (e *Engine) EvaluateNow(orgName, expression string) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return normaliseResult(out)
+	return out, nil
 }
 
 // Stop cancels all pending timers.

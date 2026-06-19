@@ -1101,7 +1101,7 @@ export async function deleteTagCalc(id: number): Promise<void> {
   if (!r.ok) throw new Error(`Failed to delete tag calc: ${r.status}`);
 }
 
-export async function testTagCalc(expression: string): Promise<{ result?: number; error?: string }> {
+export async function testTagCalc(expression: string): Promise<{ result?: any; error?: string }> {
   const r = await fetch(`${BASE_URL}/api/v1/tagcalcs/test`, {
     method: 'POST', headers: getHeaders(), body: JSON.stringify({ expression }),
   });

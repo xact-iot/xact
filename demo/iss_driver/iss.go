@@ -14,14 +14,15 @@ import (
 )
 
 const (
-	serverURL       = "https://push.lightstreamer.com/lightstreamer"
-	issOEMURL       = "https://nasa-public-data.s3.amazonaws.com/iss-coords/current/ISS_OEM/ISS.OEM_J2K_EPH.txt"
-	adapterSet      = "ISSLIVE"
-	offlineTimeout  = 10 * time.Minute
-	snapshotTimeout = 30 * time.Second
-	snapshotSchema  = "TimeStamp Value Status.Class Status.Indicator Status.Color CalibratedData"
-	orbitPublish    = 5 * time.Second
-	orbitRefresh    = 30 * time.Minute
+	serverURL                = "https://push.lightstreamer.com/lightstreamer"
+	issOEMURL                = "https://nasa-public-data.s3.amazonaws.com/iss-coords/current/ISS_OEM/ISS.OEM_J2K_EPH.txt"
+	adapterSet               = "ISSLIVE"
+	offlineTimeout           = 10 * time.Minute
+	lightstreamerIdleTimeout = 5 * time.Minute
+	snapshotTimeout          = 30 * time.Second
+	snapshotSchema           = "TimeStamp Value Status.Class Status.Indicator Status.Color CalibratedData"
+	orbitPublish             = 5 * time.Second
+	orbitRefresh             = 30 * time.Minute
 )
 
 type telemetryItem struct {
@@ -425,6 +426,46 @@ func startOfflineMonitor(pub *natsPublisher, timeout time.Duration) (func(), fun
 		}
 }
 
+func startLightstreamerIdleWatch(session *lightstreamerSession, timeout time.Duration) (func(), func()) {
+	values := make(chan struct{}, 1)
+	done := make(chan struct{})
+
+	go func() {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+
+		for {
+			select {
+			case <-done:
+				return
+
+			case <-values:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(timeout)
+
+			case <-timer.C:
+				fmt.Printf("[ISS] No Lightstreamer values for %s; reconnecting\n", timeout)
+				_ = session.body.Close()
+				return
+			}
+		}
+	}()
+
+	return func() {
+			select {
+			case values <- struct{}{}:
+			default:
+			}
+		}, func() {
+			close(done)
+		}
+}
+
 func readMergeSnapshot(handleValue func(int, string)) error {
 	return readSnapshot("MERGE", snapshotSchema, 1, handleValue)
 }
@@ -716,9 +757,11 @@ func Start() {
 		}
 		fmt.Printf("[ISS] Subscribed to %d/%d MERGE items. Listening...\n", subscribed, len(items))
 
+		markLightstreamerValue, stopLightstreamerIdleWatch := startLightstreamerIdleWatch(session, lightstreamerIdleTimeout)
 		for {
 			line, err := session.reader.ReadString('\n')
 			if err != nil {
+				stopLightstreamerIdleWatch()
 				fmt.Printf("[ISS] Connection closed: %v; reconnecting in 5s\n", err)
 				_ = session.body.Close()
 				time.Sleep(5 * time.Second)
@@ -728,6 +771,7 @@ func Start() {
 			if !ok || eos || len(fields) == 0 {
 				continue
 			}
+			markLightstreamerValue()
 			handleTelemetryValue(tableID-1, fields[0])
 		}
 	}

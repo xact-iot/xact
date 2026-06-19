@@ -31,6 +31,10 @@ var aggMaxMinRe = regexp.MustCompile(`(?i)(max|min)\(\s*([A-Za-z_][A-Za-z0-9_*?.
 // Group 1 = pattern, group 2 = value literal.
 var countWhereRe = regexp.MustCompile(`(?i)countWhere\(\s*([A-Za-z_][A-Za-z0-9_*?./]*)\s*,\s*([^)]+?)\s*\)`)
 
+// listRe matches listHighest/listLowest(path.pattern, count) calls where the
+// first argument is a bare tag path pattern.
+var listRe = regexp.MustCompile(`(?i)(listHighest|listLowest)\(\s*([A-Za-z_][A-Za-z0-9_*?./]*)\s*,\s*([^)]+?)\s*\)`)
+
 // ifRe matches the if keyword followed by ( so it can be capitalised to If(
 // before expr sees it as a keyword.
 var ifRe = regexp.MustCompile(`(?i)\bif\(`)
@@ -97,30 +101,43 @@ func preprocess(raw string) string {
 		return `CountWhere("` + sub[1] + `", ` + val + `)`
 	})
 
-	// Step 1b: rewrite aggregate max/min(bare.path) → AggMax/AggMin("bare.path")
+	// Step 1b: rewrite listHighest/listLowest(bare.path, count) with a quoted
+	// pattern argument.
+	raw = listRe.ReplaceAllStringFunc(raw, func(match string) string {
+		sub := listRe.FindStringSubmatch(match)
+		name := strings.ToLower(sub[1])
+		if name == "listhighest" {
+			name = "ListHighest"
+		} else {
+			name = "ListLowest"
+		}
+		return name + `("` + sub[2] + `", ` + strings.TrimSpace(sub[3]) + `)`
+	})
+
+	// Step 1c: rewrite aggregate max/min(bare.path) → AggMax/AggMin("bare.path")
 	raw = aggMaxMinRe.ReplaceAllStringFunc(raw, func(match string) string {
 		sub := aggMaxMinRe.FindStringSubmatch(match)
 		return "Agg" + capitalise(sub[1]) + `("` + sub[2] + `")`
 	})
 
-	// Step 1c: rewrite avg/sum/count(bare.path) → Avg/Sum/Count("bare.path")
+	// Step 1d: rewrite avg/sum/count(bare.path) → Avg/Sum/Count("bare.path")
 	raw = aggregateRe.ReplaceAllStringFunc(raw, func(match string) string {
 		sub := aggregateRe.FindStringSubmatch(match)
 		return capitalise(sub[1]) + `("` + sub[2] + `")`
 	})
 
-	// Step 1d: convert if( → If( so it is treated as a function call rather
+	// Step 1e: convert if( → If( so it is treated as a function call rather
 	// than the expr keyword.
 	raw = ifRe.ReplaceAllStringFunc(raw, func(_ string) string { return "If(" })
 
-	// Step 1e: capitalise remaining binary max(a,b) / min(a,b).
+	// Step 1f: capitalise remaining binary max(a,b) / min(a,b).
 	// All aggregate forms (single bare-path arg) were already rewritten to
 	// AggMax/AggMin in step 1b, so any remaining max/min must be binary.
 	// \b ensures AggMax( is not re-matched (no word boundary before 'max' in AggMax).
 	raw = binaryMaxRe.ReplaceAllStringFunc(raw, func(_ string) string { return "Max(" })
 	raw = binaryMinRe.ReplaceAllStringFunc(raw, func(_ string) string { return "Min(" })
 
-	// Step 1f: capitalise math function names (abs, round, floor, …) so they
+	// Step 1g: capitalise math function names (abs, round, floor, …) so they
 	// resolve to the env methods Abs, Round, Floor, …
 	raw = mathFnRe.ReplaceAllStringFunc(raw, func(match string) string {
 		name := strings.ToLower(strings.TrimSuffix(match, "("))
@@ -184,8 +201,14 @@ func (evalEnv) AggMin(pattern string) float64                { return 0 }
 func (evalEnv) AggMax(pattern string) float64                { return 0 }
 func (evalEnv) Count(pattern string) float64                 { return 0 }
 func (evalEnv) CountWhere(pattern string, value any) float64 { return 0 }
-func (evalEnv) Max(a, b float64) float64                     { return 0 }
-func (evalEnv) Min(a, b float64) float64                     { return 0 }
+func (evalEnv) ListHighest(pattern string, count int) []ListEntry {
+	return nil
+}
+func (evalEnv) ListLowest(pattern string, count int) []ListEntry {
+	return nil
+}
+func (evalEnv) Max(a, b float64) float64 { return 0 }
+func (evalEnv) Min(a, b float64) float64 { return 0 }
 
 // Math stubs for compile-time type checking
 func (evalEnv) Abs(v float64) float64               { return 0 }

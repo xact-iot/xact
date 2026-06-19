@@ -1569,7 +1569,7 @@ func (s *Server) toolDefineTagCalc(ctx context.Context, raw json.RawMessage) (an
 		if s.deps.TagCalcHandlers.Engine == nil {
 			return nil, errors.New("tag calc engine unavailable")
 		}
-		result, err := s.deps.TagCalcHandlers.Engine.EvaluateNow(org, req.Expression)
+		result, err := s.deps.TagCalcHandlers.Engine.EvaluateAny(org, req.Expression)
 		if err != nil {
 			return map[string]any{"error": err.Error(), "functions": tagCalcFunctions()}, nil
 		}
@@ -1608,7 +1608,7 @@ func (s *Server) toolDefineTagCalc(ctx context.Context, raw json.RawMessage) (an
 		}
 		var testResult any
 		if s.deps.TagCalcHandlers.Engine != nil && calc.Expression != "" {
-			v, err := s.deps.TagCalcHandlers.Engine.EvaluateNow(org, calc.Expression)
+			v, err := s.deps.TagCalcHandlers.Engine.EvaluateAny(org, calc.Expression)
 			if err != nil {
 				return nil, fmt.Errorf("expression error: %w", err)
 			}
@@ -1969,6 +1969,7 @@ func stringValue(m map[string]any, key string) string {
 func tagCalcFunctions() []string {
 	return []string{
 		"avg(pattern)", "sum(pattern)", "min(pattern)", "max(pattern)", "count(pattern)", "countWhere(pattern, value)",
+		"listHighest(pattern, count)", "listLowest(pattern, count)",
 		"if(condition, trueValue, falseValue)", "min(a, b)", "max(a, b)",
 		"abs(v)", "round(v, decimals)", "floor(v)", "ceil(v)", "sqrt(v)", "pow(base, exp)", "log(v)", "log10(v)", "sin(v)", "cos(v)", "tan(v)",
 	}

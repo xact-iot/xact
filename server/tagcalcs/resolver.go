@@ -3,11 +3,21 @@ package tagcalcs
 import (
 	"math"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/xact-iot/xact/rtdb/tree"
 )
+
+// ListEntry is one row returned by listHighest/listLowest and written to an
+// object-array output tag.
+type ListEntry struct {
+	DeviceName       string  `json:"deviceName"`
+	DeviceDescriptor string  `json:"deviceDescriptor"`
+	TagName          string  `json:"tagName"`
+	TagValue         float64 `json:"tagValue"`
+}
 
 // runtimeEnv implements the expression environment at evaluation time.
 // It holds the tree reference and org name so Tag() and aggregation
@@ -59,6 +69,48 @@ func (e *runtimeEnv) matchingLeafValues(pattern string) []any {
 		vals = append(vals, leafValue(leaf))
 	})
 	return vals
+}
+
+func (e *runtimeEnv) matchingListEntries(pattern string) []ListEntry {
+	dotPattern := "." + e.org + "." + pattern
+
+	var entries []ListEntry
+	e.treeOps.WalkLeaves(func(p string, leaf tree.Leaf) {
+		if !matchDotPattern(dotPattern, p) {
+			return
+		}
+		deviceName, deviceDescriptor := deviceInfo(leaf)
+		entries = append(entries, ListEntry{
+			DeviceName:       deviceName,
+			DeviceDescriptor: deviceDescriptor,
+			TagName:          leaf.GetMetricPath(),
+			TagValue:         toFloat(leaf),
+		})
+	})
+	return entries
+}
+
+func deviceInfo(leaf tree.Leaf) (string, string) {
+	devicePath := leaf.GetTreeDevice()
+	deviceName := devicePath
+	if devicePath != "" {
+		parts := strings.Split(devicePath, ".")
+		deviceName = parts[len(parts)-1]
+	}
+
+	for p := leaf.GetParent(); p != nil; p = p.GetParent() {
+		if p.GetNodeType() == tree.NodeTypeDevice {
+			if deviceName == "" {
+				deviceName = p.GetName()
+			}
+			return deviceName, p.GetDescription()
+		}
+	}
+
+	if deviceName == "" {
+		deviceName = leaf.GetName()
+	}
+	return deviceName, ""
 }
 
 func matchDotPattern(pattern, value string) bool {
@@ -154,6 +206,37 @@ func (e *runtimeEnv) CountWhere(pattern string, value any) float64 {
 		}
 	}
 	return float64(n)
+}
+
+func (e *runtimeEnv) ListHighest(pattern string, count int) []ListEntry {
+	return e.listByValue(pattern, count, true)
+}
+
+func (e *runtimeEnv) ListLowest(pattern string, count int) []ListEntry {
+	return e.listByValue(pattern, count, false)
+}
+
+func (e *runtimeEnv) listByValue(pattern string, count int, highest bool) []ListEntry {
+	if count <= 0 {
+		return []ListEntry{}
+	}
+	entries := e.matchingListEntries(pattern)
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].TagValue == entries[j].TagValue {
+			if entries[i].DeviceName == entries[j].DeviceName {
+				return entries[i].TagName < entries[j].TagName
+			}
+			return entries[i].DeviceName < entries[j].DeviceName
+		}
+		if highest {
+			return entries[i].TagValue > entries[j].TagValue
+		}
+		return entries[i].TagValue < entries[j].TagValue
+	})
+	if len(entries) > count {
+		entries = entries[:count]
+	}
+	return entries
 }
 
 // Math functions

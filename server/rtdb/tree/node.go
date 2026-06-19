@@ -61,6 +61,13 @@ func (n *Node) setParent(p *Node) {
 	n.parent = p
 }
 
+// GetParent returns the node's parent, or nil for the root.
+func (n *Node) GetParent() *Node {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.parent
+}
+
 // TreeNode interface for both Node and Leaf
 type TreeNode interface {
 	GetName() string

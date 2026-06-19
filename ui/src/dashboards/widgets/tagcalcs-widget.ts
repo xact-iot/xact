@@ -66,7 +66,7 @@ function defineTagcalcsMode() {
   const CM = (window as any).CodeMirror;
   if (!CM || CM.modes['tagcalcs']) return;
 
-  const FUNCTIONS = /^(avg|sum|min|max|count|countWhere|abs|round|sqrt|pow|floor|ceil|log|log10|sin|cos|tan|if)\b/;
+  const FUNCTIONS = /^(avg|sum|min|max|count|countWhere|listHighest|listLowest|abs|round|sqrt|pow|floor|ceil|log|log10|sin|cos|tan|if)\b/;
   const NUMBER    = /^[+-]?(\d+\.?\d*|\.\d+)/;
   const TAG_REF   = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_*?]+)+/;
   const OPERATOR  = /^[+\-*/%^<>=!&|(),]/;
@@ -523,6 +523,9 @@ export class TagCalcsWidget extends BaseComponent {
                   <code style="font-family: monospace; color: var(--status-good-color); white-space: nowrap;">count(MOTOR.*.running)</code>
                   <span style="opacity: 0.7;">Number of tags with a non-zero value</span>
 
+                  <code style="font-family: monospace; color: var(--status-good-color); white-space: nowrap;">listHighest(AirQuality.*.air.aqi, 5)</code>
+                  <span style="opacity: 0.7;">Sorted object array of the top matching devices</span>
+
                   <code style="font-family: monospace; color: var(--status-good-color); white-space: nowrap;">round(FLOW.rate * 60, 2)</code>
                   <span style="opacity: 0.7;">Scale a value, rounded to 2 decimal places</span>
 
@@ -535,7 +538,7 @@ export class TagCalcsWidget extends BaseComponent {
 
                 <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid; border-color: color-mix(in srgb, var(--border-color) 60%, transparent);">
                   <span style="opacity: 0.5; margin-right: 8px; text-transform: uppercase; letter-spacing: 0.06em; font-size: calc(var(--widget-label-font-size) * 0.8);">Functions</span>
-                  <span style="font-family: monospace; color: var(--accent-color);">avg  sum  min  max  count  countWhere  abs  round  sqrt  pow  floor  ceil  log  sin  cos  if</span>
+                  <span style="font-family: monospace; color: var(--accent-color);">avg  sum  min  max  count  countWhere  listHighest  listLowest  abs  round  sqrt  pow  floor  ceil  log  sin  cos  if</span>
                 </div>
                 <div style="margin-top: 6px; display: grid; grid-template-columns: auto 1fr; gap: 3px 16px; align-items: baseline;">
                   <code style="font-family: monospace; color: var(--status-good-color); white-space: nowrap;">countWhere(A.*.alarm, false)</code>

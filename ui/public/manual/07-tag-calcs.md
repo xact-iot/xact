@@ -160,6 +160,24 @@ countWhere(VMS.*.meta.commonAlarmPresent, false)  - how many have no active alar
 countWhere(Pumps.*.stage, 2)                      - how many pumps are in stage 2
 ```
 
+### `listHighest(pattern, count)` / `listLowest(pattern, count)` - Ranked device lists
+
+Writes a sorted object array to the output tag instead of a single number. Each array element contains:
+
+| Field | Meaning |
+|-------|---------|
+| `deviceName` | Name of the matched device |
+| `deviceDescriptor` | Description stored on the matched device node |
+| `tagName` | Device-relative tag path, such as `air.aqi` |
+| `tagValue` | Numeric value used for ranking |
+
+```
+listHighest(LA_LongBeach.AirQuality.*.air.aqi, 5)  - top 5 AQI sensors
+listLowest(LA_LongBeach.AirQuality.*.air.aqi, 5)   - lowest 5 AQI sensors
+```
+
+The output path is created as an array node if needed. Element entries are created automatically, and extra old elements are deleted when the requested count shrinks.
+
 ## Conditional Logic
 
 ### `if(condition, value_when_true, value_when_false)`
@@ -349,6 +367,7 @@ Tag reference:      NodeGroup.Device.tagname
 Arithmetic:         A.tag + B.tag - C.tag * 2 / D.tag
 Aggregates:         avg(G.*.tag)  sum(G.*.tag)  min(G.*.tag)  max(G.*.tag)
                     count(G.*.tag)  countWhere(G.*.tag, true)
+Lists:              listHighest(G.*.tag, 5)  listLowest(G.*.tag, 5)
 Conditional:        if(condition, value_if_true, value_if_false)
 Comparison:         ==  !=  >  <  >=  <=
 Logical:            &&  ||  !

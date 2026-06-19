@@ -55,6 +55,8 @@ func TestPreprocess_AggregateFunctions(t *testing.T) {
 		{"Count mixed case", `Count(VMS.*)`, `Count("VMS.*")`},
 		{"deep wildcard", `avg(VMS.*.meta.online)`, `Avg("VMS.*.meta.online")`},
 		{"question mark wildcard", `count(VMS.Sign00?.brightness)`, `Count("VMS.Sign00?.brightness")`},
+		{"listHighest", `listHighest(LA_LongBeach.AirQuality.*.air.aqi, 5)`, `ListHighest("LA_LongBeach.AirQuality.*.air.aqi", 5)`},
+		{"listLowest", `listLowest(LA_LongBeach.AirQuality.*.air.aqi, 5)`, `ListLowest("LA_LongBeach.AirQuality.*.air.aqi", 5)`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -163,6 +165,8 @@ func TestCompileExpression_ValidExpressions(t *testing.T) {
 		"abs(Pump.deviation)",
 		"sqrt(pow(A.x, 2) + pow(A.y, 2))",
 		"if(Tank.level < 20 && Pump.running == 0, 1, 0)",
+		"listHighest(LA_LongBeach.AirQuality.*.air.aqi, 5)",
+		"listLowest(LA_LongBeach.AirQuality.*.air.aqi, 5)",
 		"42",
 		"3.14 * pow(Tank.radius, 2)",
 	}

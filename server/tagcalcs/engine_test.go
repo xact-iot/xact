@@ -253,6 +253,20 @@ func setInt(e *Engine, dotPath string, value int) {
 	_ = e.treeOps.SetLeafValue(slashPath, value)
 }
 
+func setDeviceFloat(e *Engine, deviceType, deviceName, description, metricPath string, value float64) {
+	orgPath := "/" + testOrg
+	_ = e.treeOps.CreateOrganisationNode(orgPath, "")
+	devicePath := orgPath + "/" + deviceType + "/" + deviceName
+	_ = e.treeOps.CreateDeviceNode(devicePath, "")
+	if node, err := e.treeOps.FindNode(devicePath); err == nil {
+		node.SetDescription(description)
+	}
+	tagPath := devicePath + "/" + dotPathToSlash(metricPath)
+	parts := splitLast(tagPath)
+	_ = e.treeOps.CreateTag(tagPath, tree.TypeFloat, tree.TagConfig{Name: parts})
+	_ = e.treeOps.SetLeafValue(tagPath, value)
+}
+
 func dotPathToSlash(dotPath string) string {
 	out := make([]byte, len(dotPath))
 	for i := range dotPath {
@@ -280,6 +294,15 @@ func eval(t *testing.T, e *Engine, expr string) float64 {
 	v, err := e.EvaluateNow(testOrg, expr)
 	if err != nil {
 		t.Fatalf("EvaluateNow(%q) unexpected error: %v", expr, err)
+	}
+	return v
+}
+
+func evalAny(t *testing.T, e *Engine, expr string) any {
+	t.Helper()
+	v, err := e.EvaluateAny(testOrg, expr)
+	if err != nil {
+		t.Fatalf("EvaluateAny(%q) unexpected error: %v", expr, err)
 	}
 	return v
 }
@@ -426,6 +449,48 @@ func TestEvaluateNow_Count(t *testing.T) {
 	got := eval(t, e, "count(VMS.*.brightness)")
 	if got != 3 {
 		t.Errorf("count: got %v, want 3", got)
+	}
+}
+
+func TestEvaluateAny_ListHighest(t *testing.T) {
+	e := newTestEngine()
+	setDeviceFloat(e, "AirQuality", "SensorA", "Port sensor", "air.aqi", 55)
+	setDeviceFloat(e, "AirQuality", "SensorB", "Downtown sensor", "air.aqi", 91)
+	setDeviceFloat(e, "AirQuality", "SensorC", "Beach sensor", "air.aqi", 73)
+
+	got, ok := evalAny(t, e, "listHighest(AirQuality.*.air.aqi, 2)").([]ListEntry)
+	if !ok {
+		t.Fatalf("listHighest returned %T, want []ListEntry", got)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].DeviceName != "SensorB" || got[0].DeviceDescriptor != "Downtown sensor" || got[0].TagName != "air.aqi" || got[0].TagValue != 91 {
+		t.Fatalf("first entry = %#v", got[0])
+	}
+	if got[1].DeviceName != "SensorC" || got[1].TagValue != 73 {
+		t.Fatalf("second entry = %#v", got[1])
+	}
+}
+
+func TestEvaluateAny_ListLowest(t *testing.T) {
+	e := newTestEngine()
+	setDeviceFloat(e, "AirQuality", "SensorA", "Port sensor", "air.aqi", 55)
+	setDeviceFloat(e, "AirQuality", "SensorB", "Downtown sensor", "air.aqi", 91)
+	setDeviceFloat(e, "AirQuality", "SensorC", "Beach sensor", "air.aqi", 73)
+
+	got, ok := evalAny(t, e, "listLowest(AirQuality.*.air.aqi, 2)").([]ListEntry)
+	if !ok {
+		t.Fatalf("listLowest returned %T, want []ListEntry", got)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].DeviceName != "SensorA" || got[0].TagValue != 55 {
+		t.Fatalf("first entry = %#v", got[0])
+	}
+	if got[1].DeviceName != "SensorC" || got[1].TagValue != 73 {
+		t.Fatalf("second entry = %#v", got[1])
 	}
 }
 
@@ -813,6 +878,69 @@ func TestWriteOutput_TagIsReadableViaEvaluateNow(t *testing.T) {
 	got := eval(t, e, "VMS.KPI.online_count")
 	if got != 7.0 {
 		t.Errorf("output tag readable: got %v, want 7.0", got)
+	}
+}
+
+func TestWriteListOutput_CreatesObjectArray(t *testing.T) {
+	e := newTestEngine()
+	path := "/" + testOrg + "/Computed/topAQI"
+	entries := []ListEntry{
+		{DeviceName: "SensorB", DeviceDescriptor: "Downtown sensor", TagName: "air.aqi", TagValue: 91},
+		{DeviceName: "SensorC", DeviceDescriptor: "Beach sensor", TagName: "air.aqi", TagValue: 73},
+	}
+
+	if err := e.writeListOutput(path, entries); err != nil {
+		t.Fatalf("writeListOutput: %v", err)
+	}
+	node, err := e.treeOps.FindNode(path)
+	if err != nil {
+		t.Fatalf("array node not found: %v", err)
+	}
+	if !node.GetIsArray() {
+		t.Fatal("output node is not marked as array")
+	}
+
+	nameLeaf, err := e.treeOps.FindLeaf(path + "/0/deviceName")
+	if err != nil {
+		t.Fatalf("deviceName leaf: %v", err)
+	}
+	name, _ := nameLeaf.GetString()
+	if name != "SensorB" {
+		t.Fatalf("deviceName = %q, want SensorB", name)
+	}
+	valueLeaf, err := e.treeOps.FindLeaf(path + "/0/tagValue")
+	if err != nil {
+		t.Fatalf("tagValue leaf: %v", err)
+	}
+	value, _ := valueLeaf.GetFloat()
+	if value != 91 {
+		t.Fatalf("tagValue = %v, want 91", value)
+	}
+}
+
+func TestWriteListOutput_PrunesExtraElements(t *testing.T) {
+	e := newTestEngine()
+	path := "/" + testOrg + "/Computed/topAQI"
+	first := []ListEntry{
+		{DeviceName: "SensorA", TagName: "air.aqi", TagValue: 55},
+		{DeviceName: "SensorB", TagName: "air.aqi", TagValue: 91},
+		{DeviceName: "SensorC", TagName: "air.aqi", TagValue: 73},
+	}
+	if err := e.writeListOutput(path, first); err != nil {
+		t.Fatalf("initial writeListOutput: %v", err)
+	}
+	second := []ListEntry{{DeviceName: "SensorB", TagName: "air.aqi", TagValue: 91}}
+	if err := e.writeListOutput(path, second); err != nil {
+		t.Fatalf("second writeListOutput: %v", err)
+	}
+	if _, err := e.treeOps.FindNode(path + "/1"); err == nil {
+		t.Fatal("stale array element 1 still exists")
+	}
+	if _, err := e.treeOps.FindNode(path + "/2"); err == nil {
+		t.Fatal("stale array element 2 still exists")
+	}
+	if _, err := e.treeOps.FindNode(path + "/0"); err != nil {
+		t.Fatalf("kept array element 0 missing: %v", err)
 	}
 }
 

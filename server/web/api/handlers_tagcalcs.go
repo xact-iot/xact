@@ -96,7 +96,7 @@ func (h *TagCalcHandlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		s.IntervalSeconds = 60
 	}
 	// Validate expression before saving.
-	if _, err := h.Engine.EvaluateNow(org, s.Expression); err != nil {
+	if _, err := h.Engine.EvaluateAny(org, s.Expression); err != nil {
 		http.Error(w, "expression error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -131,7 +131,7 @@ func (h *TagCalcHandlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		s.IntervalSeconds = 60
 	}
 	// Validate expression before saving.
-	if _, err := h.Engine.EvaluateNow(org, s.Expression); err != nil {
+	if _, err := h.Engine.EvaluateAny(org, s.Expression); err != nil {
 		http.Error(w, "expression error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -181,7 +181,7 @@ func (h *TagCalcHandlers) HandleTest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	result, err := h.Engine.EvaluateNow(org, req.Expression)
+	result, err := h.Engine.EvaluateAny(org, req.Expression)
 	if err != nil {
 		json.NewEncoder(w).Encode(testTagCalcResponse{Error: err.Error()})
 		return
