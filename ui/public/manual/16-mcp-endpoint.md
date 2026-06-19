@@ -332,6 +332,6 @@ The following prompt creates a dashboard with the requested characteristics. Som
 
 ### Ad hoc report
 
-This simple prompt generates the required report.
+This prompt generates an ad hoc report. It uses Tag Calcs to find the critical sensors without scanning all data.
 
-> Create a PDF report showing the air quality sensors with the 5 worst AQI. The data must be displayed in charts. Compare the AQI for each sensor with the previous 3 day's history. The report must be professional and asthetically pleasing.
+> Create a standalone (not a XACT report) PDF report showing the air quality sensors with the 5 worst AQI. Create the list if necessary using tag calcs. The data must be displayed in charts. Compare the AQI for each sensor with the previous 3 day's history. The report must be professional and asthetically pleasing.

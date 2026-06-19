@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/xact-iot/xact/sqldb"
+	"github.com/xact-iot/xact/widgetcatalog"
 )
 
 func requestWithClaims(claims *JWTClaims) *http.Request {
@@ -228,6 +229,24 @@ func TestWidgetCatalogHandler(t *testing.T) {
 	}
 	if !foundAreaMap {
 		t.Fatalf("area-map-widget missing from catalog")
+	}
+}
+
+func TestWidgetCatalogDocumentsEveryBuiltInWidget(t *testing.T) {
+	catalog := widgetcatalog.BuiltIn()
+	if len(catalog.Widgets) != 26 {
+		t.Fatalf("widget count = %d, want 26", len(catalog.Widgets))
+	}
+	for _, widget := range catalog.Widgets {
+		if widget.Type == "" || widget.Name == "" || widget.Category == "" || widget.Description == "" {
+			t.Fatalf("widget missing identity docs: %#v", widget)
+		}
+		if widget.DefaultW <= 0 || widget.DefaultH <= 0 {
+			t.Fatalf("widget missing sizing docs: %#v", widget)
+		}
+		if len(widget.Properties) == 0 && len(widget.ConfigHints) == 0 {
+			t.Fatalf("widget missing config docs/hints: %s", widget.Type)
+		}
 	}
 }
 
