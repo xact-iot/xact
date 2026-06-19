@@ -116,6 +116,34 @@ func TestDefineReportCreatePreservesProvidedID(t *testing.T) {
 	}
 }
 
+func TestWidgetCatalogTool(t *testing.T) {
+	srv := New(Config{}, Dependencies{})
+	tools := srv.tools()
+	found := false
+	for _, tool := range tools {
+		if tool["name"] == "xact_get_widget_catalog" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("xact_get_widget_catalog missing from tools list")
+	}
+
+	result, err := srv.callTool(context.Background(), rawJSON(t, map[string]any{
+		"name":      "xact_get_widget_catalog",
+		"arguments": map[string]any{},
+	}))
+	if err != nil {
+		t.Fatalf("callTool: %v", err)
+	}
+	out := result.(map[string]any)
+	content := out["content"].([]map[string]string)
+	if len(content) != 1 || !strings.Contains(content[0]["text"], "big-number-widget") || !strings.Contains(content[0]["text"], "tagPath") {
+		t.Fatalf("catalog result = %#v", result)
+	}
+}
+
 func TestRTDBTagCRUDTools(t *testing.T) {
 	srv := newCRUDTestServer(t, true)
 	ctx := context.Background()

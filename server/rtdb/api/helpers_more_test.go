@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -134,6 +135,99 @@ func TestPluginHandlersListAndServe(t *testing.T) {
 	s.handleServeWidgetPlugin(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("path traversal status = %d", rr.Code)
+	}
+}
+
+func TestWidgetCatalogHandler(t *testing.T) {
+	s := &Server{}
+	rr := httptest.NewRecorder()
+	s.handleWidgetCatalog(rr, httptest.NewRequest(http.MethodGet, "/api/v1/widgets/catalog", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("catalog status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var catalog struct {
+		Version string `json:"version"`
+		Widgets []struct {
+			Type        string         `json:"type"`
+			DefaultW    int            `json:"defaultW"`
+			ConfigHints map[string]any `json:"configHints"`
+			Properties  []struct {
+				Name string `json:"name"`
+				Type string `json:"type"`
+			} `json:"properties"`
+		} `json:"widgets"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&catalog); err != nil {
+		t.Fatalf("decode catalog: %v", err)
+	}
+	if catalog.Version == "" || len(catalog.Widgets) == 0 {
+		t.Fatalf("catalog = %#v", catalog)
+	}
+	foundBigNumber := false
+	foundAreaMap := false
+	for _, widget := range catalog.Widgets {
+		if widget.Type == "big-number-widget" {
+			foundBigNumber = true
+			if widget.DefaultW != 6 {
+				t.Fatalf("big-number defaultW = %d", widget.DefaultW)
+			}
+			hasTagPath := false
+			for _, prop := range widget.Properties {
+				if prop.Name == "tagPath" && prop.Type == "path" {
+					hasTagPath = true
+				}
+			}
+			if !hasTagPath {
+				t.Fatalf("big-number properties missing tagPath: %#v", widget.Properties)
+			}
+		}
+		if widget.Type == "area-map-widget" {
+			foundAreaMap = true
+			hasLayers := false
+			for _, prop := range widget.Properties {
+				if prop.Name == "layers" && prop.Type == "array" {
+					hasLayers = true
+				}
+			}
+			if !hasLayers {
+				t.Fatalf("area-map properties missing layers: %#v", widget.Properties)
+			}
+			coords, _ := widget.ConfigHints["coordinates"].(map[string]any)
+			if coords["latitudeTag"] != "meta.lat" || coords["longitudeTag"] != "meta.lon" {
+				t.Fatalf("area-map coordinates hint = %#v", coords)
+			}
+			if widget.ConfigHints["canonicalDeviceLayerExample"] == nil || widget.ConfigHints["iconRuleSchema"] == nil {
+				t.Fatalf("area-map hints missing example/rule schema: %#v", widget.ConfigHints)
+			}
+			rules, _ := widget.ConfigHints["pathPatternRules"].([]any)
+			hasWholeSegmentRule := false
+			hasAirQualityExample := false
+			for _, raw := range rules {
+				rule, _ := raw.(string)
+				if strings.Contains(rule, "whole segment") {
+					hasWholeSegmentRule = true
+				}
+				if strings.Contains(rule, "LA_LongBeach.AirQuality.*") && strings.Contains(rule, "not LA_LongBeach.AirQuality.AQ-B-*") {
+					hasAirQualityExample = true
+				}
+			}
+			if !hasWholeSegmentRule || !hasAirQualityExample {
+				t.Fatalf("area-map pathPatternRules missing wildcard guidance: %#v", rules)
+			}
+			clickThrough, _ := widget.ConfigHints["clickThrough"].(map[string]any)
+			variationHint := clickThrough["dashboardVariationSelection"]
+			if !strings.Contains(fmt.Sprint(variationHint), "meta.deviceSubtype") ||
+				!strings.Contains(fmt.Sprint(variationHint), "meta.subtype") ||
+				!strings.Contains(fmt.Sprint(variationHint), "meta.variation") {
+				t.Fatalf("area-map clickThrough missing dashboard variation hint: %#v", clickThrough)
+			}
+		}
+	}
+	if !foundBigNumber {
+		t.Fatalf("big-number-widget missing from catalog")
+	}
+	if !foundAreaMap {
+		t.Fatalf("area-map-widget missing from catalog")
 	}
 }
 

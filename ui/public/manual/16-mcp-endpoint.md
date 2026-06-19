@@ -321,3 +321,17 @@ After reviewing the response, apply the change by sending the full reviewed requ
 - Keep `MCP_WRITE_TOOLS_ENABLED=no` for read-only analysis, troubleshooting, and dashboard assistance.
 - Rotate tokens by logging out or changing the user's password when a token may have been exposed.
 - Restrict network access to the XACT server with firewall or reverse-proxy rules.
+
+## Example prompts
+
+### Create a dashboard
+
+The following prompt creates a dashboard with the requested characteristics. Some minor manual tweaks, like the default zoom level and actual icons to use fine tune the dashboard.
+
+> Generate a top level dashboard showing the air quality sensors on a map. Show a black icon if the AQI is normal and red if it is in alarm. On hover and click show the main KPI values of the sensor, the air quality and particulate values. Implement the link to the detail  dashboard 'Air Quality Device'. Place both sensor types on the same layer.
+
+### Ad hoc report
+
+This simple prompt generates the required report.
+
+> Create a PDF report showing the air quality sensors with the 5 worst AQI. The data must be displayed in charts. Compare the AQI for each sensor with the previous 3 day's history. The report must be professional and asthetically pleasing.

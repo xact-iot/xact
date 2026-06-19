@@ -148,6 +148,9 @@ Adapt the interface to your preferences with selectable themes including light a
 ### 3.7. Online Help
 Online documentation ensures help is always available where you need it.
 
+### 3.8. MCP server
+Use your favorite AI Agent to configure and monitor the XACT server. Prompt to manage the tags or tag calculations or to generate custom reports.
+
 ---
 
 ## 4. Data & Processing

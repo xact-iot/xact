@@ -64,4 +64,10 @@ Example for counting the total number of incidents currently active.
 
 ![Placeholder Title 10](10-user-manual.png)
 
+### Ad hoc report generated via the MCP server
 
+This simple prompt generated the following report using ChatGPT 5.5
+
+> Create a single html page report showing the air quality sensors with the 5 worst AQI. The data must be displayed in charts. Compare the  AQI for each sensor with the previous 3 day's history. The report must be professional and asthetically pleasing.
+
+![Placeholder Title 11](AQI-report.png)

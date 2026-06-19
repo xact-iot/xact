@@ -21,6 +21,7 @@ import (
 	"github.com/xact-iot/xact/scheduler"
 	"github.com/xact-iot/xact/sqldb"
 	webapi "github.com/xact-iot/xact/web/api"
+	"github.com/xact-iot/xact/widgetcatalog"
 )
 
 type Config struct {
@@ -216,6 +217,8 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 	switch call.Name {
 	case "xact_get_api_context":
 		result, err = s.toolGetAPIContext(ctx)
+	case "xact_get_widget_catalog":
+		result = widgetcatalog.BuiltIn()
 	case "xact_api_proxy":
 		result, err = s.toolAPIProxy(ctx, call.Arguments)
 	case "xact_get_rtdb_item":
@@ -280,6 +283,7 @@ func toolResult(v any) (map[string]any, error) {
 func (s *Server) tools() []map[string]any {
 	return []map[string]any{
 		tool("xact_get_api_context", "Return the generated OpenAPI document and current API context. Use this to discover available REST-backed operations.", object(map[string]any{})),
+		tool("xact_get_widget_catalog", "Return dashboard widget types, sizing defaults, and supported configuration properties for built-in widgets.", object(map[string]any{})),
 		tool("xact_api_proxy", "Execute a local XACT REST API operation as the authenticated MCP caller. Prefer operationId plus pathParams/query/body. Mutating calls require confirm=true.", object(map[string]any{"operationId": stringSchema("OpenAPI operationId."), "method": stringSchema("HTTP method when operationId is not used."), "path": stringSchema("Canonical API path when operationId is not used."), "pathParams": mapSchema("Path parameter values."), "query": mapSchema("Query parameters."), "body": mapSchema("JSON request body."), "confirm": boolSchema("Required for POST, PUT, PATCH, and DELETE calls.")})),
 		tool("xact_get_rtdb_item", "Fetch an RTDB node or tag by path.", object(map[string]any{"path": stringSchema("RTDB path, org-relative or absolute."), "depth": numberSchema("Node depth when the item is a node; -1 returns the full subtree.")}, "path")),
 		tool("xact_create_node", "Create an RTDB node in the current organisation.", object(map[string]any{"path": stringSchema("Node path, org-relative or absolute."), "description": stringSchema("Node description."), "templateName": stringSchema("Template name."), "nodeType": stringSchema("Standard, Device, or Organisation."), "isArray": boolSchema("Mark as an array container."), "locked": boolSchema("Lock the node after creation."), "dryRun": boolSchema("Preview mutation only when true.")}, "path")),

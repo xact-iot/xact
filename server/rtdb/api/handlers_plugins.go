@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/xact-iot/xact/widgetcatalog"
 )
 
 // widgetPluginMeta describes a discovered widget plugin.
@@ -18,6 +19,14 @@ type widgetPluginMeta struct {
 
 func (s *Server) handleListWidgetPluginsWithSchema() openAPIHandler {
 	return handlerWithSchema(s.handleListWidgetPlugins, nil, []widgetPluginMeta{}, "plugins")
+}
+
+func (s *Server) handleWidgetCatalogWithSchema() openAPIHandler {
+	return handlerWithSchema(s.handleWidgetCatalog, nil, widgetcatalog.Catalog{}, "widgets")
+}
+
+func (s *Server) handleWidgetCatalog(w http.ResponseWriter, r *http.Request) {
+	json.NewEncoder(w).Encode(widgetcatalog.BuiltIn())
 }
 
 // handleListWidgetPlugins returns a JSON array of .js files found in the

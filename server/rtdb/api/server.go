@@ -347,6 +347,7 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 		api.Get("/api/v1/bootstrap/admin", s.handleBootstrapAdminStatusWithSchema())
 		api.Post("/api/v1/bootstrap/admin/password", s.handleSetBootstrapAdminPasswordWithSchema())
 		// Plugin discovery and static file serving (widgets + map layers + themes)
+		api.Get("/api/v1/widgets/catalog", s.handleWidgetCatalogWithSchema())
 		api.Get("/api/v1/plugins/widgets", s.handleListWidgetPluginsWithSchema())
 		r.Get("/plugins/widgets/{filename}", s.handleServeWidgetPlugin)
 		api.Get("/api/v1/plugins/map-layer", s.handleListMapLayerPluginsWithSchema())
