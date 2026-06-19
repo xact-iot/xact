@@ -81,7 +81,7 @@ func RenderChart(cfg ChartConfig, series []sqldb.MetricSeries, widthPx, heightPx
 	xLabelCount := chartXLabelCount(widthPx, len(xLabels))
 
 	// ── 4. Build theme (apply custom series colours if provided) ─────────────
-	theme := charts.GetTheme(charts.ThemeLight)
+	theme := chartReportTheme()
 	if len(cfg.Colors) > 0 {
 		colors := make([]charts.Color, len(cfg.Colors))
 		for i, c := range cfg.Colors {
@@ -109,7 +109,7 @@ func RenderChart(cfg ChartConfig, series []sqldb.MetricSeries, widthPx, heightPx
 		if err != nil {
 			return nil, err
 		}
-		return compositeDeltaPNG(base, overlay, chromeOnly)
+		return compositeDeltaWithReferencePNG(base, overlay, chromeOnly)
 	}
 
 	return renderChartPNG(cfg, values, seriesNames, theme, xLabels, xLabelCount, yOpt, widthPx, heightPx, cfg.FillArea, false)
@@ -200,6 +200,12 @@ func chartYAxisOption(cfg ChartConfig, values [][]float64) charts.YAxisOption {
 		}
 	}
 	return yOpt
+}
+
+func chartReportTheme() charts.ColorPalette {
+	return charts.GetTheme(charts.ThemeLight).
+		WithAxisSplitLineColor(charts.Color{R: 148, G: 163, B: 184, A: 255}).
+		WithYAxisColor(charts.Color{R: 100, G: 116, B: 139, A: 255})
 }
 
 func chartValueRange(values [][]float64) (float64, float64, bool) {
@@ -326,7 +332,7 @@ func chartSolidColors(color charts.Color, count int) []charts.Color {
 	return colors
 }
 
-func compositeDeltaPNG(basePNG, overlayPNG, referencePNG []byte) ([]byte, error) {
+func compositeDeltaWithReferencePNG(basePNG, overlayPNG, referencePNG []byte) ([]byte, error) {
 	baseImg, err := png.Decode(bytes.NewReader(basePNG))
 	if err != nil {
 		return nil, fmt.Errorf("decode base chart PNG: %w", err)
@@ -351,12 +357,27 @@ func compositeDeltaPNG(basePNG, overlayPNG, referencePNG []byte) ([]byte, error)
 			out.Set(x, y, overlayColor)
 		}
 	}
+	drawReferencePixels(out, referenceImg)
 
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, out); err != nil {
 		return nil, fmt.Errorf("encode composed chart PNG: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+func drawReferencePixels(out *image.RGBA, reference image.Image) {
+	bounds := out.Bounds()
+	background := reference.At(bounds.Min.X, bounds.Min.Y)
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			referenceColor := reference.At(x, y)
+			if colorDelta(referenceColor, background) < 2500 {
+				continue
+			}
+			out.Set(x, y, referenceColor)
+		}
+	}
 }
 
 func colorDelta(a, b color.Color) uint32 {

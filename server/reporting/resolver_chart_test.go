@@ -209,6 +209,16 @@ func TestChartYAxisShowsGridByDefault(t *testing.T) {
 	}
 }
 
+func TestChartReportThemeUsesVisibleGridColor(t *testing.T) {
+	grid := chartReportTheme().GetAxisSplitLineColor()
+	if grid.R != 148 || grid.G != 163 || grid.B != 184 || grid.A != 255 {
+		t.Fatalf("grid color = %#v, want #94a3b8", grid)
+	}
+	if grid == charts.GetTheme(charts.ThemeLight).GetAxisSplitLineColor() {
+		t.Fatalf("grid color should not rely on default light theme color")
+	}
+}
+
 func TestChartSeriesColorsCanStartAfterFilledSeries(t *testing.T) {
 	theme := charts.GetTheme(charts.ThemeLight)
 	colors := chartSeriesColors(theme, 1, 2)
