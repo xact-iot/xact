@@ -64,9 +64,11 @@ interface ChartConfig {
   yMin?: number;
   yMax?: number;
   colors?: string[];
+  seriesNames?: string[];
   smooth?: boolean;
   showLegend?: boolean;
   fillArea?: boolean;
+  showGrid?: boolean;
 }
 
 interface EventsConfig {
@@ -855,7 +857,6 @@ case 'events':
     const h = Math.max(30, Math.round((el.height ?? 200) * scale * 0.352778));
     const cfg = el.chartConfig;
     const metrics = cfg?.metrics?.filter(m => m.trim()) ?? [];
-    const titleText = cfg?.title || 'Time Series Chart';
     const lookback = cfg?.lookback || '24h';
     return `
       <div style="width:${contentW}px;height:${h}px;display:flex;flex-direction:column;
@@ -865,7 +866,7 @@ case 'events':
           <polyline points="2,16 8,10 13,13 20,4 26,7" stroke="#334155" stroke-width="1.5" fill="none" stroke-linejoin="round"/>
           <polyline points="2,16 8,8 13,11 20,2 26,5" stroke="#64748b" stroke-width="1" fill="none" stroke-linejoin="round" stroke-dasharray="2,2"/>
         </svg>
-        <div style="font-size:${Math.round(10*scale)}px;font-weight:600;color:#334155">${this.esc(titleText)}</div>
+        <div style="font-size:${Math.round(10*scale)}px;font-weight:600;color:#334155">Time Series Chart</div>
         <div style="font-size:${Math.round(9*scale)}px;color:#94a3b8">
           ${metrics.length > 0
             ? metrics.map(m => this.esc(m)).join(' · ')
@@ -1276,6 +1277,7 @@ case 'events':
     const cfg: ChartConfig = el.chartConfig ?? { metrics: [], lookback: '24h' };
     const colors = cfg.colors ?? [];
     const metrics = cfg.metrics ?? [];
+    const seriesNames = cfg.seriesNames ?? [];
     return `
       <div class="space-y-3 pb-4 text-xs">
 
@@ -1306,14 +1308,18 @@ case 'events':
             </div>
             <div id="chart-metrics-list" class="space-y-1 mb-1" data-el="${elIdx}">
               ${metrics.map((m, i) => `
-                <div class="flex items-center gap-1" data-metric-idx="${i}">
-                  <input type="text" class="chart-metric-name prop-input prop-flex-1 prop-font-mono prop-text-10" data-el="${elIdx}" data-idx="${i}"
-                         value="${this.esc(m)}" placeholder="device.tag"
-                         >
-                  <button class="chart-metric-pick prop-btn-icon" data-el="${elIdx}" data-idx="${i}"
-                          title="Browse tag tree"
-                          >⋯</button>
-                  <button class="chart-metric-remove prop-btn-remove" data-el="${elIdx}" data-idx="${i}">✕</button>
+                <div class="grid gap-1" data-metric-idx="${i}">
+                  <div class="flex items-center gap-1">
+                    <input type="text" class="chart-metric-name prop-input prop-flex-1 prop-font-mono prop-text-10" data-el="${elIdx}" data-idx="${i}"
+                           value="${this.esc(m)}" placeholder="device.tag"
+                           >
+                    <button class="chart-metric-pick prop-btn-icon" data-el="${elIdx}" data-idx="${i}"
+                            title="Browse tag tree"
+                            >⋯</button>
+                    <button class="chart-metric-remove prop-btn-remove" data-el="${elIdx}" data-idx="${i}">✕</button>
+                  </div>
+                  <input type="text" class="chart-series-name prop-input prop-text-10" data-el="${elIdx}" data-idx="${i}"
+                         value="${this.esc(seriesNames[i] ?? '')}" placeholder="Legend label (optional)">
                 </div>`).join('')}
             </div>
             <button class="chart-metric-add prop-btn" data-el="${elIdx}">+ Add Tag</button>
@@ -1323,13 +1329,6 @@ case 'events':
         <!-- Appearance -->
         <div class="border-t pt-3" style="border-color:var(--border-color)">
           <div class="opacity-50 uppercase tracking-widest mb-1.5">Appearance</div>
-
-          <div class="mb-2">
-            <div class="opacity-50 mb-0.5">Chart Title</div>
-            <input type="text" class="chart-title prop-input" data-el="${elIdx}"
-                   value="${this.esc(cfg.title ?? '')}"
-                   placeholder="Optional">
-          </div>
 
           <div class="mb-2">
             <div class="opacity-50 mb-0.5">Y-Axis Label</div>
@@ -1365,6 +1364,10 @@ case 'events':
             <label class="flex items-center gap-2 cursor-pointer select-none">
               <input type="checkbox" class="chart-fill" data-el="${elIdx}" ${cfg.fillArea ? 'checked' : ''}>
               <span>Fill area</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" class="chart-grid" data-el="${elIdx}" ${cfg.showGrid !== false ? 'checked' : ''}>
+              <span>Show grid</span>
             </label>
           </div>
 
@@ -2454,10 +2457,6 @@ case 'events':
       const el = this.getEl(e); if (!el) return;
       el.height = +(e.target as HTMLInputElement).value || 200; s.dirty = true; this.rerender();
     });
-    this.onAll('.chart-title', 'change', (e) => {
-      const el = this.getEl(e); if (!el) return;
-      ensureChart(el).title = (e.target as HTMLInputElement).value; s.dirty = true;
-    });
     this.onAll('.chart-ylabel', 'change', (e) => {
       const el = this.getEl(e); if (!el) return;
       ensureChart(el).yLabel = (e.target as HTMLInputElement).value; s.dirty = true;
@@ -2483,6 +2482,10 @@ case 'events':
     this.onAll('.chart-fill', 'change', (e) => {
       const el = this.getEl(e); if (!el) return;
       ensureChart(el).fillArea = (e.target as HTMLInputElement).checked; s.dirty = true;
+    });
+    this.onAll('.chart-grid', 'change', (e) => {
+      const el = this.getEl(e); if (!el) return;
+      ensureChart(el).showGrid = (e.target as HTMLInputElement).checked; s.dirty = true;
     });
 
     // Series colour controls
@@ -2534,17 +2537,31 @@ case 'events':
       if (!cfg.metrics) cfg.metrics = [];
       cfg.metrics[idx] = (e.target as HTMLInputElement).value.trim(); s.dirty = true;
     });
+    this.onAll('.chart-series-name', 'change', (e) => {
+      const el = this.getEl(e); if (!el) return;
+      const idx = +((e.target as HTMLElement).getAttribute('data-idx') ?? -1);
+      const cfg = ensureChart(el);
+      if (!cfg.seriesNames) cfg.seriesNames = [];
+      cfg.seriesNames[idx] = (e.target as HTMLInputElement).value.trim(); s.dirty = true;
+    });
     this.onAll('.chart-metric-remove', 'click', (e) => {
       const el = this.getEl(e); if (!el) return;
       const idx = +((e.target as HTMLElement).getAttribute('data-idx') ?? -1);
       const cfg = ensureChart(el);
-      if (cfg.metrics) { cfg.metrics.splice(idx, 1); s.dirty = true; this.rerender(); }
+      if (cfg.metrics) {
+        cfg.metrics.splice(idx, 1);
+        cfg.seriesNames?.splice(idx, 1);
+        s.dirty = true; this.rerender();
+      }
     });
     this.onAll('.chart-metric-add', 'click', (e) => {
       const el = this.getEl(e); if (!el) return;
       const cfg = ensureChart(el);
       if (!cfg.metrics) cfg.metrics = [];
-      cfg.metrics.push(''); s.dirty = true; this.rerender();
+      cfg.metrics.push('');
+      if (!cfg.seriesNames) cfg.seriesNames = [];
+      cfg.seriesNames.push('');
+      s.dirty = true; this.rerender();
     });
     this.onAll('.chart-metric-pick', 'click', (e) => {
       const target = e.target as HTMLElement;
@@ -3139,7 +3156,7 @@ case 'events':
       case 'chart':
         el = {
           id: eid(), type: 'chart', height: 200,
-          chartConfig: { metrics: [], lookback: '24h', showLegend: true, smooth: false, fillArea: false, colors: [] },
+          chartConfig: { metrics: [], lookback: '24h', showLegend: true, smooth: false, fillArea: false, showGrid: true, colors: [], seriesNames: [] },
         };
         break;
       case 'events':

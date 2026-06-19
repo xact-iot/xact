@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-analyze/charts"
 	"github.com/xact-iot/xact/events"
 	"github.com/xact-iot/xact/sqldb"
 )
@@ -93,9 +96,208 @@ func TestParseVariablesAndFormattingHelpers(t *testing.T) {
 	if len(labels) != 2 || labels[0] == "" || labels[1] == "" {
 		t.Fatalf("labels = %#v", labels)
 	}
+	if strings.Contains(labels[0], "\n") || !strings.Contains(labels[0], "/") {
+		t.Fatalf("expected intraday labels to include inline date, got %#v", labels)
+	}
 	if labels := formatTimestamps(nil); labels != nil {
 		t.Fatalf("nil times labels = %#v", labels)
 	}
+}
+
+func TestChartValuesInterpolateInternalTimestampGaps(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	times := []time.Time{
+		t0,
+		t0.Add(5 * time.Minute),
+		t0.Add(10 * time.Minute),
+		t0.Add(15 * time.Minute),
+	}
+	idx := map[time.Time]int{}
+	for i, ts := range times {
+		idx[ts] = i
+	}
+
+	_, values := buildChartValues(ChartConfig{}, []sqldb.MetricSeries{
+		{Name: "a", Data: []sqldb.MetricPoint{
+			{Timestamp: times[0], Value: 10},
+			{Timestamp: times[2], Value: 30},
+		}},
+	}, times, idx)
+
+	if len(values) != 1 || len(values[0]) != 4 {
+		t.Fatalf("values = %#v", values)
+	}
+	if values[0][1] != 20 {
+		t.Fatalf("interpolated value = %v, want 20", values[0][1])
+	}
+	if values[0][3] != charts.GetNullValue() {
+		t.Fatalf("trailing value = %v, want null sentinel", values[0][3])
+	}
+}
+
+func TestChartSeriesNamesOverrideLegendLabels(t *testing.T) {
+	if got := chartSeriesName(ChartConfig{SeriesNames: []string{"Clean water"}}, "plant.clean_water", 0); got != "Clean water" {
+		t.Fatalf("series label = %q, want custom name", got)
+	}
+	if got := chartSeriesName(ChartConfig{SeriesNames: []string{""}}, "plant.clean_water", 0); got != "plant.clean_water" {
+		t.Fatalf("blank series label = %q, want fallback", got)
+	}
+	if got := chartSeriesName(ChartConfig{}, "plant.clean_water", 1); got != "plant.clean_water" {
+		t.Fatalf("missing series label = %q, want fallback", got)
+	}
+}
+
+func TestChartXLabelCountUsesMoreThanEndpoints(t *testing.T) {
+	if got := chartXLabelCount(640, 200); got != 3 {
+		t.Fatalf("label count = %d, want 3", got)
+	}
+	if got := chartXLabelCount(2000, 200); got != 10 {
+		t.Fatalf("wide label count = %d, want capped 10", got)
+	}
+	if got := chartXLabelCount(640, 3); got != 3 {
+		t.Fatalf("small label count = %d, want 3", got)
+	}
+}
+
+func TestChartIntegerValueFormatterRoundsLabels(t *testing.T) {
+	if got := chartIntegerValueFormatter(94.21); got != "94" {
+		t.Fatalf("formatted label = %q, want 94", got)
+	}
+	if got := chartIntegerValueFormatter(10.5); got != "11" {
+		t.Fatalf("formatted rounded label = %q, want 11", got)
+	}
+}
+
+func TestChartNiceYAxisUnitUsesHumanFriendlySteps(t *testing.T) {
+	unit, ok := chartNiceYAxisUnit(charts.YAxisOption{Min: charts.Ptr(0.0), Max: charts.Ptr(42.0)}, [][]float64{{0, 42}})
+	if !ok || unit != 10 {
+		t.Fatalf("unit for 0..42 = %v, %v; want 10, true", unit, ok)
+	}
+	unit, ok = chartNiceYAxisUnit(charts.YAxisOption{Min: charts.Ptr(0.0), Max: charts.Ptr(94.0)}, [][]float64{{0, 94}})
+	if !ok || unit != 20 {
+		t.Fatalf("unit for 0..94 = %v, %v; want 20, true", unit, ok)
+	}
+}
+
+func TestFilledMultiSeriesChartUsesSharedYAxisRange(t *testing.T) {
+	showGrid := false
+	yOpt := chartYAxisOption(ChartConfig{FillArea: true, ShowGrid: &showGrid}, [][]float64{
+		{10, 20},
+		{80, 90},
+	})
+	if yOpt.Min == nil || *yOpt.Min != 0 {
+		t.Fatalf("y min = %v, want 0", yOpt.Min)
+	}
+	if yOpt.Max == nil || *yOpt.Max <= 90 {
+		t.Fatalf("y max = %v, want padded value above 90", yOpt.Max)
+	}
+	if yOpt.Unit != 20 {
+		t.Fatalf("y unit = %v, want 20", yOpt.Unit)
+	}
+	if yOpt.SplitLineShow == nil || *yOpt.SplitLineShow {
+		t.Fatalf("grid option = %v, want explicit false", yOpt.SplitLineShow)
+	}
+	if yOpt.SpineLineShow == nil || !*yOpt.SpineLineShow {
+		t.Fatalf("spine option = %v, want explicit true", yOpt.SpineLineShow)
+	}
+}
+
+func TestChartYAxisShowsGridByDefault(t *testing.T) {
+	yOpt := chartYAxisOption(ChartConfig{}, [][]float64{{10, 42}})
+	if yOpt.SplitLineShow == nil || !*yOpt.SplitLineShow {
+		t.Fatalf("grid option = %v, want default true", yOpt.SplitLineShow)
+	}
+}
+
+func TestChartSeriesColorsCanStartAfterFilledSeries(t *testing.T) {
+	theme := charts.GetTheme(charts.ThemeLight)
+	colors := chartSeriesColors(theme, 1, 2)
+	if len(colors) != 2 {
+		t.Fatalf("colors len = %d, want 2", len(colors))
+	}
+	if colors[0] != theme.GetSeriesColor(1) || colors[1] != theme.GetSeriesColor(2) {
+		t.Fatalf("colors = %#v, want theme colors 1 and 2", colors)
+	}
+}
+
+func TestChartColorsWithVisibleSeriesKeepsShape(t *testing.T) {
+	theme := charts.GetTheme(charts.ThemeLight)
+	colors := chartColorsWithVisibleSeries(theme, 3, func(index int) bool { return index == 1 })
+	if len(colors) != 3 {
+		t.Fatalf("colors len = %d, want 3", len(colors))
+	}
+	if colors[1] != theme.GetSeriesColor(1) {
+		t.Fatalf("visible color = %#v, want original second series color", colors[1])
+	}
+	if colors[0] != charts.ColorTransparent || colors[2] != charts.ColorTransparent {
+		t.Fatalf("hidden series should be transparent: %#v", colors)
+	}
+}
+
+func TestChartValuesWithVisibleSeriesPreservesShape(t *testing.T) {
+	values := [][]float64{{1, 2}, {3, 4}}
+	filtered := chartValuesWithVisibleSeries(values, func(index int) bool { return index == 1 })
+	if len(filtered) != 2 || len(filtered[0]) != 2 || len(filtered[1]) != 2 {
+		t.Fatalf("filtered shape = %#v", filtered)
+	}
+	if filtered[0][0] != charts.GetNullValue() || filtered[0][1] != charts.GetNullValue() {
+		t.Fatalf("hidden values = %#v, want null sentinels", filtered[0])
+	}
+	if filtered[1][0] != 3 || filtered[1][1] != 4 {
+		t.Fatalf("visible values = %#v, want original second series", filtered[1])
+	}
+	if values[0][0] != 1 {
+		t.Fatalf("source values were mutated: %#v", values)
+	}
+}
+
+func TestRenderChartFilledMultiSeries(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	pngBytes, err := RenderChart(ChartConfig{Title: "Filled", FillArea: true, Colors: []string{"#0066cc", "#ff0000"}}, []sqldb.MetricSeries{
+		{Name: "primary", Data: []sqldb.MetricPoint{
+			{Timestamp: t0, Value: 10},
+			{Timestamp: t0.Add(time.Minute), Value: 20},
+		}},
+		{Name: "overlay", Data: []sqldb.MetricPoint{
+			{Timestamp: t0, Value: 80},
+			{Timestamp: t0.Add(time.Minute), Value: 90},
+		}},
+	}, 640, 320)
+	if err != nil {
+		t.Fatalf("RenderChart: %v", err)
+	}
+	if !bytes.HasPrefix(pngBytes, []byte{0x89, 'P', 'N', 'G'}) {
+		t.Fatalf("rendered chart is not a PNG, prefix=%q", pngBytes[:4])
+	}
+	img, err := png.Decode(bytes.NewReader(pngBytes))
+	if err != nil {
+		t.Fatalf("decode chart PNG: %v", err)
+	}
+	plotLeft := firstPixelX(img.Bounds(), func(x, y int) bool {
+		r, g, b, _ := img.At(x, y).RGBA()
+		return b > r+10000 && b > g+10000
+	})
+	redLeft := firstPixelX(img.Bounds(), func(x, y int) bool {
+		r, g, b, _ := img.At(x, y).RGBA()
+		return r > g+10000 && r > b+10000
+	})
+	if plotLeft < 0 || redLeft < 0 {
+		t.Fatalf("expected blue plot and red overlay pixels, got plotLeft=%d redLeft=%d", plotLeft, redLeft)
+	}
+	if redLeft < plotLeft {
+		t.Fatalf("red overlay starts at x=%d before plot starts at x=%d", redLeft, plotLeft)
+	}
+}
+
+func firstPixelX(bounds image.Rectangle, match func(x, y int) bool) int {
+	for x := bounds.Min.X; x < bounds.Max.X; x++ {
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			if match(x, y) {
+				return x
+			}
+		}
+	}
+	return -1
 }
 
 func TestGeneratorSmallHelpers(t *testing.T) {

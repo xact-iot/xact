@@ -1,9 +1,15 @@
 package reporting
 
 import (
+	"bytes"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/go-analyze/charts"
@@ -33,9 +39,13 @@ type ChartConfig struct {
 	// Colors is a list of hex colours (#rrggbb) applied to series in order.
 	Colors []string `json:"colors,omitempty"`
 
-	Smooth     bool `json:"smooth,omitempty"`
-	ShowLegend bool `json:"showLegend,omitempty"`
-	FillArea   bool `json:"fillArea,omitempty"`
+	// SeriesNames overrides legend labels. Empty entries fall back to the queried series/tag name.
+	SeriesNames []string `json:"seriesNames,omitempty"`
+
+	Smooth     bool  `json:"smooth,omitempty"`
+	ShowLegend bool  `json:"showLegend,omitempty"`
+	FillArea   bool  `json:"fillArea,omitempty"`
+	ShowGrid   *bool `json:"showGrid,omitempty"`
 }
 
 // RenderChart converts MetricSeries data into a PNG chart image.
@@ -64,37 +74,11 @@ func RenderChart(cfg ChartConfig, series []sqldb.MetricSeries, widthPx, heightPx
 		tsIndex[t] = i
 	}
 
-	seriesNames := make([]string, len(series))
-	nullVal := charts.GetNullValue()
-	values := make([][]float64, len(series))
-	for si, s := range series {
-		seriesNames[si] = s.Name
-		vals := make([]float64, len(allTimes))
-		for i := range vals {
-			vals[i] = nullVal
-		}
-		for _, pt := range s.Data {
-			t := pt.Timestamp.UTC().Truncate(time.Second)
-			if idx, ok := tsIndex[t]; ok {
-				vals[idx] = float64(pt.Value)
-			}
-		}
-		values[si] = vals
-	}
+	seriesNames, values := buildChartValues(cfg, series, allTimes, tsIndex)
 
 	// ── 3. Build X-axis labels (sampled for readability) ─────────────────────
 	xLabels := formatTimestamps(allTimes)
-	const maxLabels = 12
-	if len(xLabels) > maxLabels {
-		step := int(math.Ceil(float64(len(xLabels)) / float64(maxLabels)))
-		sparse := make([]string, len(xLabels))
-		for i, lbl := range xLabels {
-			if i%step == 0 || i == len(xLabels)-1 {
-				sparse[i] = lbl
-			}
-		}
-		xLabels = sparse
-	}
+	xLabelCount := chartXLabelCount(widthPx, len(xLabels))
 
 	// ── 4. Build theme (apply custom series colours if provided) ─────────────
 	theme := charts.GetTheme(charts.ThemeLight)
@@ -107,6 +91,31 @@ func RenderChart(cfg ChartConfig, series []sqldb.MetricSeries, widthPx, heightPx
 	}
 
 	// ── 5. Assemble options and render ───────────────────────────────────────
+	yOpt := chartYAxisOption(cfg, values)
+	if cfg.FillArea && len(values) > 1 {
+		baseValues := chartValuesWithVisibleSeries(values, func(index int) bool { return index == 0 })
+		base, err := renderChartPNG(cfg, baseValues, seriesNames, theme, xLabels, xLabelCount, yOpt, widthPx, heightPx, true, false)
+		if err != nil {
+			return nil, err
+		}
+		overlayCfg := cfg
+		overlayValues := chartValuesWithVisibleSeries(values, func(index int) bool { return index > 0 })
+		overlay, err := renderChartPNG(overlayCfg, overlayValues, seriesNames, theme, xLabels, xLabelCount, yOpt, widthPx, heightPx, false, false)
+		if err != nil {
+			return nil, err
+		}
+		chromeOnlyValues := chartValuesWithVisibleSeries(values, func(index int) bool { return false })
+		chromeOnly, err := renderChartPNG(overlayCfg, chromeOnlyValues, seriesNames, theme, xLabels, xLabelCount, yOpt, widthPx, heightPx, false, false)
+		if err != nil {
+			return nil, err
+		}
+		return compositeDeltaPNG(base, overlay, chromeOnly)
+	}
+
+	return renderChartPNG(cfg, values, seriesNames, theme, xLabels, xLabelCount, yOpt, widthPx, heightPx, cfg.FillArea, false)
+}
+
+func renderChartPNG(cfg ChartConfig, values [][]float64, seriesNames []string, theme charts.ColorPalette, xLabels []string, xLabelCount int, yOpt charts.YAxisOption, widthPx, heightPx int, fillArea bool, transparentChrome bool) ([]byte, error) {
 	optFuncs := []charts.OptionFunc{
 		charts.ThemeOptionFunc(theme),
 		charts.XAxisLabelsOptionFunc(xLabels),
@@ -114,38 +123,32 @@ func RenderChart(cfg ChartConfig, series []sqldb.MetricSeries, widthPx, heightPx
 		func(opt *charts.ChartOption) {
 			opt.Width = widthPx
 			opt.Height = heightPx
-			opt.LineStrokeWidth = 1.5
+			opt.LineStrokeWidth = 2.4
+			opt.Symbol = charts.SymbolNone
+			opt.Legend.Symbol = charts.SymbolDot
+			opt.XAxis.LabelCount = xLabelCount
+			opt.XAxis.LabelCountAdjustment = -1
+			opt.XAxis.LabelFontStyle.FontSize = 10
 			if cfg.Smooth {
 				opt.XAxis.BoundaryGap = charts.Ptr(false)
 			}
-			if cfg.FillArea {
-				opt.FillArea = charts.Ptr(true)
-				opt.FillOpacity = 100
+			if fillArea || transparentChrome {
 				opt.XAxis.BoundaryGap = charts.Ptr(false)
+			}
+			if fillArea {
+				opt.FillArea = charts.Ptr(true)
+				opt.FillOpacity = 48
 			}
 			if !cfg.ShowLegend {
 				opt.Legend.Show = charts.Ptr(false)
 			}
+			if transparentChrome {
+				opt.Legend.Theme = transparentLegendTheme(theme, len(seriesNames))
+			}
 		},
 	}
 
-	if cfg.Title != "" {
-		optFuncs = append(optFuncs, charts.TitleTextOptionFunc(cfg.Title))
-	}
-
-	yOpt := charts.YAxisOption{}
-	if cfg.YMin != nil {
-		yOpt.Min = cfg.YMin
-	}
-	if cfg.YMax != nil {
-		yOpt.Max = cfg.YMax
-	}
-	if cfg.YLabel != "" {
-		yOpt.Title = cfg.YLabel
-	}
-	if yOpt.Min != nil || yOpt.Max != nil || yOpt.Title != "" {
-		optFuncs = append(optFuncs, charts.YAxisOptionFunc(yOpt))
-	}
+	optFuncs = append(optFuncs, charts.YAxisOptionFunc(yOpt))
 
 	p, err := charts.LineRender(values, optFuncs...)
 	if err != nil {
@@ -156,6 +159,290 @@ func RenderChart(cfg ChartConfig, series []sqldb.MetricSeries, widthPx, heightPx
 		return nil, fmt.Errorf("encoding chart PNG: %w", err)
 	}
 	return buf, nil
+}
+
+func chartYAxisOption(cfg ChartConfig, values [][]float64) charts.YAxisOption {
+	yOpt := charts.YAxisOption{}
+	if cfg.YMin != nil {
+		yOpt.Min = cfg.YMin
+	}
+	if cfg.YMax != nil {
+		yOpt.Max = cfg.YMax
+	}
+	if cfg.YLabel != "" {
+		yOpt.Title = cfg.YLabel
+	}
+	yOpt.ValueFormatter = chartIntegerValueFormatter
+	yOpt.PreferNiceIntervals = charts.Ptr(true)
+	yOpt.SplitLineShow = charts.Ptr(chartBoolDefault(cfg.ShowGrid, true))
+	yOpt.SpineLineShow = charts.Ptr(true)
+	if cfg.FillArea && len(values) > 1 && (yOpt.Min == nil || yOpt.Max == nil) {
+		minVal, maxVal, ok := chartValueRange(values)
+		if ok {
+			if yOpt.Min == nil {
+				if minVal >= 0 {
+					minVal = 0
+				}
+				yOpt.Min = charts.Ptr(minVal)
+			}
+			if yOpt.Max == nil {
+				span := maxVal - *yOpt.Min
+				if span <= 0 {
+					span = 1
+				}
+				yOpt.Max = charts.Ptr(maxVal + span*0.05)
+			}
+		}
+	}
+	if yOpt.Unit == 0 {
+		if unit, ok := chartNiceYAxisUnit(yOpt, values); ok {
+			yOpt.Unit = unit
+		}
+	}
+	return yOpt
+}
+
+func chartValueRange(values [][]float64) (float64, float64, bool) {
+	nullVal := charts.GetNullValue()
+	var minVal, maxVal float64
+	seen := false
+	for _, series := range values {
+		for _, v := range series {
+			if v == nullVal {
+				continue
+			}
+			if !seen || v < minVal {
+				minVal = v
+			}
+			if !seen || v > maxVal {
+				maxVal = v
+			}
+			seen = true
+		}
+	}
+	return minVal, maxVal, seen
+}
+
+func chartIntegerValueFormatter(v float64) string {
+	return fmt.Sprintf("%.0f", math.Round(v))
+}
+
+func chartBoolDefault(v *bool, fallback bool) bool {
+	if v == nil {
+		return fallback
+	}
+	return *v
+}
+
+func chartNiceYAxisUnit(yOpt charts.YAxisOption, values [][]float64) (float64, bool) {
+	minVal, maxVal, ok := chartValueRange(values)
+	if !ok {
+		return 0, false
+	}
+	if yOpt.Min != nil {
+		minVal = *yOpt.Min
+	}
+	if yOpt.Max != nil {
+		maxVal = *yOpt.Max
+	}
+	span := maxVal - minVal
+	if span <= 0 {
+		return 1, true
+	}
+	raw := span / 5
+	magnitude := math.Pow(10, math.Floor(math.Log10(raw)))
+	fraction := raw / magnitude
+	switch {
+	case fraction <= 1.5:
+		return magnitude, true
+	case fraction <= 3:
+		return 2 * magnitude, true
+	case fraction <= 7:
+		return 5 * magnitude, true
+	default:
+		return 10 * magnitude, true
+	}
+}
+
+func chartSeriesColors(theme charts.ColorPalette, start, count int) []charts.Color {
+	colors := make([]charts.Color, count)
+	for i := range colors {
+		colors[i] = theme.GetSeriesColor(start + i)
+	}
+	return colors
+}
+
+func chartColorsWithVisibleSeries(theme charts.ColorPalette, count int, visible func(int) bool) []charts.Color {
+	colors := make([]charts.Color, count)
+	for i := range colors {
+		if visible(i) {
+			colors[i] = theme.GetSeriesColor(i)
+		} else {
+			colors[i] = charts.ColorTransparent
+		}
+	}
+	return colors
+}
+
+func chartValuesWithVisibleSeries(values [][]float64, visible func(int) bool) [][]float64 {
+	filtered := make([][]float64, len(values))
+	nullVal := charts.GetNullValue()
+	for i, series := range values {
+		filtered[i] = make([]float64, len(series))
+		if visible(i) {
+			copy(filtered[i], series)
+			continue
+		}
+		for j := range filtered[i] {
+			filtered[i][j] = nullVal
+		}
+	}
+	return filtered
+}
+
+func transparentChartChromeTheme(theme charts.ColorPalette) charts.ColorPalette {
+	return theme.
+		WithBackgroundColor(charts.ColorTransparent).
+		WithXAxisColor(charts.ColorTransparent).
+		WithYAxisColor(charts.ColorTransparent).
+		WithAxisSplitLineColor(charts.ColorTransparent).
+		WithXAxisTextColor(charts.ColorTransparent).
+		WithYAxisTextColor(charts.ColorTransparent).
+		WithTitleTextColor(charts.ColorTransparent).
+		WithTitleBorderColor(charts.ColorTransparent).
+		WithLegendTextColor(charts.ColorTransparent).
+		WithLegendBorderColor(charts.ColorTransparent)
+}
+
+func transparentLegendTheme(theme charts.ColorPalette, count int) charts.ColorPalette {
+	return transparentChartChromeTheme(theme).WithSeriesColors(chartSolidColors(charts.ColorTransparent, count))
+}
+
+func chartSolidColors(color charts.Color, count int) []charts.Color {
+	colors := make([]charts.Color, count)
+	for i := range colors {
+		colors[i] = color
+	}
+	return colors
+}
+
+func compositeDeltaPNG(basePNG, overlayPNG, referencePNG []byte) ([]byte, error) {
+	baseImg, err := png.Decode(bytes.NewReader(basePNG))
+	if err != nil {
+		return nil, fmt.Errorf("decode base chart PNG: %w", err)
+	}
+	overlayImg, err := png.Decode(bytes.NewReader(overlayPNG))
+	if err != nil {
+		return nil, fmt.Errorf("decode overlay chart PNG: %w", err)
+	}
+	referenceImg, err := png.Decode(bytes.NewReader(referencePNG))
+	if err != nil {
+		return nil, fmt.Errorf("decode reference chart PNG: %w", err)
+	}
+	bounds := baseImg.Bounds()
+	out := image.NewRGBA(bounds)
+	draw.Draw(out, bounds, baseImg, bounds.Min, draw.Src)
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			overlayColor := overlayImg.At(x, y)
+			if colorDelta(overlayColor, referenceImg.At(x, y)) == 0 {
+				continue
+			}
+			out.Set(x, y, overlayColor)
+		}
+	}
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, out); err != nil {
+		return nil, fmt.Errorf("encode composed chart PNG: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func colorDelta(a, b color.Color) uint32 {
+	ar, ag, ab, aa := a.RGBA()
+	br, bg, bb, ba := b.RGBA()
+	return absDiff16(ar, br) + absDiff16(ag, bg) + absDiff16(ab, bb) + absDiff16(aa, ba)
+}
+
+func absDiff16(a, b uint32) uint32 {
+	if a > b {
+		return a - b
+	}
+	return b - a
+}
+
+func buildChartValues(cfg ChartConfig, series []sqldb.MetricSeries, allTimes []time.Time, tsIndex map[time.Time]int) ([]string, [][]float64) {
+	seriesNames := make([]string, len(series))
+	nullVal := charts.GetNullValue()
+	values := make([][]float64, len(series))
+	for si, s := range series {
+		seriesNames[si] = chartSeriesName(cfg, s.Name, si)
+		vals := make([]float64, len(allTimes))
+		for i := range vals {
+			vals[i] = nullVal
+		}
+		for _, pt := range s.Data {
+			t := pt.Timestamp.UTC().Truncate(time.Second)
+			if idx, ok := tsIndex[t]; ok {
+				vals[idx] = float64(pt.Value)
+			}
+		}
+		values[si] = interpolateInternalNulls(vals, allTimes)
+	}
+	return seriesNames, values
+}
+
+func chartSeriesName(cfg ChartConfig, fallback string, index int) string {
+	if index < len(cfg.SeriesNames) {
+		if name := strings.TrimSpace(cfg.SeriesNames[index]); name != "" {
+			return name
+		}
+	}
+	return fallback
+}
+
+func interpolateInternalNulls(vals []float64, times []time.Time) []float64 {
+	if len(vals) != len(times) || len(vals) < 3 {
+		return vals
+	}
+	nullVal := charts.GetNullValue()
+	prev := -1
+	for i, v := range vals {
+		if v == nullVal {
+			continue
+		}
+		if prev >= 0 && i-prev > 1 {
+			prevTime := times[prev]
+			nextTime := times[i]
+			total := nextTime.Sub(prevTime).Seconds()
+			if total > 0 {
+				for j := prev + 1; j < i; j++ {
+					frac := times[j].Sub(prevTime).Seconds() / total
+					vals[j] = vals[prev] + (v-vals[prev])*frac
+				}
+			}
+		}
+		prev = i
+	}
+	return vals
+}
+
+func chartXLabelCount(widthPx, labelCount int) int {
+	if labelCount <= 0 {
+		return 0
+	}
+	target := widthPx / 170
+	if target < 3 {
+		target = 3
+	}
+	if target > 10 {
+		target = 10
+	}
+	if target > labelCount {
+		target = labelCount
+	}
+	return target
 }
 
 // parseLookback converts a lookback string to a duration.
@@ -179,26 +466,25 @@ func parseLookback(s string) time.Duration {
 	}
 }
 
-// formatTimestamps picks a human-readable format based on the overall time span.
+// formatTimestamps picks compact report labels. The chart renderer measures
+// axis labels as single text runs, so keep the date inline to avoid collisions.
 func formatTimestamps(times []time.Time) []string {
 	if len(times) == 0 {
 		return nil
 	}
 	span := times[len(times)-1].Sub(times[0])
 
-	var format string
-	switch {
-	case span <= 24*time.Hour:
-		format = "15:04"
-	case span <= 30*24*time.Hour:
-		format = "01/02 15:04"
-	default:
-		format = "2006-01-02"
-	}
-
 	out := make([]string, len(times))
 	for i, t := range times {
-		out[i] = t.Local().Format(format)
+		local := t.Local()
+		switch {
+		case span <= 48*time.Hour:
+			out[i] = local.Format("15:04 01/02")
+		case span <= 30*24*time.Hour:
+			out[i] = local.Format("01/02 15:04")
+		default:
+			out[i] = local.Format("2006-01-02")
+		}
 	}
 	return out
 }

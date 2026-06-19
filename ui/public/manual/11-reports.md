@@ -62,13 +62,14 @@ A static image such as a logo, diagram, or photo. Images can be uploaded into th
 An embedded time-series chart rendered from historical metric data. Configure:
 
 - **Tag paths** - which metrics to plot
+- **Series labels** - optional legend names for each tag path
 - **Lookback period** - how far back to chart (1 hour to 30 days)
-- **Chart title** - optional heading shown above the chart
 - **Y-axis label / min / max** - optional axis settings
 - **Chart height** - height within the report
-- **Series options** - colours, labels, axis configuration
+- **Series options** - colours, grid visibility, labels, axis configuration
 
 Charts are rendered server-side using the same metrics database as the dashboard Time Series Chart widget.
+Use a separate **Title** element above a chart when the report needs a heading.
 
 ### Events
 
