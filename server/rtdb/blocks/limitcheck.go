@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,11 +44,13 @@ type LimitCheckBlock struct {
 	LowEvent EventConfig `json:"lowEvent"`
 
 	// runtime state - not serialised
-	mu         sync.Mutex
-	wasInAlarm bool
-	hiLock     xnats.PubLock
-	rtnLock    xnats.PubLock
-	lowLock    xnats.PubLock
+	mu               sync.Mutex
+	wasInAlarm       bool
+	stateInitialized bool
+	lastValue        *float64
+	hiLock           xnats.PubLock
+	rtnLock          xnats.PubLock
+	lowLock          xnats.PubLock
 }
 
 func (b *LimitCheckBlock) GetType() string { return "limitcheck" }
@@ -59,6 +63,7 @@ func (b *LimitCheckBlock) Init(leaf tree.Leaf) {
 	b.hiLock = xnats.NewPubLock(xnats.SubjectName(path + ".alarm.hi"))
 	b.rtnLock = xnats.NewPubLock(xnats.SubjectName(path + ".alarm.rtn"))
 	b.lowLock = xnats.NewPubLock(xnats.SubjectName(path + ".alarm.low"))
+	b.initializeState(leaf)
 }
 
 func (b *LimitCheckBlock) Close(leaf tree.Leaf) {
@@ -72,6 +77,10 @@ func (b *LimitCheckBlock) Process(leaf tree.Leaf, value any) (any, error) {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.initializeStateLocked(leaf)
+	if b.withinDeadbandLocked(leaf, v) {
+		return value, nil
+	}
 
 	hiBreached := b.HiLimit != nil && v > *b.HiLimit
 	lowBreached := b.LowLimit != nil && v < *b.LowLimit
@@ -106,7 +115,48 @@ func (b *LimitCheckBlock) Process(leaf tree.Leaf, value any) (any, error) {
 	}
 
 	b.wasInAlarm = inAlarm
+	b.setLastValueLocked(v)
 	return value, nil // pass value through unchanged
+}
+
+func (b *LimitCheckBlock) initializeState(leaf tree.Leaf) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.initializeStateLocked(leaf)
+}
+
+func (b *LimitCheckBlock) initializeStateLocked(leaf tree.Leaf) {
+	if b.stateInitialized {
+		return
+	}
+	if leaf != nil {
+		b.wasInAlarm = strings.Contains(leaf.GetState(), tree.StatusAlarm)
+		if !leaf.GetUpdatedTime().IsZero() {
+			v, err := toFloat64(leaf.GetAnyValue())
+			if err != nil {
+				b.stateInitialized = true
+				return
+			}
+			b.setLastValueLocked(v)
+		}
+	}
+	b.stateInitialized = true
+}
+
+func (b *LimitCheckBlock) withinDeadbandLocked(leaf tree.Leaf, value float64) bool {
+	if leaf == nil || b.lastValue == nil {
+		return false
+	}
+	deadband := leaf.GetShared().Deadband
+	if deadband <= 0 {
+		return false
+	}
+	return math.Abs(value-*b.lastValue) <= deadband
+}
+
+func (b *LimitCheckBlock) setLastValueLocked(value float64) {
+	v := value
+	b.lastValue = &v
 }
 
 // emitEvent publishes an event using the distributed lock to deduplicate across

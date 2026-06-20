@@ -134,6 +134,46 @@ func TestLimitCheckReturnToNormal(t *testing.T) {
 	}
 }
 
+func TestLimitCheckInitializesFromExistingAlarm(t *testing.T) {
+	leaf := tree.NewFloatLeaf("t", tree.TagConfig{Name: "t", Type: tree.TypeFloat})
+	leaf.SetState(tree.StatusAlarm)
+
+	b := &LimitCheckBlock{HiLimit: ptrFloat(100)}
+	b.Init(leaf)
+
+	if !b.wasInAlarm {
+		t.Fatal("expected limitcheck to initialize from existing alarm state")
+	}
+	if _, err := b.Process(leaf, 150.0); err != nil {
+		t.Fatal(err)
+	}
+	if !b.wasInAlarm || leaf.GetState() != tree.StatusAlarm {
+		t.Fatalf("alarm state changed unexpectedly: wasInAlarm=%v state=%q", b.wasInAlarm, leaf.GetState())
+	}
+}
+
+func TestLimitCheckDeadbandSuppressesAlarmTransitions(t *testing.T) {
+	leaf := tree.NewFloatLeaf("t", tree.TagConfig{Name: "t", Type: tree.TypeFloat}, tree.TagShared{Deadband: 1})
+	b := &LimitCheckBlock{HiLimit: ptrFloat(100)}
+
+	if _, err := b.Process(leaf, 99.8); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Process(leaf, 100.2); err != nil {
+		t.Fatal(err)
+	}
+	if leaf.GetState() == tree.StatusAlarm || b.wasInAlarm {
+		t.Fatalf("within-deadband threshold crossing should not alarm: state=%q wasInAlarm=%v", leaf.GetState(), b.wasInAlarm)
+	}
+
+	if _, err := b.Process(leaf, 101.0); err != nil {
+		t.Fatal(err)
+	}
+	if leaf.GetState() != tree.StatusAlarm || !b.wasInAlarm {
+		t.Fatalf("outside-deadband threshold crossing should alarm: state=%q wasInAlarm=%v", leaf.GetState(), b.wasInAlarm)
+	}
+}
+
 func TestLimitCheckNonNumeric(t *testing.T) {
 	b := &LimitCheckBlock{HiLimit: ptrFloat(100)}
 	result, err := b.Process(nil, "not-a-number")
