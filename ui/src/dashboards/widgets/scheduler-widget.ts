@@ -37,7 +37,7 @@ interface SchedulePreset {
   monthDay: number; // 1–28
 }
 
-function presetToCron(p: SchedulePreset): string {
+export function presetToCron(p: SchedulePreset): string {
   const h = String(p.hour).padStart(2, '0');
   const m = String(p.minute).padStart(2, '0');
   switch (p.frequency) {
@@ -48,20 +48,21 @@ function presetToCron(p: SchedulePreset): string {
   }
 }
 
-function cronToPreset(expr: string): SchedulePreset {
+export function cronToPreset(expr: string): SchedulePreset {
   const parts = expr.trim().split(/\s+/);
   const def: SchedulePreset = { frequency: 'daily', hour: 8, minute: 0, weekday: 1, monthDay: 1 };
   if (parts.length !== 5) return def;
   const [min, hour, dom, , dow] = parts;
   const m = parseInt(min) || 0;
   const h = parseInt(hour) || 0;
+  const parsedDow = parseInt(dow);
   if (hour === '*') return { ...def, frequency: 'hourly', minute: m };
   if (dom !== '*') return { ...def, frequency: 'monthly', hour: h, minute: m, monthDay: parseInt(dom) || 1 };
-  if (dow !== '*') return { ...def, frequency: 'weekly', hour: h, minute: m, weekday: parseInt(dow) || 1 };
+  if (dow !== '*') return { ...def, frequency: 'weekly', hour: h, minute: m, weekday: Number.isNaN(parsedDow) ? 1 : parsedDow };
   return { ...def, frequency: 'daily', hour: h, minute: m };
 }
 
-function describeCron(expr: string): string {
+export function describeCron(expr: string): string {
   const p = cronToPreset(expr);
   const pad = (n: number) => String(n).padStart(2, '0');
   const time = `${pad(p.hour)}:${pad(p.minute)}`;

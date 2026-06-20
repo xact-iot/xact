@@ -1,5 +1,7 @@
 # Embedded MCP Endpoint
 
+**Note:** The MCP is experimental and must be enabled with a feature switch in the .env file.
+
 XACT can expose an embedded Model Context Protocol (MCP) endpoint for AI agents and developer tools. The endpoint lets an authenticated XACT user browse real-time tags, inspect processing block schemas, query history, generate driver context, and optionally create or update selected XACT resources.
 
 The MCP server runs inside the normal XACT HTTP server. It is disabled by default and uses the same user session tokens and UI permission model as the web application.
@@ -15,6 +17,10 @@ Use the embedded MCP endpoint when you want an AI client to:
 - Generate context for REST, MQTT, or NATS ingest drivers.
 - Validate device provisioning plans before applying them.
 - Manage reports, schedules, or tag calculations when explicitly enabled.
+- Create stand alone reports from the current and historical data in the XACT server.
+- Extract data from XACT for spreadsheet analysis.
+
+While MCP is useful for simple tasks, it comes into its own when leveraging the power of the backing AI model. For example, use MCP to create a complete dashboard, or report from one prompt. You will probably still need to manually tweak the result but the heavy lifting has been done. See sample prompts at the bottom of the page.
 
 MCP is not a replacement for device ingest. Devices should still use REST ingest API keys, MQTT, or NATS as described in [Data Ingest](#data-ingest).
 
@@ -40,16 +46,10 @@ MCP_MAX_PAYLOAD_BYTES=1048576
 | `MCP_DOCS_ROOT` | unset | Optional directory used when serving MCP documentation resources. |
 | `MCP_EXAMPLES_ROOT` | unset | Optional directory used when returning driver examples. |
 
-With the packaged `/xact` proxy path, the default external URL is:
+The default external URL is:
 
 ```text
 http://localhost:8080/xact/api/v1/mcp
-```
-
-If XACT is served without a proxy path, the default external URL is:
-
-```text
-http://localhost:8080/api/v1/mcp
 ```
 
 ## Authentication
@@ -60,32 +60,15 @@ The MCP endpoint is protected by the same JWT middleware as the XACT API. Client
 Authorization: Bearer <xact-session-token>
 ```
 
-Use the normal login endpoint to obtain a token:
-
-```sh
-curl -sS -X POST http://localhost:8080/xact/login \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"your-password"}'
-```
-
-The response includes a `token`, `token_type`, `expires_in`, and the user's current `tenant_id`. Tokens are live session tokens and expire after the configured session lifetime. If a user is deactivated or their token version changes, existing tokens are rejected.
-
-REST ingest API keys are not accepted by the MCP endpoint. API keys are for device ingest only.
-
 ### Agent Tokens
 
 For standalone agents and MCP clients, use an **agent token** instead of a username/password login flow. Agent tokens are created in the Agent Keys widget, are scoped to the current organisation, and carry the owning user's XACT roles for that organisation. MCP permission checks use those roles in the same way they use a normal user's roles.
 
-Use an agent token directly as the bearer token:
-
-```sh
-export XACT_AGENT_TOKEN="xat_..."
-
-curl -sS http://localhost:8080/xact/api/v1/mcp \
-  -H "Authorization: Bearer $XACT_AGENT_TOKEN"
-```
+Use an agent token directly as the bearer token. Agents will have a way to configure the MCP Bearer token. Codex for example can be configured with the GUI or by editing the `~/.codex/config.toml` file.
 
 Delete the token from the Agent Keys widget to revoke access.
+
+REST ingest API keys are not accepted by the MCP endpoint. API keys are for device ingest only.
 
 ### Organisation Context
 

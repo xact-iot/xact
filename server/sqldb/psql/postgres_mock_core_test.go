@@ -162,14 +162,14 @@ func TestPostgresScheduledTasksWithPGXMock(t *testing.T) {
 		t.Fatalf("unexpected task: %#v", task)
 	}
 
-	create := &sqldb.ScheduledTask{Name: "Hourly", Description: "desc", TaskType: "backup", TaskConfig: json.RawMessage(`{"path":"/tmp"}`), Schedule: "0 * * * *", Enabled: true}
+	create := &sqldb.ScheduledTask{ID: "11111111-1111-4111-8111-111111111111", Name: "Hourly", Description: "desc", TaskType: "backup", TaskConfig: json.RawMessage(`{"path":"/tmp"}`), Schedule: "0 * * * *", Enabled: true}
 	mock.ExpectQuery("INSERT INTO scheduled_tasks").
-		WithArgs("default", create.Name, create.Description, create.TaskType, create.TaskConfig, create.Schedule, create.Enabled).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "created_at", "updated_at"}).AddRow("task-2", now, now))
+		WithArgs(create.ID, "default", create.Name, create.Description, create.TaskType, create.TaskConfig, create.Schedule, create.Enabled).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "created_at", "updated_at"}).AddRow(create.ID, now, now))
 	if err := db.CreateScheduledTask(ctx, "default", create); err != nil {
 		t.Fatalf("CreateScheduledTask: %v", err)
 	}
-	if create.ID != "task-2" {
+	if create.ID != "11111111-1111-4111-8111-111111111111" {
 		t.Fatalf("create did not hydrate task: %#v", create)
 	}
 

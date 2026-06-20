@@ -2,6 +2,7 @@ package psql
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -31,6 +32,14 @@ type PostgresDB struct {
 	metricOrgIDs        sync.Map
 	metricDeviceIDs     sync.Map
 	metricDefinitionIDs sync.Map
+}
+
+func newUUID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 // NewPostgresDB connects to PostgreSQL and returns a ready-to-use database.
@@ -828,6 +837,7 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE(org_name, name)
 		);
+		ALTER TABLE scheduled_tasks ALTER COLUMN id SET DEFAULT gen_random_uuid();
 		ALTER TABLE scheduled_tasks ALTER COLUMN description SET DEFAULT '';
 		ALTER TABLE scheduled_tasks ALTER COLUMN task_config SET DEFAULT '{}';
 		ALTER TABLE scheduled_tasks ALTER COLUMN enabled SET DEFAULT TRUE;
@@ -1260,11 +1270,14 @@ func (db *PostgresDB) GetScheduledTask(ctx context.Context, org string, id strin
 }
 
 func (db *PostgresDB) CreateScheduledTask(ctx context.Context, org string, t *sqldb.ScheduledTask) error {
+	if t.ID == "" {
+		t.ID = newUUID()
+	}
 	return db.pool.QueryRow(ctx, `
-		INSERT INTO scheduled_tasks (org_name, name, description, task_type, task_config, schedule, enabled)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO scheduled_tasks (id, org_name, name, description, task_type, task_config, schedule, enabled)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at, updated_at
-	`, org, t.Name, t.Description, t.TaskType, t.TaskConfig, t.Schedule, t.Enabled).
+	`, t.ID, org, t.Name, t.Description, t.TaskType, t.TaskConfig, t.Schedule, t.Enabled).
 		Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt)
 }
 
