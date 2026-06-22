@@ -183,8 +183,8 @@ build_platform() {
         SUFFIX=".exe"
     fi
     cd "$SERVER_DIR"
-    GOOS=$OS GOARCH=$ARCH go build -o "$DEPLOY_DIR/intermediate/server/${XACT_BIN}${SUFFIX}" ./startup
-    GOOS=$OS GOARCH=$ARCH go build -o "$DEPLOY_DIR/intermediate/server/${RESTORE_BIN}${SUFFIX}" ./cmd/restore
+    CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -o "$DEPLOY_DIR/intermediate/server/${XACT_BIN}${SUFFIX}" ./startup
+    CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -o "$DEPLOY_DIR/intermediate/server/${RESTORE_BIN}${SUFFIX}" ./cmd/restore
 }
 
 if [ "$BUILD_TARGET" = "single" ]; then
