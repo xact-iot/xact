@@ -50,10 +50,10 @@ For a public deployment, set `XACT_SITE_ADDRESS` to the public hostname before s
 Plugins are loaded from the host path configured by `XACT_PLUGIN_DIR`:
 
 ```yaml
-${XACT_PLUGIN_DIR:-./plugins}:/opt/xact/plugins:ro
+${XACT_PLUGIN_DIR:-./plugins}:/opt/xact/plugins
 ```
 
-Put custom plugin files under the existing host `plugins/` subdirectories and restart `xact` if needed.
+XACT creates the standard plugin category subdirectories there on first start. Put custom plugin files under those subdirectories and restart `xact` if needed.
 
 ## Building Locally
 

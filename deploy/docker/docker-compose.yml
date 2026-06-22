@@ -55,7 +55,7 @@ services:
     volumes:
       - xact-nats:/var/lib/xact/nats-store
       - xact-logs:/var/log/xact
-      - ${XACT_PLUGIN_DIR:-./plugins}:/opt/xact/plugins:ro
+      - ${XACT_PLUGIN_DIR:-./plugins}:/opt/xact/plugins
     expose:
       - "8080"
       - "9222"

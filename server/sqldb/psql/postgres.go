@@ -216,40 +216,7 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_system_config_org_name_version_unique
 			ON system_config(org_id, config_name, version);
 
-		CREATE TABLE IF NOT EXISTS events (
-			id              BIGSERIAL,
-			timestamp       TIMESTAMPTZ NOT NULL,
-			server          TEXT NOT NULL DEFAULT '',
-			org_name        TEXT NOT NULL DEFAULT '',
-			user_id         INTEGER REFERENCES users(id),
-			severity        TEXT NOT NULL,
-			notification_id INTEGER NOT NULL DEFAULT 0,
-			device          TEXT NOT NULL DEFAULT '',
-			message         TEXT NOT NULL DEFAULT '',
-			params          JSONB,
-			PRIMARY KEY (id, timestamp)
-		);
-
-		-- TimescaleDB hypertable (if extension available)
-		DO $$ BEGIN
-			IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb') THEN
-				IF NOT EXISTS (
-					SELECT 1 FROM timescaledb_information.hypertables
-					WHERE hypertable_name = 'events'
-				) THEN
-					PERFORM create_hypertable('events', 'timestamp', migrate_data => TRUE);
-				END IF;
-			END IF;
-		END $$;
-
-		CREATE INDEX IF NOT EXISTS idx_events_severity ON events (severity, timestamp DESC);
-		CREATE INDEX IF NOT EXISTS idx_events_device   ON events (device, timestamp DESC);
-		CREATE INDEX IF NOT EXISTS idx_events_org      ON events (org_name, timestamp DESC);
-		CREATE INDEX IF NOT EXISTS idx_events_user     ON events (user_id, timestamp DESC);
-		CREATE INDEX IF NOT EXISTS idx_events_notif    ON events (notification_id, timestamp DESC);
-		CREATE INDEX IF NOT EXISTS idx_events_params   ON events USING GIN (params);
-
-		-- Users table
+		-- Users table. Create this before events and membership tables reference users(id).
 		CREATE TABLE IF NOT EXISTS users (
 			id                   SERIAL PRIMARY KEY,
 			first_name           TEXT NOT NULL DEFAULT '',
@@ -286,6 +253,39 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		ALTER TABLE users ALTER COLUMN token_version SET NOT NULL;
 		ALTER TABLE users ALTER COLUMN created_at SET NOT NULL;
 		ALTER TABLE users ALTER COLUMN updated_at SET NOT NULL;
+
+		CREATE TABLE IF NOT EXISTS events (
+			id              BIGSERIAL,
+			timestamp       TIMESTAMPTZ NOT NULL,
+			server          TEXT NOT NULL DEFAULT '',
+			org_name        TEXT NOT NULL DEFAULT '',
+			user_id         INTEGER REFERENCES users(id),
+			severity        TEXT NOT NULL,
+			notification_id INTEGER NOT NULL DEFAULT 0,
+			device          TEXT NOT NULL DEFAULT '',
+			message         TEXT NOT NULL DEFAULT '',
+			params          JSONB,
+			PRIMARY KEY (id, timestamp)
+		);
+
+		-- TimescaleDB hypertable (if extension available)
+		DO $$ BEGIN
+			IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb') THEN
+				IF NOT EXISTS (
+					SELECT 1 FROM timescaledb_information.hypertables
+					WHERE hypertable_name = 'events'
+				) THEN
+					PERFORM create_hypertable('events', 'timestamp', migrate_data => TRUE);
+				END IF;
+			END IF;
+		END $$;
+
+		CREATE INDEX IF NOT EXISTS idx_events_severity ON events (severity, timestamp DESC);
+		CREATE INDEX IF NOT EXISTS idx_events_device   ON events (device, timestamp DESC);
+		CREATE INDEX IF NOT EXISTS idx_events_org      ON events (org_name, timestamp DESC);
+		CREATE INDEX IF NOT EXISTS idx_events_user     ON events (user_id, timestamp DESC);
+		CREATE INDEX IF NOT EXISTS idx_events_notif    ON events (notification_id, timestamp DESC);
+		CREATE INDEX IF NOT EXISTS idx_events_params   ON events USING GIN (params);
 
 		-- User-organisation membership
 		CREATE TABLE IF NOT EXISTS user_organisations (

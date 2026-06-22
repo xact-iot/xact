@@ -124,7 +124,7 @@ or, when using a public DNS name and Caddy-managed HTTPS:
 https://<your-domain>/xact/
 ```
 
-Plugins are loaded from the host directory configured by `XACT_PLUGIN_DIR` in `.env`, defaulting to `./plugins` beside the compose file. Add custom widget, map layer, theme, or authentication plugins there before restarting the `xact` container.
+Plugins are loaded from the writable host directory configured by `XACT_PLUGIN_DIR` in `.env`, defaulting to `./plugins` beside the compose file. XACT creates the standard plugin category subdirectories on first start. Add custom widget, map layer, theme, or authentication plugins there before restarting the `xact` container.
 
 ### 2.3. Windows
 
