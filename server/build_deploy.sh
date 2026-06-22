@@ -470,11 +470,22 @@ build_docker_image() {
     cp -r "$PLATFORM_DIR/web" "$IMAGE_ROOT/web"
 
     echo -e "${YELLOW}Building Docker image $DOCKER_IMAGE for $OS/$ARCH...${NC}"
-    docker build \
+    local ATTEMPT=1
+    local MAX_ATTEMPTS=3
+    until docker build \
         --platform "$OS/$ARCH" \
         --build-arg "XACT_ARTIFACT_DIR=server/deploy/intermediate/docker-image" \
         -t "$DOCKER_IMAGE" \
-        "$PROJECT_ROOT"
+        "$PROJECT_ROOT"; do
+        if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
+            echo -e "${RED}Docker image build failed after $MAX_ATTEMPTS attempts${NC}"
+            return 1
+        fi
+        local WAIT_SECONDS=$((ATTEMPT * 15))
+        echo -e "${YELLOW}Docker image build failed; retrying in ${WAIT_SECONDS}s...${NC}"
+        sleep "$WAIT_SECONDS"
+        ATTEMPT=$((ATTEMPT + 1))
+    done
     echo -e "${GREEN}Built Docker image $DOCKER_IMAGE${NC}"
 }
 
