@@ -24,6 +24,13 @@ NC='\033[0m'
 TARGET_OS=""
 TARGET_ARCH=""
 BUILD_TARGET=""
+TARGET_EXPLICIT=false
+BUILD_DOCKER=false
+DOCKER_IMAGE=""
+DOCKER_PLATFORM=""
+DOCKER_OS=""
+DOCKER_ARCH=""
+DOCKER_DEPLOY_ARCHIVE=""
 
 usage() {
     echo -e "${BLUE}XACT Deployment Builder${NC}"
@@ -34,6 +41,9 @@ usage() {
     echo "Options:"
     echo "  -t, --target OS/ARCH   Specify target platform (e.g., linux/amd64, windows/amd64, darwin/arm64)"
     echo "  --all                  Build all targets"
+    echo "  --docker               Build a Docker image from the Linux deploy artifacts"
+    echo "  --docker-image NAME    Docker image tag (default: xact:$VERSION)"
+    echo "  --docker-platform P    Docker platform to package (default: linux/amd64, or --target when Linux)"
     echo "  -h, --help             Show this help message"
     echo ""
     echo "If no target is specified, builds for the current host OS and architecture."
@@ -70,11 +80,24 @@ while [[ $# -gt 0 ]]; do
         -t|--target)
             parse_target "$2"
             BUILD_TARGET="single"
+            TARGET_EXPLICIT=true
             shift 2
             ;;
         --all)
             BUILD_TARGET="all"
             shift
+            ;;
+        --docker)
+            BUILD_DOCKER=true
+            shift
+            ;;
+        --docker-image)
+            DOCKER_IMAGE="$2"
+            shift 2
+            ;;
+        --docker-platform)
+            DOCKER_PLATFORM="$2"
+            shift 2
             ;;
         -h|--help)
             usage
@@ -87,11 +110,43 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ -z "$BUILD_TARGET" ]; then
-    if [ -z "$TARGET_OS" ]; then
+    if [ "$BUILD_DOCKER" = true ] && [ -z "$DOCKER_PLATFORM" ]; then
+        TARGET_OS=linux
+        TARGET_ARCH=amd64
+    elif [ -z "$TARGET_OS" ]; then
         TARGET_OS=$(go env GOOS)
         TARGET_ARCH=$(go env GOARCH)
     fi
     BUILD_TARGET="single"
+fi
+
+if [ "$BUILD_DOCKER" = true ]; then
+    if [ -z "$DOCKER_IMAGE" ]; then
+        DOCKER_IMAGE="xact:$VERSION"
+    fi
+    if [ -z "$DOCKER_PLATFORM" ]; then
+        if [ "$BUILD_TARGET" = "single" ] && [ "$TARGET_OS" = "linux" ]; then
+            DOCKER_PLATFORM="$TARGET_OS/$TARGET_ARCH"
+        else
+            DOCKER_PLATFORM="linux/amd64"
+        fi
+    fi
+    if [[ ! "$DOCKER_PLATFORM" =~ ^linux/(amd64|arm64|arm)$ ]]; then
+        echo -e "${RED}Unsupported Docker platform: $DOCKER_PLATFORM${NC}"
+        echo "Docker images can be built for linux/amd64, linux/arm64, or linux/arm."
+        exit 1
+    fi
+    DOCKER_OS="${DOCKER_PLATFORM%%/*}"
+    DOCKER_ARCH="${DOCKER_PLATFORM##*/}"
+
+    if [ "$BUILD_TARGET" = "single" ]; then
+        if [ "$TARGET_EXPLICIT" = true ] && { [ "$TARGET_OS" != "$DOCKER_OS" ] || [ "$TARGET_ARCH" != "$DOCKER_ARCH" ]; }; then
+            echo -e "${RED}--docker-platform ($DOCKER_PLATFORM) must match --target ($TARGET_OS/$TARGET_ARCH) for a single-target build${NC}"
+            exit 1
+        fi
+        TARGET_OS="$DOCKER_OS"
+        TARGET_ARCH="$DOCKER_ARCH"
+    fi
 fi
 
 echo -e "${BLUE}XACT Deployment Builder${NC}"
@@ -388,6 +443,83 @@ SHEOF
     fi
 }
 
+build_docker_image() {
+    local OS="$1"
+    local ARCH="$2"
+    local PLATFORM_DIR="$DEPLOY_DIR/$OS/xact-$OS-$ARCH"
+    local IMAGE_ROOT="$DEPLOY_DIR/intermediate/docker-image"
+
+    if [ "$OS" != "linux" ]; then
+        echo -e "${RED}Docker image requires a Linux target, got $OS/$ARCH${NC}"
+        return 1
+    fi
+    if [ ! -x "$PLATFORM_DIR/xact" ] || [ ! -x "$PLATFORM_DIR/restore" ] || [ ! -d "$PLATFORM_DIR/web" ]; then
+        echo -e "${RED}Docker artifacts missing in $PLATFORM_DIR${NC}"
+        return 1
+    fi
+    if ! command -v docker >/dev/null 2>&1; then
+        echo -e "${RED}docker command not found${NC}"
+        return 1
+    fi
+
+    echo -e "${YELLOW}Preparing Docker image artifacts for $OS/$ARCH...${NC}"
+    rm -rf "$IMAGE_ROOT"
+    mkdir -p "$IMAGE_ROOT"
+    cp "$PLATFORM_DIR/xact" "$IMAGE_ROOT/xact"
+    cp "$PLATFORM_DIR/restore" "$IMAGE_ROOT/restore"
+    cp -r "$PLATFORM_DIR/web" "$IMAGE_ROOT/web"
+
+    echo -e "${YELLOW}Building Docker image $DOCKER_IMAGE for $OS/$ARCH...${NC}"
+    docker build \
+        --platform "$OS/$ARCH" \
+        --build-arg "XACT_ARTIFACT_DIR=server/deploy/intermediate/docker-image" \
+        -t "$DOCKER_IMAGE" \
+        "$PROJECT_ROOT"
+    echo -e "${GREEN}Built Docker image $DOCKER_IMAGE${NC}"
+}
+
+create_docker_deploy_package() {
+    local ARCH="$1"
+    local PACKAGE_ROOT="$DEPLOY_DIR/intermediate/docker-deploy"
+    local ENV_SRC="$PROJECT_ROOT/deploy/docker/.env.example"
+    local COMPOSE_SRC="$PROJECT_ROOT/deploy/docker/docker-compose.yml"
+    local ARCHIVE="$DEPLOY_DIR/xact-docker-$ARCH-$VERSION.tar.gz"
+
+    if [ ! -f "$ENV_SRC" ]; then
+        echo -e "${RED}Docker env example not found: $ENV_SRC${NC}"
+        return 1
+    fi
+    if [ ! -f "$COMPOSE_SRC" ]; then
+        echo -e "${RED}Docker compose file not found: $COMPOSE_SRC${NC}"
+        return 1
+    fi
+
+    echo -e "${YELLOW}Creating Docker deploy package for $ARCH...${NC}"
+    rm -rf "$PACKAGE_ROOT"
+    mkdir -p "$PACKAGE_ROOT"
+
+    awk -v image="$DOCKER_IMAGE" '
+        BEGIN { replaced = 0 }
+        /^XACT_IMAGE=/ {
+            print "XACT_IMAGE=" image
+            replaced = 1
+            next
+        }
+        { print }
+        END {
+            if (!replaced) {
+                print "XACT_IMAGE=" image
+            }
+        }
+    ' "$ENV_SRC" > "$PACKAGE_ROOT/.env.example"
+    cp "$COMPOSE_SRC" "$PACKAGE_ROOT/docker-compose.yml"
+
+    rm -f "$ARCHIVE"
+    tar -czf "$ARCHIVE" -C "$PACKAGE_ROOT" .env.example docker-compose.yml
+    DOCKER_DEPLOY_ARCHIVE="$ARCHIVE"
+    echo -e "${GREEN}Created xact-docker-$ARCH-$VERSION.tar.gz${NC}"
+}
+
 if [ "$BUILD_TARGET" = "single" ]; then
     create_package "$TARGET_OS" "$TARGET_ARCH"
 else
@@ -397,6 +529,13 @@ else
     create_package windows amd64
     create_package darwin amd64
     create_package darwin arm64
+    # Always create a docker package for the default Linux/amd64 image.
+    create_docker_deploy_package "amd64"
+fi
+
+if [ "$BUILD_DOCKER" = true ]; then
+    build_docker_image "$DOCKER_OS" "$DOCKER_ARCH"
+    create_docker_deploy_package "$DOCKER_ARCH"
 fi
 
 echo ""
@@ -411,6 +550,10 @@ if [ "$BUILD_TARGET" = "single" ]; then
     fi
 else
     ls -lh "$DEPLOY_DIR"/*.tar.gz "$DEPLOY_DIR"/*.zip 2>/dev/null || true
+fi
+if [ "$BUILD_DOCKER" = true ]; then
+    echo "Docker image: $DOCKER_IMAGE ($DOCKER_PLATFORM)"
+    ls -lh "$DOCKER_DEPLOY_ARCHIVE" 2>/dev/null || true
 fi
 echo ""
 echo "Build artifacts located at: $DEPLOY_DIR"

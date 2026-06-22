@@ -1,0 +1,8 @@
+{$XACT_SITE_ADDRESS:localhost} {
+	encode zstd gzip
+
+	reverse_proxy /xact/ws* xact:9222
+	reverse_proxy /xact* xact:8080
+
+	redir / /xact/ 302
+}

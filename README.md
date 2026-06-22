@@ -10,10 +10,11 @@ XACT is a industrial IoT platform designed for real-time monitoring, data acquis
 - [2. Installation](#2-installation)
   - [2.1. Linux and Darwin](#21-linux-and-darwin)
     - [2.1.1. Automatically Starting the Server after a Reboot](#211-automatically-starting-the-server-after-a-reboot)
-  - [2.2. Windows](#23-windows)
-  - [2.3. First Login](#22-first-login)
-  - [2.4. Providing data](#23-)
-  - [2.5. Next Steps](#24-next-steps)
+  - [2.2. Docker](#22-docker)
+  - [2.3. Windows](#23-windows)
+  - [2.4. First Login](#24-first-login)
+  - [2.5. Sending Data to XACT](#25-sending-data-to-xact)
+  - [2.6. Next Steps](#26-next-steps)
 - [3. Core Platform](#3-core-platform)
   - [3.1. Multi-Tenancy](#31-multi-tenancy)
   - [3.2. Users & Permissions](#32-users--permissions)
@@ -86,6 +87,45 @@ init.d based systems, Alpine, and custom Linux builds can use an init script tha
 
 See the `Next Steps` section below.
 
+### 2.2. Docker
+
+The default Docker deployment uses Docker Compose with XACT, Caddy, and PostgreSQL/TimescaleDB. For other container managers, such as Kubernetes, adjust the deployment as needed.
+
+To deploy with a published image, download the Docker deploy package for your architecture. The package contains `docker-compose.yml` and `.env.example`.
+
+Create a directory for the XACT Docker deployment:
+
+```sh
+mkdir -p ~/xact
+cp xact-docker-<arch>-<version>.tar.gz ~/xact/
+cd ~/xact
+tar -xzf xact-docker-<arch>-<version>.tar.gz
+```
+
+```sh
+cp .env.example .env
+```
+
+Edit `.env` and replace all `change-this...` secrets. For a public server, also set `XACT_SITE_ADDRESS` to the public DNS name. Then start the stack:
+
+```sh
+docker compose up -d
+```
+
+Open XACT at:
+
+```text
+http://localhost/xact/
+```
+
+or, when using a public DNS name and Caddy-managed HTTPS:
+
+```text
+https://<your-domain>/xact/
+```
+
+Plugins are loaded from the host directory configured by `XACT_PLUGIN_DIR` in `.env`, defaulting to `./plugins` beside the compose file. Add custom widget, map layer, theme, or authentication plugins there before restarting the `xact` container.
+
 ### 2.3. Windows
 
 Download the Windows archive. The Windows package is xact-windows-amd64-<version>.zip. Replace `<version>` with the release you need.
@@ -107,17 +147,17 @@ start.bat
 
 Open the system at `http://localhost:8080/xact/`, or from another browser on the same trusted local network at `http://<server-host>:8080/xact/`.
 
-### 2.2. First Login
+### 2.4. First Login
 
 The bootstrap user is named `admin`. On a fresh packaged install, no password is set yet; the browser shows a `Set Admin Password` dialog instead of the normal login form. Set the password there and the first admin session starts immediately.
 
 For production deployment guidance, open the online manual after startup and read **Preparing for Production**.
 
-### 2.4. Sending Data to XACT
+### 2.5. Sending Data to XACT
 
 There are various way to send data to the XACT server and these are described in the online manual. But the simplest way to get started is probably to start with the Python program found in the repo under ```demo/python-example```. This skeleton program sends data via the XACT REST API.
 
-### 2.5. Next Steps
+### 2.6. Next Steps
 
 - Open the system at `http://localhost:8080/xact/`, `http://<server-host>:8080/xact/`, or your configured proxy URL.
 - On fresh installs, set the initial `admin` password in the browser; scripted installs can log in with the configured bootstrap password.
@@ -212,22 +252,23 @@ Interactive control widgets enable operator actions directly from dashboards. Co
 - Handles 10s of users, 100-1000+ devices
 - Separate PostgreSQL database with TSDB extension
 - Scalable storage with superior query performance
+- Docker Compose deployment with Caddy and TimescaleDB is available in `deploy/docker/`
 
 ### 7.3. Large - Enterprise Scale (coming soon)
 - Clustered servers for high availability
 - Horizontal scaling architecture
-- Containerized Docker deployment
+- Multi-node container orchestration
 
 ---
 
 
 ## 8. Roadmap
 
-- **Docker Support** - Full containerization for simplified deployment and orchestration
+- **Docker Support** - Basic Docker Compose deployment is available; broader orchestration hardening is still planned
 - **Redundancy & Clustering** - Deploy multi-node clusters for high availability with automatic failover
 - **MCP Server** - Access XACT data from AI Agents
 
-The code is designed to support these features but comprehensive testing must still be done before releasing docker and clustering features.
+The code is designed to support these features but comprehensive testing must still be done before releasing clustering features.
 
 ---
 
