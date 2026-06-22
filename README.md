@@ -124,7 +124,9 @@ or, when using a public DNS name and Caddy-managed HTTPS:
 https://<your-domain>/xact/
 ```
 
-Plugins are loaded from the writable host directory configured by `XACT_PLUGIN_DIR` in `.env`, defaulting to `./plugins` beside the compose file. XACT creates the standard plugin category subdirectories on first start. Add custom widget, map layer, theme, or authentication plugins there before restarting the `xact` container.
+Plugins are loaded from the writable host directory configured by `XACT_PLUGIN_DIR` in `.env`, defaulting to `./plugins` beside the compose file in the extracted Docker deployment package. XACT creates the standard plugin category subdirectories on first start. Add custom widget, map layer, theme, or authentication plugins there before restarting the `xact` container.
+
+PostgreSQL data is stored in the host directory configured by `POSTGRES_DATA_DIR`, defaulting to `./postgres-data` beside the compose file. The `POSTGRES_PASSWORD` value is only applied when PostgreSQL initializes an empty data directory; changing `.env` later does not change the password inside an existing database.
 
 ### 2.3. Windows
 

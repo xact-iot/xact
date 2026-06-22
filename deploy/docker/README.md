@@ -9,6 +9,7 @@ This directory contains the basic Docker deployment described in `architecture/D
 - `caddy`: reverse proxy and certificate manager for `/xact/` and `/xact/ws`.
 
 PostgreSQL is published as `127.0.0.1:${POSTGRES_PORT:-5432}:5432`, so it is reachable from the Docker host only, not from external interfaces.
+PostgreSQL data is stored in the host directory configured by `POSTGRES_DATA_DIR`, defaulting to `./postgres-data` beside `docker-compose.yml` in the extracted Docker deployment package.
 
 ## First Run
 
@@ -45,6 +46,27 @@ PostgreSQL is published as `127.0.0.1:${POSTGRES_PORT:-5432}:5432`, so it is rea
 
 For a public deployment, set `XACT_SITE_ADDRESS` to the public hostname before starting the stack. Caddy will manage certificates automatically.
 
+## PostgreSQL Data and Passwords
+
+The `POSTGRES_PASSWORD` value is used when PostgreSQL initializes an empty `POSTGRES_DATA_DIR`. After the database already exists, changing `.env` does not change the password stored inside PostgreSQL.
+
+To change or recover the XACT database password on an existing deployment:
+
+1. Choose a new password and put it in `.env` as `POSTGRES_PASSWORD`.
+2. Reset the PostgreSQL role password inside the running database:
+
+   ```sh
+   docker compose exec postgres psql -U xact -d xact -c "ALTER USER xact WITH PASSWORD '<new-password>';"
+   ```
+
+3. Restart XACT so it reconnects using the updated `.env` value:
+
+   ```sh
+   docker compose up -d
+   ```
+
+If you do not need to keep any existing database data, stop the stack and remove `POSTGRES_DATA_DIR`; PostgreSQL will initialize a fresh database using the current `.env` values on the next `docker compose up -d`.
+
 ## Plugins
 
 Plugins are loaded from the host path configured by `XACT_PLUGIN_DIR`:
@@ -53,7 +75,7 @@ Plugins are loaded from the host path configured by `XACT_PLUGIN_DIR`:
 ${XACT_PLUGIN_DIR:-./plugins}:/opt/xact/plugins
 ```
 
-XACT creates the standard plugin category subdirectories there on first start. Put custom plugin files under those subdirectories and restart `xact` if needed.
+When left as `./plugins`, the path is beside `docker-compose.yml` in the extracted Docker deployment package. XACT creates the standard plugin category subdirectories there on first start. Put custom plugin files under those subdirectories and restart `xact` if needed.
 
 ## Building Locally
 

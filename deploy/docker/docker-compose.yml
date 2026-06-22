@@ -9,7 +9,7 @@ services:
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - postgres-data:/home/postgres/pgdata
+      - ${POSTGRES_DATA_DIR:-./postgres-data}:/home/postgres/pgdata
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-xact} -d $${POSTGRES_DB:-xact}"]
       interval: 10s
@@ -97,7 +97,6 @@ services:
       - caddy-config:/config
 
 volumes:
-  postgres-data:
   xact-nats:
   xact-logs:
   caddy-data:
