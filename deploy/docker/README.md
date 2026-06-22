@@ -22,7 +22,7 @@ PostgreSQL data is stored in the host directory configured by `POSTGRES_DATA_DIR
    tar -xzf xact-docker-<arch>-<version>.tar.gz
    ```
 
-   The package contains `.env.example` and `docker-compose.yml`.
+   Extract the package as the user who will run Docker Compose, not with `sudo`. The package contains `.env.example`, `docker-compose.yml`, and the writable `plugins/` and `postgres-data/` host directories.
 
 2. Copy the example environment file:
 

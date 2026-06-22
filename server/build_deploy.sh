@@ -524,9 +524,19 @@ create_docker_deploy_package() {
         }
     ' "$ENV_SRC" > "$PACKAGE_ROOT/.env.example"
     cp "$COMPOSE_SRC" "$PACKAGE_ROOT/docker-compose.yml"
+    mkdir -p \
+        "$PACKAGE_ROOT/plugins/authentication" \
+        "$PACKAGE_ROOT/plugins/widgets" \
+        "$PACKAGE_ROOT/plugins/map-layer" \
+        "$PACKAGE_ROOT/plugins/themes" \
+        "$PACKAGE_ROOT/postgres-data"
 
     rm -f "$ARCHIVE"
-    tar -czf "$ARCHIVE" -C "$PACKAGE_ROOT" .env.example docker-compose.yml
+    tar -czf "$ARCHIVE" -C "$PACKAGE_ROOT" \
+        .env.example \
+        docker-compose.yml \
+        plugins \
+        postgres-data
     DOCKER_DEPLOY_ARCHIVE="$ARCHIVE"
     echo -e "${GREEN}Created xact-docker-$ARCH-$VERSION.tar.gz${NC}"
 }

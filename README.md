@@ -102,6 +102,8 @@ cd ~/xact
 tar -xzf xact-docker-<arch>-<version>.tar.gz
 ```
 
+Extract the package as the user who will run Docker Compose, not with `sudo`, so the writable `plugins/` and `postgres-data/` directories are owned by that user.
+
 ```sh
 cp .env.example .env
 ```
