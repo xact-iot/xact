@@ -188,9 +188,15 @@ func DeserializeTree(config *TreeConfig, treeOps *tree.TreeWithOperations) error
 		}
 	}
 
+	deviceTemplates := map[string]string{}
+	for _, nc := range config.Nodes {
+		if nc.Type == string(tree.NodeTypeDevice) && nc.TemplateName != "" {
+			deviceTemplates[normalizeConfigPath(nc.Path)] = normalizeTemplateName(nc.TemplateName)
+		}
+	}
+
 	// Second pass: re-establish template pointers for template-linked leaves.
 	// All nodes and leaves are in the tree by now, so template lookup is safe.
-	// Device structure is fixed: org/deviceType/device/tagGroup.../tag
 	// TemplateName uses dot notation relative to org (e.g. "Templates.VMS").
 	for _, nc := range config.Nodes {
 		for _, lc := range nc.Children {
@@ -202,19 +208,11 @@ func DeserializeTree(config *TreeConfig, treeOps *tree.TreeWithOperations) error
 			if err != nil {
 				continue
 			}
-			// Compute template leaf path.
-			// nc.Path = "/org/deviceType/device/tagGroupPath" (pre-order, starts with sep)
-			// Strip leading sep and split to extract org and the device-relative suffix.
-			ncPath := strings.TrimPrefix(nc.Path, sep)
-			parts := strings.Split(ncPath, sep)
-			if len(parts) < 3 {
-				continue // not deep enough to be a device-level leaf
+			tmplLeafPath, ok := templateLeafPathForLinkedLeaf(leafPath, lc.TemplateName, deviceTemplates)
+			if !ok {
+				log.Printf("persistence: template device ancestor not found for %s using template %s", leafPath, lc.TemplateName)
+				continue
 			}
-			org := parts[0]
-			deviceRelParts := append(parts[3:], lc.Name)
-			deviceRelSuffix := strings.Join(deviceRelParts, sep)
-			templateBase := strings.ReplaceAll(lc.TemplateName, ".", sep)
-			tmplLeafPath := org + sep + templateBase + sep + deviceRelSuffix
 
 			tmplLeaf, err := treeOps.FindLeaf(tmplLeafPath)
 			if err != nil {
@@ -231,6 +229,47 @@ func DeserializeTree(config *TreeConfig, treeOps *tree.TreeWithOperations) error
 	}
 
 	return nil
+}
+
+func normalizeConfigPath(path string) string {
+	return strings.Trim(strings.ReplaceAll(path, "/", sep), sep)
+}
+
+func normalizeTemplateName(name string) string {
+	return strings.Trim(strings.ReplaceAll(name, "/", sep), sep)
+}
+
+func templateLeafPathForLinkedLeaf(leafPath, templateName string, deviceTemplates map[string]string) (string, bool) {
+	leafPath = normalizeConfigPath(leafPath)
+	templateName = normalizeTemplateName(templateName)
+	if leafPath == "" || templateName == "" {
+		return "", false
+	}
+
+	var devicePath string
+	for path, tmpl := range deviceTemplates {
+		if tmpl != templateName {
+			continue
+		}
+		if leafPath == path || strings.HasPrefix(leafPath, path+sep) {
+			if len(path) > len(devicePath) {
+				devicePath = path
+			}
+		}
+	}
+	if devicePath == "" {
+		return "", false
+	}
+
+	parts := strings.Split(devicePath, sep)
+	if len(parts) == 0 {
+		return "", false
+	}
+	suffix := strings.TrimPrefix(leafPath, devicePath+sep)
+	if suffix == "" {
+		return "", false
+	}
+	return parts[0] + sep + templateName + sep + suffix, true
 }
 
 func parseScalarType(s string) tree.ScalarType {

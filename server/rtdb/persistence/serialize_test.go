@@ -131,3 +131,40 @@ func TestSerializeEmptyTree(t *testing.T) {
 		t.Errorf("expected 0 nodes for empty tree, got %d", len(config.Nodes))
 	}
 }
+
+func TestDeserializeTemplateLinkedLeafWithZoneDevicePath(t *testing.T) {
+	config := &TreeConfig{Nodes: []NodeConfig{
+		{Path: ".default", Type: string(tree.NodeTypeOrganisation)},
+		{Path: ".default.Templates"},
+		{Path: ".default.Templates.AirQualityStandard"},
+		{Path: ".default.Templates.AirQualityStandard.env", Children: []LeafConfig{
+			{Name: "pressure", Type: "float", Description: "Template pressure"},
+		}},
+		{Path: ".default.LA_LongBeach"},
+		{Path: ".default.LA_LongBeach.AirQuality"},
+		{Path: ".default.LA_LongBeach.AirQuality.AQ-S-0002", Type: string(tree.NodeTypeDevice), TemplateName: "Templates.AirQualityStandard"},
+		{Path: ".default.LA_LongBeach.AirQuality.AQ-S-0002.env", Children: []LeafConfig{
+			{Name: "pressure", Type: "float", TemplateName: "Templates.AirQualityStandard"},
+		}},
+	}}
+
+	treeOps := tree.NewTreeWithOperations(nil)
+	if err := DeserializeTree(config, treeOps); err != nil {
+		t.Fatalf("DeserializeTree: %v", err)
+	}
+
+	tmplLeaf, err := treeOps.FindLeaf("default.Templates.AirQualityStandard.env.pressure")
+	if err != nil {
+		t.Fatalf("template leaf: %v", err)
+	}
+	deviceLeaf, err := treeOps.FindLeaf("default.LA_LongBeach.AirQuality.AQ-S-0002.env.pressure")
+	if err != nil {
+		t.Fatalf("device leaf: %v", err)
+	}
+	if deviceLeaf.GetTemplate() != tmplLeaf {
+		t.Fatalf("device leaf template pointer was not restored")
+	}
+	if deviceLeaf.GetDescription() != "Template pressure" {
+		t.Fatalf("device leaf description = %q, want inherited template description", deviceLeaf.GetDescription())
+	}
+}

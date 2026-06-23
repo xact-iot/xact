@@ -64,6 +64,58 @@ func NewPostgresDB(ctx context.Context, connString string) (sqldb.DB, error) {
 // Migrate creates tables if they don't exist. Safe to call on every startup.
 func (db *PostgresDB) Migrate(ctx context.Context) error {
 	migration := `
+		CREATE OR REPLACE FUNCTION public.xact_jsonb_or_default(value TEXT, fallback JSONB)
+		RETURNS JSONB
+		LANGUAGE plpgsql
+		AS $xact$
+		BEGIN
+			IF value IS NULL OR btrim(value) = '' THEN
+				RETURN fallback;
+			END IF;
+			RETURN value::jsonb;
+		EXCEPTION WHEN OTHERS THEN
+			RETURN fallback;
+		END;
+		$xact$;
+
+		CREATE OR REPLACE FUNCTION public.xact_timestamptz_or_default(value TEXT, fallback TIMESTAMPTZ)
+		RETURNS TIMESTAMPTZ
+		LANGUAGE plpgsql
+		AS $xact$
+		BEGIN
+			IF value IS NULL OR btrim(value) = '' THEN
+				RETURN fallback;
+			END IF;
+			IF value ~ '^\d+(\.\d+)?$' THEN
+				RETURN to_timestamp(value::double precision);
+			END IF;
+			RETURN value::timestamptz;
+		EXCEPTION WHEN OTHERS THEN
+			RETURN fallback;
+		END;
+		$xact$;
+
+		CREATE OR REPLACE PROCEDURE public.xact_convert_timestamptz_column(target_table TEXT, target_column TEXT, fallback TIMESTAMPTZ)
+		LANGUAGE plpgsql
+		AS $xact$
+		DECLARE column_type TEXT;
+		BEGIN
+			SELECT data_type INTO column_type
+			FROM information_schema.columns
+			WHERE table_schema = 'public'
+			  AND table_name = target_table
+			  AND column_name = target_column;
+			IF column_type IS NOT NULL
+			   AND column_type NOT IN ('timestamp with time zone', 'timestamp without time zone') THEN
+				EXECUTE format('ALTER TABLE %I ALTER COLUMN %I DROP DEFAULT', target_table, target_column);
+				EXECUTE format(
+					'ALTER TABLE %I ALTER COLUMN %I TYPE TIMESTAMPTZ USING public.xact_timestamptz_or_default(%I::text, %L::timestamptz)',
+					target_table, target_column, target_column, fallback
+				);
+			END IF;
+		END;
+		$xact$;
+
 		CREATE TABLE IF NOT EXISTS organisations (
 			id   SERIAL PRIMARY KEY,
 			name TEXT NOT NULL UNIQUE
@@ -76,6 +128,27 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		ALTER TABLE organisations ADD COLUMN IF NOT EXISTS favicon      TEXT DEFAULT '';
 		ALTER TABLE organisations ADD COLUMN IF NOT EXISTS active       BOOLEAN DEFAULT TRUE;
 		ALTER TABLE organisations ADD COLUMN IF NOT EXISTS display_name TEXT DEFAULT '';
+		ALTER TABLE organisations ALTER COLUMN logo DROP NOT NULL;
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'organisations'
+				  AND column_name = 'active'
+				  AND data_type <> 'boolean'
+			) THEN
+				ALTER TABLE organisations ALTER COLUMN active DROP DEFAULT;
+				ALTER TABLE organisations ALTER COLUMN active TYPE BOOLEAN
+					USING CASE
+						WHEN active IS NULL THEN NULL
+						WHEN lower(active::text) IN ('1', 'true', 't', 'yes', 'y', 'on') THEN TRUE
+						WHEN lower(active::text) IN ('0', 'false', 'f', 'no', 'n', 'off') THEN FALSE
+						ELSE TRUE
+					END;
+			END IF;
+		END $$;
 		ALTER TABLE organisations ALTER COLUMN logo_data SET DEFAULT '';
 		ALTER TABLE organisations ALTER COLUMN favicon SET DEFAULT '';
 		ALTER TABLE organisations ALTER COLUMN active SET DEFAULT TRUE;
@@ -121,10 +194,32 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		ALTER TABLE dashboards DROP COLUMN IF EXISTS panel_tag;
 		ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS permission TEXT NOT NULL DEFAULT '';
 		ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS is_category BOOLEAN NOT NULL DEFAULT FALSE;
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'dashboards'
+				  AND column_name = 'is_category'
+				  AND data_type <> 'boolean'
+			) THEN
+				ALTER TABLE dashboards ALTER COLUMN is_category DROP DEFAULT;
+				ALTER TABLE dashboards ALTER COLUMN is_category TYPE BOOLEAN
+					USING CASE
+						WHEN is_category IS NULL THEN NULL
+						WHEN lower(is_category::text) IN ('1', 'true', 't', 'yes', 'y', 'on') THEN TRUE
+						WHEN lower(is_category::text) IN ('0', 'false', 'f', 'no', 'n', 'off') THEN FALSE
+						ELSE FALSE
+					END;
+			END IF;
+		END $$;
 
 		DROP INDEX IF EXISTS idx_panels_org_name;
 		DROP INDEX IF EXISTS idx_dashboards_org_name;
 		CREATE INDEX IF NOT EXISTS idx_dashboards_org_name ON dashboards(org_id, name);
+		CALL public.xact_convert_timestamptz_column('dashboards', 'created_at', NOW());
+		CALL public.xact_convert_timestamptz_column('dashboards', 'updated_at', NOW());
 		ALTER TABLE dashboards ALTER COLUMN description SET DEFAULT '';
 		ALTER TABLE dashboards ALTER COLUMN icon SET DEFAULT '';
 		ALTER TABLE dashboards ALTER COLUMN variation SET DEFAULT '';
@@ -145,6 +240,21 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		UPDATE dashboards SET widgets = '[]' WHERE widgets IS NULL;
 		UPDATE dashboards SET created_at = NOW() WHERE created_at IS NULL;
 		UPDATE dashboards SET updated_at = NOW() WHERE updated_at IS NULL;
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'dashboards'
+				  AND column_name = 'widgets'
+				  AND data_type <> 'jsonb'
+			) THEN
+				ALTER TABLE dashboards ALTER COLUMN widgets DROP DEFAULT;
+				ALTER TABLE dashboards ALTER COLUMN widgets TYPE JSONB
+					USING public.xact_jsonb_or_default(widgets::text, '[]'::jsonb);
+			END IF;
+		END $$;
 
 		-- Roles table (must exist before permissions FK)
 		CREATE TABLE IF NOT EXISTS roles (
@@ -176,6 +286,35 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE(org_id, role)
 		);
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'permissions'
+				  AND column_name = 'ui'
+				  AND data_type <> 'jsonb'
+			) THEN
+				ALTER TABLE permissions ALTER COLUMN ui DROP DEFAULT;
+				ALTER TABLE permissions ALTER COLUMN ui TYPE JSONB
+					USING public.xact_jsonb_or_default(ui::text, '{}'::jsonb);
+			END IF;
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'permissions'
+				  AND column_name = 'server'
+				  AND data_type <> 'jsonb'
+			) THEN
+				ALTER TABLE permissions ALTER COLUMN server DROP DEFAULT;
+				ALTER TABLE permissions ALTER COLUMN server TYPE JSONB
+					USING public.xact_jsonb_or_default(server::text, '{}'::jsonb);
+			END IF;
+		END $$;
+		CALL public.xact_convert_timestamptz_column('permissions', 'created_at', NOW());
+		CALL public.xact_convert_timestamptz_column('permissions', 'updated_at', NOW());
 		ALTER TABLE permissions ALTER COLUMN ui SET DEFAULT '{}';
 		ALTER TABLE permissions ALTER COLUMN server SET DEFAULT '{}';
 		ALTER TABLE permissions ALTER COLUMN created_at SET DEFAULT NOW();
@@ -201,6 +340,23 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE(org_id, config_name, version)
 		);
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'system_config'
+				  AND column_name = 'config'
+				  AND data_type <> 'jsonb'
+			) THEN
+				ALTER TABLE system_config ALTER COLUMN config DROP DEFAULT;
+				ALTER TABLE system_config ALTER COLUMN config TYPE JSONB
+					USING public.xact_jsonb_or_default(config::text, '{}'::jsonb);
+			END IF;
+		END $$;
+		CALL public.xact_convert_timestamptz_column('system_config', 'created_at', NOW());
+		CALL public.xact_convert_timestamptz_column('system_config', 'updated_at', NOW());
 		ALTER TABLE system_config ALTER COLUMN version SET DEFAULT 1;
 		ALTER TABLE system_config ALTER COLUMN config SET DEFAULT '{}';
 		ALTER TABLE system_config ALTER COLUMN created_at SET DEFAULT NOW();
@@ -232,6 +388,44 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
 		ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 1;
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'users'
+				  AND column_name = 'notification_options'
+				  AND data_type <> 'jsonb'
+			) THEN
+				ALTER TABLE users ALTER COLUMN notification_options DROP DEFAULT;
+				ALTER TABLE users ALTER COLUMN notification_options TYPE JSONB
+					USING public.xact_jsonb_or_default(notification_options::text, '{}'::jsonb);
+			END IF;
+		END $$;
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'users'
+				  AND column_name = 'active'
+				  AND data_type <> 'boolean'
+			) THEN
+				ALTER TABLE users ALTER COLUMN active DROP DEFAULT;
+				ALTER TABLE users ALTER COLUMN active TYPE BOOLEAN
+					USING CASE
+						WHEN active IS NULL THEN NULL
+						WHEN lower(active::text) IN ('1', 'true', 't', 'yes', 'y', 'on') THEN TRUE
+						WHEN lower(active::text) IN ('0', 'false', 'f', 'no', 'n', 'off') THEN FALSE
+						ELSE TRUE
+					END;
+			END IF;
+		END $$;
+		CALL public.xact_convert_timestamptz_column('users', 'last_login', NULL::timestamptz);
+		CALL public.xact_convert_timestamptz_column('users', 'created_at', NOW());
+		CALL public.xact_convert_timestamptz_column('users', 'updated_at', NOW());
 		ALTER TABLE users ALTER COLUMN first_name SET DEFAULT '';
 		ALTER TABLE users ALTER COLUMN last_name SET DEFAULT '';
 		ALTER TABLE users ALTER COLUMN notification_options SET DEFAULT '{}';
@@ -267,6 +461,40 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			params          JSONB,
 			PRIMARY KEY (id, timestamp)
 		);
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'events'
+				  AND column_name = 'timestamp'
+				  AND data_type NOT IN ('timestamp with time zone', 'timestamp without time zone')
+			) THEN
+				ALTER TABLE events ALTER COLUMN timestamp TYPE TIMESTAMPTZ
+					USING CASE
+						WHEN timestamp IS NULL THEN NULL
+						WHEN timestamp::text ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}' THEN timestamp::text::timestamptz
+						WHEN timestamp::text ~ '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' THEN timestamp::text::timestamptz
+						WHEN timestamp::text ~ '^\d+(\.\d+)?$' THEN to_timestamp(timestamp::text::double precision)
+						ELSE NOW()
+					END;
+			END IF;
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'events'
+				  AND column_name = 'params'
+				  AND data_type <> 'jsonb'
+			) THEN
+				ALTER TABLE events ALTER COLUMN params TYPE JSONB
+					USING CASE
+						WHEN params IS NULL THEN NULL
+						ELSE public.xact_jsonb_or_default(params::text, NULL::jsonb)
+					END;
+			END IF;
+		END $$;
 
 		-- TimescaleDB hypertable (if extension available)
 		DO $$ BEGIN
@@ -278,6 +506,8 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 					PERFORM create_hypertable('events', 'timestamp', migrate_data => TRUE);
 				END IF;
 			END IF;
+		EXCEPTION WHEN OTHERS THEN
+			RAISE NOTICE 'events hypertable migration skipped: %', SQLERRM;
 		END $$;
 
 		CREATE INDEX IF NOT EXISTS idx_events_severity ON events (severity, timestamp DESC);
@@ -556,6 +786,7 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		ALTER TABLE org_api_keys ADD COLUMN IF NOT EXISTS key_hash TEXT;
 		ALTER TABLE org_api_keys ADD COLUMN IF NOT EXISTS key_prefix TEXT NOT NULL DEFAULT '';
 		ALTER TABLE org_api_keys ADD COLUMN IF NOT EXISTS key_last4 TEXT NOT NULL DEFAULT '';
+		CALL public.xact_convert_timestamptz_column('org_api_keys', 'created_at', NOW());
 		ALTER TABLE org_api_keys ALTER COLUMN key_prefix SET DEFAULT '';
 		ALTER TABLE org_api_keys ALTER COLUMN key_last4 SET DEFAULT '';
 		ALTER TABLE org_api_keys ALTER COLUMN created_at SET DEFAULT NOW();
@@ -593,6 +824,24 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		ALTER TABLE org_agent_tokens ADD COLUMN IF NOT EXISTS roles JSONB NOT NULL DEFAULT '[]';
 		ALTER TABLE org_agent_tokens ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 		ALTER TABLE org_agent_tokens ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ;
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'org_agent_tokens'
+				  AND column_name = 'roles'
+				  AND data_type <> 'jsonb'
+			) THEN
+				ALTER TABLE org_agent_tokens ALTER COLUMN roles DROP DEFAULT;
+				ALTER TABLE org_agent_tokens ALTER COLUMN roles TYPE JSONB
+					USING public.xact_jsonb_or_default(roles::text, '[]'::jsonb);
+			END IF;
+		END $$;
+		CALL public.xact_convert_timestamptz_column('org_agent_tokens', 'created_at', NOW());
+		CALL public.xact_convert_timestamptz_column('org_agent_tokens', 'expires_at', NULL::timestamptz);
+		CALL public.xact_convert_timestamptz_column('org_agent_tokens', 'last_used_at', NULL::timestamptz);
 		ALTER TABLE org_agent_tokens ALTER COLUMN token_prefix SET DEFAULT '';
 		ALTER TABLE org_agent_tokens ALTER COLUMN token_last4 SET DEFAULT '';
 		ALTER TABLE org_agent_tokens ALTER COLUMN roles SET DEFAULT '[]';
@@ -622,9 +871,58 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE(org_name, name)
 		);
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'notification_profiles'
+				  AND column_name = 'roles'
+				  AND data_type <> 'jsonb'
+			) THEN
+				ALTER TABLE notification_profiles ALTER COLUMN roles DROP DEFAULT;
+				ALTER TABLE notification_profiles ALTER COLUMN roles TYPE JSONB
+					USING public.xact_jsonb_or_default(roles::text, '[]'::jsonb);
+			END IF;
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'notification_profiles'
+				  AND column_name = 'users'
+				  AND data_type <> 'jsonb'
+			) THEN
+				ALTER TABLE notification_profiles ALTER COLUMN users DROP DEFAULT;
+				ALTER TABLE notification_profiles ALTER COLUMN users TYPE JSONB
+					USING public.xact_jsonb_or_default(users::text, '[]'::jsonb);
+			END IF;
+		END $$;
 		ALTER TABLE notification_profiles ALTER COLUMN description SET DEFAULT '';
 		ALTER TABLE notification_profiles ALTER COLUMN roles SET DEFAULT '[]';
 		ALTER TABLE notification_profiles ALTER COLUMN users SET DEFAULT '[]';
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'notification_profiles'
+				  AND column_name = 'ack_required'
+				  AND data_type <> 'boolean'
+			) THEN
+				ALTER TABLE notification_profiles ALTER COLUMN ack_required DROP DEFAULT;
+				ALTER TABLE notification_profiles ALTER COLUMN ack_required TYPE BOOLEAN
+					USING CASE
+						WHEN ack_required IS NULL THEN NULL
+						WHEN lower(ack_required::text) IN ('1', 'true', 't', 'yes', 'y', 'on') THEN TRUE
+						WHEN lower(ack_required::text) IN ('0', 'false', 'f', 'no', 'n', 'off') THEN FALSE
+						ELSE FALSE
+					END;
+			END IF;
+		END $$;
+		CALL public.xact_convert_timestamptz_column('notification_profiles', 'created_at', NOW());
+		CALL public.xact_convert_timestamptz_column('notification_profiles', 'updated_at', NOW());
 		ALTER TABLE notification_profiles ALTER COLUMN ack_required SET DEFAULT FALSE;
 		ALTER TABLE notification_profiles ALTER COLUMN created_at SET DEFAULT NOW();
 		ALTER TABLE notification_profiles ALTER COLUMN updated_at SET DEFAULT NOW();
@@ -699,6 +997,35 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE(org_name, name)
 		);
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'pdf_templates'
+				  AND column_name = 'template_json'
+				  AND data_type <> 'jsonb'
+			) THEN
+				ALTER TABLE pdf_templates ALTER COLUMN template_json DROP DEFAULT;
+				ALTER TABLE pdf_templates ALTER COLUMN template_json TYPE JSONB
+					USING public.xact_jsonb_or_default(template_json::text, '{}'::jsonb);
+			END IF;
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'pdf_templates'
+				  AND column_name = 'variables'
+				  AND data_type <> 'jsonb'
+			) THEN
+				ALTER TABLE pdf_templates ALTER COLUMN variables DROP DEFAULT;
+				ALTER TABLE pdf_templates ALTER COLUMN variables TYPE JSONB
+					USING public.xact_jsonb_or_default(variables::text, '[]'::jsonb);
+			END IF;
+		END $$;
+		CALL public.xact_convert_timestamptz_column('pdf_templates', 'created_at', NOW());
+		CALL public.xact_convert_timestamptz_column('pdf_templates', 'updated_at', NOW());
 		ALTER TABLE pdf_templates ALTER COLUMN description SET DEFAULT '';
 		ALTER TABLE pdf_templates ALTER COLUMN template_json SET DEFAULT '{}';
 		ALTER TABLE pdf_templates ALTER COLUMN variables SET DEFAULT '[]';
@@ -730,6 +1057,28 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		);
 		ALTER TABLE tag_calcs ALTER COLUMN description SET DEFAULT '';
 		ALTER TABLE tag_calcs ALTER COLUMN interval_seconds SET DEFAULT 60;
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'tag_calcs'
+				  AND column_name = 'enabled'
+				  AND data_type <> 'boolean'
+			) THEN
+				ALTER TABLE tag_calcs ALTER COLUMN enabled DROP DEFAULT;
+				ALTER TABLE tag_calcs ALTER COLUMN enabled TYPE BOOLEAN
+					USING CASE
+						WHEN enabled IS NULL THEN NULL
+						WHEN lower(enabled::text) IN ('1', 'true', 't', 'yes', 'y', 'on') THEN TRUE
+						WHEN lower(enabled::text) IN ('0', 'false', 'f', 'no', 'n', 'off') THEN FALSE
+						ELSE TRUE
+					END;
+			END IF;
+		END $$;
+		CALL public.xact_convert_timestamptz_column('tag_calcs', 'created_at', NOW());
+		CALL public.xact_convert_timestamptz_column('tag_calcs', 'updated_at', NOW());
 		ALTER TABLE tag_calcs ALTER COLUMN enabled SET DEFAULT TRUE;
 		ALTER TABLE tag_calcs ALTER COLUMN created_at SET DEFAULT NOW();
 		ALTER TABLE tag_calcs ALTER COLUMN updated_at SET DEFAULT NOW();
@@ -760,23 +1109,48 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 	}
 
 	metricsMigration := `
+		CREATE SEQUENCE IF NOT EXISTS xact_metric_devices_id_seq;
+		CREATE SEQUENCE IF NOT EXISTS xact_metric_definitions_id_seq;
+
 		CREATE TABLE IF NOT EXISTS metric_devices (
-			id      INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+			id      INTEGER PRIMARY KEY DEFAULT nextval('xact_metric_devices_id_seq'),
 			org_id  INTEGER NOT NULL REFERENCES organisations(id),
-			name    TEXT NOT NULL,
-			UNIQUE (org_id, name)
+			name    TEXT NOT NULL
 		);
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_devices_org_name_unique
-			ON metric_devices(org_id, name);
+		ALTER TABLE metric_devices ALTER COLUMN id SET DEFAULT nextval('xact_metric_devices_id_seq');
+		DO $$
+		DECLARE max_id BIGINT;
+		BEGIN
+			SELECT COALESCE(MAX(id), 0) INTO max_id FROM metric_devices;
+			PERFORM setval('xact_metric_devices_id_seq', max_id + 1, false);
+		END $$;
+		DO $$
+		BEGIN
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_devices_org_name_unique
+				ON metric_devices(org_id, name);
+		EXCEPTION WHEN duplicate_table OR unique_violation THEN
+			RAISE NOTICE 'metric_devices unique index already exists or conflicts: %', SQLERRM;
+		END $$;
 
 		CREATE TABLE IF NOT EXISTS metric_definitions (
-			id        INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+			id        INTEGER PRIMARY KEY DEFAULT nextval('xact_metric_definitions_id_seq'),
 			device_id INTEGER NOT NULL REFERENCES metric_devices(id),
-			name      TEXT NOT NULL,
-			UNIQUE (device_id, name)
+			name      TEXT NOT NULL
 		);
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_definitions_device_name_unique
-			ON metric_definitions(device_id, name);
+		ALTER TABLE metric_definitions ALTER COLUMN id SET DEFAULT nextval('xact_metric_definitions_id_seq');
+		DO $$
+		DECLARE max_id BIGINT;
+		BEGIN
+			SELECT COALESCE(MAX(id), 0) INTO max_id FROM metric_definitions;
+			PERFORM setval('xact_metric_definitions_id_seq', max_id + 1, false);
+		END $$;
+		DO $$
+		BEGIN
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_metric_definitions_device_name_unique
+				ON metric_definitions(device_id, name);
+		EXCEPTION WHEN duplicate_table OR unique_violation THEN
+			RAISE NOTICE 'metric_definitions unique index already exists or conflicts: %', SQLERRM;
+		END $$;
 
 		CREATE TABLE IF NOT EXISTS device_metrics (
 			time      TIMESTAMPTZ NOT NULL,
@@ -786,8 +1160,34 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			value     REAL NOT NULL
 		);
 
-		CREATE INDEX IF NOT EXISTS idx_device_metrics_lookup
-			ON device_metrics (org_id, device_id, metric_id, time DESC);
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'device_metrics'
+				  AND column_name = 'time'
+				  AND data_type NOT IN ('timestamp with time zone', 'timestamp without time zone')
+			) THEN
+				ALTER TABLE device_metrics ALTER COLUMN time TYPE TIMESTAMPTZ
+					USING CASE
+						WHEN time IS NULL THEN NULL
+						WHEN time::text ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}' THEN time::text::timestamptz
+						WHEN time::text ~ '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' THEN time::text::timestamptz
+						WHEN time::text ~ '^\d+(\.\d+)?$' THEN to_timestamp(time::text::double precision)
+						ELSE NOW()
+					END;
+			END IF;
+		END $$;
+
+		DO $$
+		BEGIN
+			CREATE INDEX IF NOT EXISTS idx_device_metrics_lookup
+				ON device_metrics (org_id, device_id, metric_id, time DESC);
+		EXCEPTION WHEN duplicate_table OR unique_violation THEN
+			RAISE NOTICE 'device_metrics lookup index already exists or conflicts: %', SQLERRM;
+		END $$;
 
 		DO $$
 		BEGIN
@@ -813,6 +1213,8 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 					PERFORM add_compression_policy('device_metrics', INTERVAL '7 days');
 				END IF;
 			END IF;
+		EXCEPTION WHEN OTHERS THEN
+			RAISE NOTICE 'device_metrics hypertable migration skipped: %', SQLERRM;
 		END $$;
 	`
 
@@ -839,8 +1241,46 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		);
 		ALTER TABLE scheduled_tasks ALTER COLUMN id SET DEFAULT gen_random_uuid();
 		ALTER TABLE scheduled_tasks ALTER COLUMN description SET DEFAULT '';
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'scheduled_tasks'
+				  AND column_name = 'task_config'
+				  AND data_type <> 'jsonb'
+			) THEN
+				ALTER TABLE scheduled_tasks ALTER COLUMN task_config DROP DEFAULT;
+				ALTER TABLE scheduled_tasks ALTER COLUMN task_config TYPE JSONB
+					USING public.xact_jsonb_or_default(task_config::text, '{}'::jsonb);
+			END IF;
+		END $$;
 		ALTER TABLE scheduled_tasks ALTER COLUMN task_config SET DEFAULT '{}';
+		DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'scheduled_tasks'
+				  AND column_name = 'enabled'
+				  AND data_type <> 'boolean'
+			) THEN
+				ALTER TABLE scheduled_tasks ALTER COLUMN enabled DROP DEFAULT;
+				ALTER TABLE scheduled_tasks ALTER COLUMN enabled TYPE BOOLEAN
+					USING CASE
+						WHEN enabled IS NULL THEN NULL
+						WHEN lower(enabled::text) IN ('1', 'true', 't', 'yes', 'y', 'on') THEN TRUE
+						WHEN lower(enabled::text) IN ('0', 'false', 'f', 'no', 'n', 'off') THEN FALSE
+						ELSE TRUE
+					END;
+			END IF;
+		END $$;
 		ALTER TABLE scheduled_tasks ALTER COLUMN enabled SET DEFAULT TRUE;
+		CALL public.xact_convert_timestamptz_column('scheduled_tasks', 'last_run_at', NULL::timestamptz);
+		CALL public.xact_convert_timestamptz_column('scheduled_tasks', 'created_at', NOW());
+		CALL public.xact_convert_timestamptz_column('scheduled_tasks', 'updated_at', NOW());
 		ALTER TABLE scheduled_tasks ALTER COLUMN last_run_status SET DEFAULT '';
 		ALTER TABLE scheduled_tasks ALTER COLUMN last_run_message SET DEFAULT '';
 		ALTER TABLE scheduled_tasks ALTER COLUMN created_at SET DEFAULT NOW();
@@ -872,6 +1312,8 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			message      TEXT NOT NULL DEFAULT '',
 			output_path  TEXT NOT NULL DEFAULT ''
 		);
+		CALL public.xact_convert_timestamptz_column('schedule_run_log', 'fired_at', NOW());
+		CALL public.xact_convert_timestamptz_column('schedule_run_log', 'completed_at', NULL::timestamptz);
 		ALTER TABLE schedule_run_log ALTER COLUMN status SET DEFAULT '';
 		ALTER TABLE schedule_run_log ALTER COLUMN message SET DEFAULT '';
 		ALTER TABLE schedule_run_log ALTER COLUMN output_path SET DEFAULT '';
