@@ -16,6 +16,7 @@ export interface WidgetTypeMeta {
 
 const registry: Map<string, WidgetTypeMeta> = new Map();
 const pendingLoads: Map<string, Promise<void>> = new Map();
+const widgetNameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 export function registerWidgetType(meta: WidgetTypeMeta): void {
   const existing = registry.get(meta.type);
@@ -46,7 +47,14 @@ export function getWidgetsByCategory(): Map<WidgetCategory, WidgetTypeMeta[]> {
     const list = byCategory.get(meta.category);
     if (list) list.push(meta);
   }
+  for (const widgets of byCategory.values()) {
+    widgets.sort(compareWidgetNames);
+  }
   return byCategory;
+}
+
+function compareWidgetNames(a: WidgetTypeMeta, b: WidgetTypeMeta): number {
+  return widgetNameCollator.compare(a.name, b.name) || a.type.localeCompare(b.type);
 }
 
 export async function ensureWidgetTypeLoaded(type: string): Promise<void> {

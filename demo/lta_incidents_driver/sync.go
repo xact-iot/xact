@@ -44,7 +44,7 @@ func NewDriverFromConfig(cfg Config) *Driver {
 		xactHTTPClient = cfg.HTTPClient
 	}
 	source := NewLTAClient(cfg.LTAAPIKey, cfg.LTABaseURL, ltaHTTPClient)
-	sink := NewXACTClient(cfg.XACTBaseURL, cfg.XACTAPIKey, cfg.XACTUsername, cfg.XACTPassword, xactHTTPClient)
+	sink := NewXACTClient(cfg.XACTBaseURL, cfg.XACTAPIKey, xactHTTPClient)
 	return NewDriver(cfg.Tenant, cfg.Zone, source, sink)
 }
 
@@ -65,12 +65,12 @@ func (d *Driver) PollOnce(ctx context.Context) error {
 	manageLifecycle := true
 	if err != nil {
 		fmt.Printf("Sink Existing incidents: %v\n", err)
-		if !errors.Is(err, ErrXACTLoginUnauthorized) {
+		if !errors.Is(err, ErrXACTManagementUnavailable) {
 			return err
 		}
 		manageLifecycle = false
 		existing = map[string]string{}
-		log.Printf("[LTA Incidents] XACT login failed; continuing in ingest-only mode. Set XACT_USERNAME/XACT_PASSWORD to enable incident cleanup and event logs.")
+		log.Printf("[LTA Incidents] Continuing in ingest-only mode; incident cleanup and event logs require dashboard API authentication and are disabled for demo API-key-only operation.")
 	}
 
 	seen := make(map[string]TrafficIncident, len(incidents))

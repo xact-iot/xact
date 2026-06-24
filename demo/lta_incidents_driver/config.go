@@ -14,8 +14,6 @@ type Config struct {
 	LTABaseURL   string
 	XACTBaseURL  string
 	XACTAPIKey   string
-	XACTUsername string
-	XACTPassword string
 	Tenant       string
 	Zone         string
 	PollInterval time.Duration
@@ -37,8 +35,6 @@ func ConfigFromEnv() Config {
 		LTABaseURL:   getenvDefault("LTA_BASE_URL", DefaultLTABaseURL),
 		XACTBaseURL:  getenvDefault("XACT_BASE_URL", DefaultXACTBaseURL),
 		XACTAPIKey:   os.Getenv("XACT_API_KEY"),
-		XACTUsername: getenvDefault("XACT_USERNAME", "admin"),
-		XACTPassword: getenvDefault("XACT_PASSWORD", "admin"),
 		Tenant:       getenvDefault("XACT_TENANT", DefaultTenant),
 		Zone:         getenvDefault("LTA_INCIDENTS_ZONE", DefaultZone),
 		PollInterval: pollInterval,

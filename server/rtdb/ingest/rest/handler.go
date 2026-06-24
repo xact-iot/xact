@@ -16,6 +16,7 @@ import (
 	natsgo "github.com/nats-io/nats.go"
 	"github.com/xact-iot/xact/openapischema"
 	"github.com/xact-iot/xact/rtdb/ingest"
+	"github.com/xact-iot/xact/rtdb/tree"
 	"github.com/xact-iot/xact/sqldb"
 )
 
@@ -29,14 +30,19 @@ import (
 type Handler struct {
 	nc          *natsgo.Conn
 	db          sqldb.DB
+	tree        *tree.TreeWithOperations
 	apiKeyCache *apiKeyCache
 	CurrentOrg  func(r *http.Request) string
 	Audit       func(r *http.Request, orgName, action string, params map[string]any)
 }
 
 // New creates a new ingest Handler.
-func New(nc *natsgo.Conn, db sqldb.DB) *Handler {
-	return &Handler{nc: nc, db: db, apiKeyCache: newAPIKeyCache(apiKeyCacheTTLFromEnv())}
+func New(nc *natsgo.Conn, db sqldb.DB, treeOps ...*tree.TreeWithOperations) *Handler {
+	var ops *tree.TreeWithOperations
+	if len(treeOps) > 0 {
+		ops = treeOps[0]
+	}
+	return &Handler{nc: nc, db: db, tree: ops, apiKeyCache: newAPIKeyCache(apiKeyCacheTTLFromEnv())}
 }
 
 func (h *Handler) HandleIngestWithSchema() openapischema.Handler {
@@ -58,6 +64,23 @@ func (h *Handler) HandleIngestWithZone(w http.ResponseWriter, r *http.Request) {
 	h.handleIngest(w, r, zone)
 }
 
+func (h *Handler) HandleDeleteDeviceWithSchema() openapischema.Handler {
+	return deleteSchemaHandler(h.HandleDeleteDevice)
+}
+
+func (h *Handler) HandleDeleteDevice(w http.ResponseWriter, r *http.Request) {
+	h.handleDeleteDevice(w, r, "")
+}
+
+func (h *Handler) HandleDeleteDeviceWithZoneWithSchema() openapischema.Handler {
+	return deleteSchemaHandler(h.HandleDeleteDeviceWithZone)
+}
+
+func (h *Handler) HandleDeleteDeviceWithZone(w http.ResponseWriter, r *http.Request) {
+	zone := chi.URLParam(r, "zone")
+	h.handleDeleteDevice(w, r, zone)
+}
+
 func ingestSchemaHandler(handler http.HandlerFunc) openapischema.Handler {
 	return openapischema.Handler{
 		Handler: handler,
@@ -72,6 +95,14 @@ func ingestSchemaHandler(handler http.HandlerFunc) openapischema.Handler {
 				},
 			},
 		},
+		Responses: openapischema.ResponseSchemas(map[int]any{http.StatusNoContent: nil}),
+		Tags:      []string{"ingest"},
+	}
+}
+
+func deleteSchemaHandler(handler http.HandlerFunc) openapischema.Handler {
+	return openapischema.Handler{
+		Handler:   handler,
 		Responses: openapischema.ResponseSchemas(map[int]any{http.StatusNoContent: nil}),
 		Tags:      []string{"ingest"},
 	}
@@ -119,6 +150,34 @@ func (h *Handler) handleIngest(w http.ResponseWriter, r *http.Request, zone stri
 			return
 		}
 		http.Error(w, "failed to write data: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handleDeleteDevice(w http.ResponseWriter, r *http.Request, zone string) {
+	tenant := chi.URLParam(r, "tenant")
+	deviceType := chi.URLParam(r, "devicetype")
+	deviceName := chi.URLParam(r, "devicename")
+
+	if tenant == "" || deviceType == "" || deviceName == "" {
+		http.Error(w, "tenant, devicetype, and devicename are required", http.StatusBadRequest)
+		return
+	}
+
+	orgName, err := h.resolveAPIKey(r)
+	if err != nil || orgName == "" {
+		http.Error(w, "invalid or missing API key", http.StatusUnauthorized)
+		return
+	}
+	if orgName != tenant {
+		http.Error(w, "API key does not belong to the requested organisation", http.StatusForbidden)
+		return
+	}
+
+	if err := ingest.DeleteDevice(h.tree, tenant, zone, deviceType, deviceName); err != nil {
+		http.Error(w, "failed to delete device: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 

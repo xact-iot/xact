@@ -13,7 +13,7 @@ registerWidgetType({
   type: 'svg-diagram-widget',
   name: 'SVG Diagram',
   icon: 'SVG',
-  category: 'Custom',
+  category: 'General',
   defaultW: 16,
   defaultH: 18,
   minW: 8,

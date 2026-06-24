@@ -11,11 +11,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/xact-iot/xact/rtdb/tree"
 	"github.com/xact-iot/xact/sqldb"
 	"github.com/xact-iot/xact/sqldb/sqlite"
 )
 
-func newTestHandler(t *testing.T) (*Handler, sqldb.DB) {
+func newTestHandler(t *testing.T) (*Handler, sqldb.DB, *tree.TreeWithOperations) {
 	t.Helper()
 	ctx := context.Background()
 	db, err := sqlite.NewSQLiteDB(ctx, filepath.Join(t.TempDir(), "xact.db"))
@@ -26,9 +27,10 @@ func newTestHandler(t *testing.T) (*Handler, sqldb.DB) {
 	if err := db.Migrate(ctx); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	h := New(nil, db)
+	treeOps := tree.NewTreeWithOperations(nil)
+	h := New(nil, db, treeOps)
 	h.CurrentOrg = func(*http.Request) string { return "default" }
-	return h, db
+	return h, db, treeOps
 }
 
 func requestWithParams(method, target string, body []byte, params map[string]string) *http.Request {
@@ -105,7 +107,7 @@ func TestMaskAPIKey(t *testing.T) {
 }
 
 func TestHandleIngestValidationAndAuth(t *testing.T) {
-	h, db := newTestHandler(t)
+	h, db, _ := newTestHandler(t)
 	key, err := db.CreateAPIKey(context.Background(), "default", "ingest")
 	if err != nil {
 		t.Fatalf("CreateAPIKey: %v", err)
@@ -168,7 +170,7 @@ func TestHandleIngestValidationAndAuth(t *testing.T) {
 }
 
 func TestHandleIngestWithZoneAndCachedAPIKey(t *testing.T) {
-	h, _ := newTestHandler(t)
+	h, _, _ := newTestHandler(t)
 	h.apiKeyCache.Set("cached-key", "default")
 	req := requestWithParams(http.MethodPost, "/ingest", []byte(`{"temp": 42}`), map[string]string{
 		"tenant": "default", "zone": "north", "devicetype": "pump", "devicename": "p1",
@@ -182,8 +184,106 @@ func TestHandleIngestWithZoneAndCachedAPIKey(t *testing.T) {
 	}
 }
 
+func TestHandleDeleteDeviceWithAPIKey(t *testing.T) {
+	h, db, treeOps := newTestHandler(t)
+	key, err := db.CreateAPIKey(context.Background(), "default", "ingest")
+	if err != nil {
+		t.Fatalf("CreateAPIKey: %v", err)
+	}
+	if err := treeOps.CreateNode("default/pump/p1", ""); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+
+	req := requestWithParams(http.MethodDelete, "/ingest", nil, map[string]string{
+		"tenant": "default", "devicetype": "pump", "devicename": "p1",
+	})
+	req.Header.Set("Authorization", "ApiKey "+key.Key)
+	rr := httptest.NewRecorder()
+
+	h.HandleDeleteDevice(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%q", rr.Code, http.StatusNoContent, rr.Body.String())
+	}
+	if _, err := treeOps.FindNode("default.pump.p1"); err == nil {
+		t.Fatal("device still exists after delete")
+	}
+}
+
+func TestHandleDeleteDeviceWithZoneAndCachedAPIKey(t *testing.T) {
+	h, _, treeOps := newTestHandler(t)
+	h.apiKeyCache.Set("cached-key", "default")
+	if err := treeOps.CreateNode("default/north/pump/p1", ""); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+
+	req := requestWithParams(http.MethodDelete, "/ingest", nil, map[string]string{
+		"tenant": "default", "zone": "north", "devicetype": "pump", "devicename": "p1",
+	})
+	req.Header.Set("Authorization", "ApiKey cached-key")
+	rr := httptest.NewRecorder()
+
+	h.HandleDeleteDeviceWithZone(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%q", rr.Code, http.StatusNoContent, rr.Body.String())
+	}
+	if _, err := treeOps.FindNode("default.north.pump.p1"); err == nil {
+		t.Fatal("zoned device still exists after delete")
+	}
+}
+
+func TestHandleDeleteDeviceValidationAndAuth(t *testing.T) {
+	h, db, _ := newTestHandler(t)
+	key, err := db.CreateAPIKey(context.Background(), "default", "ingest")
+	if err != nil {
+		t.Fatalf("CreateAPIKey: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		params     map[string]string
+		auth       string
+		wantStatus int
+	}{
+		{
+			name:       "missing route params",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "missing api key",
+			params:     map[string]string{"tenant": "default", "devicetype": "pump", "devicename": "p1"},
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "api key for different tenant",
+			params:     map[string]string{"tenant": "other", "devicetype": "pump", "devicename": "p1"},
+			auth:       "ApiKey " + key.Key,
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "missing device",
+			params:     map[string]string{"tenant": "default", "devicetype": "pump", "devicename": "p1"},
+			auth:       "ApiKey " + key.Key,
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := requestWithParams(http.MethodDelete, "/ingest", nil, tt.params)
+			if tt.auth != "" {
+				req.Header.Set("Authorization", tt.auth)
+			}
+			rr := httptest.NewRecorder()
+			h.HandleDeleteDevice(rr, req)
+			if rr.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%q", rr.Code, tt.wantStatus, rr.Body.String())
+			}
+		})
+	}
+}
+
 func TestAPIKeyManagementHandlers(t *testing.T) {
-	h, _ := newTestHandler(t)
+	h, _, _ := newTestHandler(t)
 	var audits []map[string]any
 	h.Audit = func(_ *http.Request, orgName, action string, params map[string]any) {
 		audits = append(audits, map[string]any{"org": orgName, "action": action, "params": params})
@@ -250,7 +350,7 @@ func TestAPIKeyManagementHandlers(t *testing.T) {
 }
 
 func TestAPIKeyHandlersRequireOrg(t *testing.T) {
-	h, _ := newTestHandler(t)
+	h, _, _ := newTestHandler(t)
 	h.CurrentOrg = func(*http.Request) string { return "" }
 	req := httptest.NewRequest(http.MethodGet, "/keys", nil)
 

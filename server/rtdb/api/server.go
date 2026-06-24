@@ -273,7 +273,7 @@ func NewServer(config ServerConfig, treeOps *tree.TreeWithOperations, treeSync *
 			}
 			return nil
 		})
-		s.ingestHandler = rest.New(nc, database)
+		s.ingestHandler = rest.New(nc, database, treeOps)
 		s.ingestHandler.CurrentOrg = currentOrgFromRequest
 		s.ingestHandler.Audit = func(r *http.Request, orgName, action string, params map[string]any) {
 			claims, _ := GetClaimsFromContext(r.Context())
@@ -358,6 +358,8 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 		if s.ingestHandler != nil {
 			api.Post("/api/v1/ingest/{tenant}/{devicetype}/{devicename}", s.ingestHandler.HandleIngestWithSchema())
 			api.Post("/api/v1/ingest/{tenant}/zone/{zone}/{devicetype}/{devicename}", s.ingestHandler.HandleIngestWithZoneWithSchema())
+			api.Delete("/api/v1/ingest/{tenant}/{devicetype}/{devicename}", s.ingestHandler.HandleDeleteDeviceWithSchema())
+			api.Delete("/api/v1/ingest/{tenant}/zone/{zone}/{devicetype}/{devicename}", s.ingestHandler.HandleDeleteDeviceWithZoneWithSchema())
 		}
 
 		// Static file serving (only when server serves files, not proxy/VITE)

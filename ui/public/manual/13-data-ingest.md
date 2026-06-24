@@ -525,9 +525,12 @@ The REST API supports both zoneless and zoned paths:
 ```
 POST /api/v1/ingest/{tenant}/{devicetype}/{devicename}
 POST /api/v1/ingest/{tenant}/zone/{zone}/{devicetype}/{devicename}
+DELETE /api/v1/ingest/{tenant}/{devicetype}/{devicename}
+DELETE /api/v1/ingest/{tenant}/zone/{zone}/{devicetype}/{devicename}
 ```
 
 The URL path segments mirror the MQTT topic structure. Zone is optional - omit it to use the simple path.
+Use `POST` to create or update a device's tags. Use `DELETE` to remove a device node and all of its child tags when the external source knows the device no longer exists.
 
 ### Authentication
 
@@ -541,7 +544,7 @@ API keys are created and managed in the **Organisations** widget. Each key is bo
 
 ### Request Body
 
-The JSON payload format is identical to the MQTT payload described above:
+`POST` requests use the same JSON payload format as the MQTT payload described above:
 
 ```json
 {
@@ -554,6 +557,8 @@ The JSON payload format is identical to the MQTT payload described above:
     }
 }
 ```
+
+`DELETE` requests do not use a request body.
 
 ### Example Request
 
@@ -590,9 +595,18 @@ curl -X POST \
   }'
 ```
 
+**Delete example:**
+
+```bash
+curl -X DELETE \
+  http://xact-server:8080/api/v1/ingest/acme/zone/building_a/HVAC/AHU01 \
+  -H "Authorization: ApiKey abc123def456"
+```
+
 ### Differences from MQTT
 
 - Authentication is via API key rather than MQTT credentials.
+- REST currently supports both device updates and device deletes. MQTT and NATS ingest currently support updates; device delete parity is planned.
 - REST is stateless - there is no persistent connection. Each request is independent.
 - REST requests are accepted only after XACT admits the event into the shared bounded ingest queue. If the queue is full, XACT returns `503 Service Unavailable`.
 - REST may be more suitable for low-frequency batch uploads, while MQTT is better for continuous real-time streaming.
@@ -829,21 +843,25 @@ Recommended pattern:
 ### REST Driver Specification
 
 ```
-Endpoint (zoneless): POST /api/v1/ingest/<organisation>/<device-type>/<device-name>
-Endpoint (zoned):    POST /api/v1/ingest/<organisation>/zone/<zone>/<device-type>/<device-name>
+Update endpoint (zoneless): POST /api/v1/ingest/<organisation>/<device-type>/<device-name>
+Update endpoint (zoned):    POST /api/v1/ingest/<organisation>/zone/<zone>/<device-type>/<device-name>
+Delete endpoint (zoneless): DELETE /api/v1/ingest/<organisation>/<device-type>/<device-name>
+Delete endpoint (zoned):    DELETE /api/v1/ingest/<organisation>/zone/<zone>/<device-type>/<device-name>
 
 Headers:
   - Authorization: ApiKey <key>
-  - Content-Type: application/json
+  - Content-Type: application/json (POST only)
 
-Body: Same JSON payload structure as MQTT (see above)
+Body:
+  - POST: Same JSON payload structure as MQTT (see above)
+  - DELETE: No body
 
 Response:
-  - 204 No Content: data accepted
+  - 204 No Content: data accepted or device deleted
   - 401 Unauthorized: invalid or missing API key
   - 403 Forbidden: API key belongs to a different organisation
-  - 400 Bad Request: malformed payload
-  - 503 Service Unavailable: ingest queue full
+  - 400 Bad Request: malformed payload or missing path parameters
+  - 503 Service Unavailable: ingest queue full (POST)
 
 Rate limiting:
   - No built-in rate limit, but respect server capacity

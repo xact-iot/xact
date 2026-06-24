@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-xact}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/docker/.env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-xact}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
@@ -24,7 +24,7 @@ services:
         condition: service_healthy
     environment:
       XACT_ENV: production
-      DATABASE_URL: postgres://${POSTGRES_USER:-xact}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/docker/.env}@postgres:5432/${POSTGRES_DB:-xact}?sslmode=disable
+      DATABASE_URL: postgres://${POSTGRES_USER:-xact}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-xact}?sslmode=disable
       STATIC_SERVE_MODE: server
       STATIC_DIR: /opt/xact/web
       PLUGIN_DIR: /opt/xact/plugins
@@ -37,16 +37,16 @@ services:
       NATS_WS_PATH: /xact/ws
       NATS_STORE_DIR: /var/lib/xact/nats-store
       NATS_LOG_FILE: /var/log/xact/nats.log
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in deploy/docker/.env}
-      NATS_INTERNAL_PASSWORD: ${NATS_INTERNAL_PASSWORD:?set NATS_INTERNAL_PASSWORD in deploy/docker/.env}
-      NATS_BROWSER_TOKEN: ${NATS_BROWSER_TOKEN:?set NATS_BROWSER_TOKEN in deploy/docker/.env}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      NATS_INTERNAL_PASSWORD: ${NATS_INTERNAL_PASSWORD:?set NATS_INTERNAL_PASSWORD in .env}
+      NATS_BROWSER_TOKEN: ${NATS_BROWSER_TOKEN:?set NATS_BROWSER_TOKEN in .env}
       EMBEDDED_MQTT_SERVER: ${EMBEDDED_MQTT_SERVER:-yes}
-      MQTT_URL: ${MQTT_URL:-mqtt://127.0.0.1:1883}
-      MQTT_PASSWORD: ${MQTT_PASSWORD:?set MQTT_PASSWORD in deploy/docker/.env}
+      MQTT_URL: ${MQTT_URL:mqtt://0.0.0.0:1883}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?set MQTT_PASSWORD in .env}
       MQTT_CLIENT_ENABLED: ${MQTT_CLIENT_ENABLED:-yes}
-      MQTT_CLIENT_URL: ${MQTT_CLIENT_URL:-mqtt://127.0.0.1:1883}
+      MQTT_CLIENT_URL: ${MQTT_CLIENT_URL:mqtt://127.0.0.1:1883}
       MQTT_CLIENT_USERNAME: ${MQTT_CLIENT_USERNAME:-xact}
-      MQTT_CLIENT_PASSWORD: ${MQTT_CLIENT_PASSWORD:?set MQTT_CLIENT_PASSWORD in deploy/docker/.env}
+      MQTT_CLIENT_PASSWORD: ${MQTT_CLIENT_PASSWORD:?set MQTT_CLIENT_PASSWORD in .env}
       METRICS_RETENTION_DAYS: ${METRICS_RETENTION_DAYS:-180}
       EVENT_RETENTION_DAYS: ${EVENT_RETENTION_DAYS:-0}
       ENABLE_UNSAFE_SCHEDULER_TASKS: ${ENABLE_UNSAFE_SCHEDULER_TASKS:-no}
@@ -57,8 +57,13 @@ services:
       - xact-logs:/var/log/xact
       - ${XACT_PLUGIN_DIR:-./plugins}:/opt/xact/plugins
     expose:
-      - "8080"
       - "9222"
+
+    ports:
+      - "8080:8080"
+      - "4222:4222"
+      - "1883:1883"
+
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/xact/health"]
       interval: 30s

@@ -10,7 +10,7 @@ import (
 // Configure via environment variables:
 //
 //	XACT_SERVER_URL   - default http://localhost:8080
-//	XACT_WATER_API_KEY - API key for the 'default' organisation
+//	XACT_API_KEY      - API key for the 'default' organisation
 func Start() {
 	serverURL := os.Getenv("XACT_SERVER_URL")
 	if serverURL == "" {
@@ -21,7 +21,6 @@ func Start() {
 	}
 	apiKey := os.Getenv("XACT_API_KEY")
 	client := NewClient(serverURL, apiKey)
-	client.SetCredentials(os.Getenv("XACT_USERNAME"), os.Getenv("XACT_PASSWORD"))
 	network := NewNetwork()
 	commands, err := startCommandListener(network)
 	if err != nil {

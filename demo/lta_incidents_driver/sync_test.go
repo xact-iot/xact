@@ -129,7 +129,7 @@ func TestPollOnceMatchesExistingIncidentByDeviceNameFallback(t *testing.T) {
 	}
 }
 
-func TestPollOnceContinuesInIngestOnlyModeWhenLoginUnauthorized(t *testing.T) {
+func TestPollOnceContinuesInIngestOnlyModeWhenManagementUnavailable(t *testing.T) {
 	active := TrafficIncident{
 		Type:      "Accident",
 		Latitude:  1.30398068448214,
@@ -137,7 +137,7 @@ func TestPollOnceContinuesInIngestOnlyModeWhenLoginUnauthorized(t *testing.T) {
 		Message:   "Accident on expressway",
 	}
 	sink := &fakeSink{
-		existingErr: ErrXACTLoginUnauthorized,
+		existingErr: ErrXACTManagementUnavailable,
 		existing: map[string]string{
 			coordinateKey(1.300000001, 103.900000001): "INC_STALE",
 		},

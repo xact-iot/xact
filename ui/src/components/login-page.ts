@@ -116,6 +116,35 @@ const STYLE = `
     background: color-mix(in srgb, var(--accent-color) 22%, var(--border-color));
   }
 
+  .section-label.setup-label {
+    justify-content: center;
+    padding: 12px 14px;
+    border: 1px solid color-mix(in srgb, var(--accent-color) 60%, var(--border-color));
+    border-radius: 6px;
+    background:
+      linear-gradient(180deg,
+        color-mix(in srgb, var(--accent-color) 24%, transparent),
+        color-mix(in srgb, var(--accent-color) 10%, transparent));
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--accent-color) 18%, transparent),
+      0 14px 30px color-mix(in srgb, var(--accent-color) 14%, transparent);
+    color: var(--accent-color);
+    font-size: 0.95rem;
+    font-weight: 900;
+    letter-spacing: 0.16em;
+    text-align: center;
+  }
+
+  .section-label.setup-label::before,
+  .section-label.setup-label::after {
+    content: '';
+    flex: 1;
+    max-width: 52px;
+    height: 2px;
+    background: currentColor;
+    opacity: 0.8;
+  }
+
   .intro {
     margin-bottom: 18px;
     color: color-mix(in srgb, var(--modal-text) 72%, transparent);
@@ -322,7 +351,7 @@ export class LoginPage extends HTMLElement {
   private renderForm() {
     if (this.mode === 'setup') {
       return `
-        <div class="section-label">Set Admin Password</div>
+        <div class="section-label setup-label">SET ADMIN PASSWORD</div>
         <div class="intro">Create the initial password for the admin account.</div>
 
         <form autocomplete="off" novalidate>
