@@ -47,6 +47,8 @@ XACT includes an embedded MQTT broker. External devices publish messages to this
 
 The embedded broker starts by default unless `EMBEDDED_MQTT_SERVER=no`. The MQTT ingest client starts by default when an embedded broker is running or `MQTT_URL` is set, unless `MQTT_CLIENT_ENABLED=no`.
 
+For MQTT over TLS, set `MQTT_CLIENT_URL` to `mqtts://...` or `ssl://...`. The ingest client verifies the broker certificate by default. Use `MQTT_CLIENT_TLS_CA_FILE` to trust a private/self-signed certificate, `MQTT_CLIENT_TLS_SERVER_NAME` when the certificate name differs from the connection host, or `MQTT_CLIENT_TLS_INSECURE_SKIP_VERIFY=true` only for local development diagnostics.
+
 ### Topic Format
 
 XACT supports two MQTT topic formats: **zoneless** (the simple form) and **zoned** (which includes an optional zone grouping between tenant and device type).

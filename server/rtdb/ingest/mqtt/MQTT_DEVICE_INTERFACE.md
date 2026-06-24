@@ -178,6 +178,10 @@ The following environment variables control the MQTT interface:
 | `MQTT_BROKER_PASSWORD` | development fallback: `xact` | Broker authentication password. Production mode requires a non-default value. |
 | `EMBEDDED_MQTT_SERVER` | `yes` | Enable embedded broker |
 | `MQTT_CLIENT_ENABLED` | `yes` | Enable MQTT client for data ingress |
+| `MQTT_CLIENT_URL` | `tcp://127.0.0.1:1883` | Broker address used by the XACT ingest client. Use `mqtts://` or `ssl://` for TLS. |
+| `MQTT_CLIENT_TLS_CA_FILE` | unset | CA or self-signed certificate file trusted by the XACT ingest client for MQTT over TLS. Defaults to `server.crt` under `HTTP_CERTS_DIR`/`HTTPS_CERTS_DIR` when available. |
+| `MQTT_CLIENT_TLS_SERVER_NAME` | unset | Optional server name used when verifying the broker certificate. |
+| `MQTT_CLIENT_TLS_INSECURE_SKIP_VERIFY` | `false` | Disable broker certificate verification for local development only. |
 | `MQTT_CLIENT_WORKERS` | `4` | Number of processing workers |
 | `MQTT_CLIENT_QUEUE_SIZE` | `1000` | Message queue capacity |
 

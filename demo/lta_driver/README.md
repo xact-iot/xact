@@ -27,6 +27,9 @@ The driver is configured via environment variables:
 | `LTA_API_KEY` | Yes | - | Your LTA DataMall API key (AccountKey) |
 | `MQTT_BROKER` | No | `tcp://127.0.0.1:1883` | MQTT broker address |
 | `MQTT_BROKER_PASSWORD` | No | `xact` | MQTT authentication password |
+| `MQTT_TLS_CA_FILE` | No | - | CA or self-signed broker certificate to trust for `mqtts://` |
+| `MQTT_TLS_SERVER_NAME` | No | - | Optional server name override for broker certificate verification |
+| `MQTT_TLS_INSECURE_SKIP_VERIFY` | No | `false` | Disable broker certificate verification for local diagnostics only |
 | `POLL_INTERVAL` | No | `5m` | Polling interval (e.g., `5m`, `30s`, `1h`) |
 
 ## Running
@@ -37,6 +40,10 @@ export LTA_API_KEY="your-api-key-here"
 
 # Optional: customize MQTT broker
 export MQTT_BROKER="tcp://192.168.1.100:1883"
+
+# Optional: use MQTT over TLS with a local self-signed broker certificate
+export MQTT_BROKER="mqtts://127.0.0.1:1883"
+export MQTT_TLS_CA_FILE="../server/certs/server.crt"
 
 # Run the driver
 ./lta-driver
@@ -115,6 +122,7 @@ Set the `LTA_API_KEY` environment variable with your LTA DataMall API key.
 - Verify the MQTT broker is running
 - Check the `MQTT_BROKER` address is correct
 - Ensure the MQTT password matches the server configuration
+- For `mqtts://`, ensure the broker certificate is trusted via the OS trust store or `MQTT_TLS_CA_FILE`
 
 ### No data appearing in XACT
 - Check the driver logs for errors

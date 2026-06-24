@@ -69,7 +69,10 @@ func StartMqttBroker() error {
 
 	var tlsConfig *tls.Config
 	if tlsEnabled {
-		certsDir := os.Getenv("HTTPS_CERTS_DIR")
+		certsDir := os.Getenv("HTTP_CERTS_DIR")
+		if certsDir == "" {
+			certsDir = os.Getenv("HTTPS_CERTS_DIR")
+		}
 		crtFile := filepath.Join(certsDir, "server.crt")
 		keyFile := filepath.Join(certsDir, "server.key")
 
@@ -81,6 +84,7 @@ func StartMqttBroker() error {
 
 		tlsConfig = &tls.Config{
 			Certificates: []tls.Certificate{cert},
+			ClientAuth:   tls.NoClientCert,
 		}
 	}
 

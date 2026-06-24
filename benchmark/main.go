@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -13,7 +14,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -665,8 +668,13 @@ type mqttSender struct {
 }
 
 func newMQTTSender(cfg config) (*mqttSender, error) {
+	broker := normalizeBrokerURL(cfg.mqttURL)
+
 	opts := mqtt.NewClientOptions()
-	opts.AddBroker(cfg.mqttURL)
+	opts.AddBroker(broker)
+	if tlsConfig := mqttTLSConfigFromEnv(broker); tlsConfig != nil {
+		opts.SetTLSConfig(tlsConfig)
+	}
 	opts.SetClientID(cfg.mqttClientID)
 	opts.SetUsername(cfg.mqttUsername)
 	opts.SetPassword(cfg.mqttPassword)
@@ -712,6 +720,95 @@ func (s *mqttSender) topic(deviceName string) string {
 		return fmt.Sprintf("xact/data/%s/%s/%s", s.cfg.tenant, s.cfg.deviceType, deviceName)
 	}
 	return fmt.Sprintf("xact/data/%s/zone/%s/%s/%s", s.cfg.tenant, s.cfg.zone, s.cfg.deviceType, deviceName)
+}
+
+func normalizeBrokerURL(broker string) string {
+	broker = strings.TrimSpace(broker)
+	if strings.HasPrefix(broker, "mqtt://") {
+		return "tcp://" + strings.TrimPrefix(broker, "mqtt://")
+	}
+	if strings.HasPrefix(broker, "mqtts://") {
+		return "ssl://" + strings.TrimPrefix(broker, "mqtts://")
+	}
+	if broker != "" && !strings.Contains(broker, "://") {
+		return "tcp://" + broker
+	}
+	return broker
+}
+
+func mqttTLSConfigFromEnv(brokerURL string) *tls.Config {
+	if !isTLSBrokerURL(brokerURL) {
+		return nil
+	}
+
+	cfg := &tls.Config{} //nolint:gosec
+	if serverName := strings.TrimSpace(firstEnv("MQTT_TLS_SERVER_NAME", "MQTT_CLIENT_TLS_SERVER_NAME")); serverName != "" {
+		cfg.ServerName = serverName
+	}
+	if value := strings.TrimSpace(firstEnv("MQTT_TLS_INSECURE_SKIP_VERIFY", "MQTT_CLIENT_TLS_INSECURE_SKIP_VERIFY")); value != "" {
+		if insecure, err := strconv.ParseBool(value); err == nil {
+			cfg.InsecureSkipVerify = insecure //nolint:gosec
+		}
+	}
+
+	caFile := strings.TrimSpace(firstEnv("MQTT_TLS_CA_FILE", "MQTT_CLIENT_TLS_CA_FILE"))
+	if caFile == "" {
+		caFile = defaultServerCertFile()
+	}
+	if caFile != "" {
+		roots, err := loadCertPool(caFile)
+		if err != nil {
+			fmt.Printf("MQTT TLS: could not load CA file %s: %v\n", caFile, err)
+		} else {
+			cfg.RootCAs = roots
+		}
+	}
+	return cfg
+}
+
+func isTLSBrokerURL(brokerURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(brokerURL))
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "ssl", "tls", "mqtts":
+		return true
+	default:
+		return false
+	}
+}
+
+func firstEnv(names ...string) string {
+	for _, name := range names {
+		if value := os.Getenv(name); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func defaultServerCertFile() string {
+	certsDir := strings.TrimSpace(firstEnv("HTTP_CERTS_DIR", "HTTPS_CERTS_DIR"))
+	if certsDir == "" {
+		return ""
+	}
+	return filepath.Join(certsDir, "server.crt")
+}
+
+func loadCertPool(caFile string) (*x509.CertPool, error) {
+	pemBytes, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, err
+	}
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		roots = x509.NewCertPool()
+	}
+	if !roots.AppendCertsFromPEM(pemBytes) {
+		return nil, fmt.Errorf("no certificates found")
+	}
+	return roots, nil
 }
 
 // NATS sender

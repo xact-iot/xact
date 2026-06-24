@@ -306,6 +306,11 @@ MQTT_CLIENT_ENABLED=yes
 MQTT_CLIENT_URL=mqtt://127.0.0.1:1883
 MQTT_CLIENT_ID=xact-ingest
 MQTT_CLIENT_USERNAME=a
+# For MQTT over TLS, use mqtts:// or ssl:// above. Local self-signed certs can
+# be trusted with MQTT_CLIENT_TLS_CA_FILE=./certs/server.crt.
+MQTT_CLIENT_TLS_CA_FILE=
+MQTT_CLIENT_TLS_SERVER_NAME=
+MQTT_CLIENT_TLS_INSECURE_SKIP_VERIFY=false
 MQTT_CLIENT_WORKERS=4
 MQTT_CLIENT_QUEUE_SIZE=1000
 
@@ -384,7 +389,8 @@ BATEOF
 
         openssl req -x509 -newkey rsa:4096 -keyout "$PLATFORM_DIR/certs/server.key" \
             -out "$PLATFORM_DIR/certs/server.crt" -days 365 -nodes \
-            -subj "/CN=localhost/O=XACT/C=US" 2>/dev/null || true
+            -subj "/CN=localhost/O=XACT/C=US" \
+            -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" 2>/dev/null || true
     else
         cat > "$PLATFORM_DIR/start.sh" << 'SHEOF'
 #!/bin/bash
@@ -415,7 +421,8 @@ SHEOF
 
         openssl req -x509 -newkey rsa:4096 -keyout "$PLATFORM_DIR/certs/server.key" \
             -out "$PLATFORM_DIR/certs/server.crt" -days 365 -nodes \
-            -subj "/CN=localhost/O=XACT/C=US" 2>/dev/null || true
+            -subj "/CN=localhost/O=XACT/C=US" \
+            -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" 2>/dev/null || true
     fi
 
     local ARCHIVE

@@ -24,3 +24,4 @@ Useful flags:
 - `-provision-only` creates templates/devices once and exits.
 
 Environment defaults mirror the other XACT tools: `MQTT_BROKER`, `MQTT_USERNAME`, and `MQTT_BROKER_PASSWORD`.
+For MQTT over TLS, use `mqtts://...` in `MQTT_BROKER`. Publicly trusted broker certificates work like HTTPS; for a local self-signed XACT broker, set `MQTT_TLS_CA_FILE` to the broker certificate, for example `../server/certs/server.crt`.

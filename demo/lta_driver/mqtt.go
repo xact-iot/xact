@@ -8,6 +8,7 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/xact-iot/xact/demo/internal/mqttclient"
 )
 
 // MQTTPublisher handles publishing VMS data to XACT via MQTT
@@ -27,8 +28,13 @@ func NewMQTTPublisher(broker, password string) *MQTTPublisher {
 
 // Connect establishes connection to the MQTT broker
 func (p *MQTTPublisher) Connect() error {
+	broker := mqttclient.NormalizeBrokerURL(p.broker)
+
 	opts := mqtt.NewClientOptions()
-	opts.AddBroker(p.broker)
+	opts.AddBroker(broker)
+	if tlsConfig := mqttclient.TLSConfigFromEnv(broker); tlsConfig != nil {
+		opts.SetTLSConfig(tlsConfig)
+	}
 	opts.SetClientID("lta-vms-driver")
 	opts.SetUsername("a")
 	opts.SetPassword(p.password)

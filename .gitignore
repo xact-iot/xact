@@ -54,6 +54,7 @@ Thumbs.db
 server/nats-store/
 server/deploy/
 server/db-backups/
+certs/
 backup-*.gz
 pre-restore-*.gz
 pre-restore-*.db

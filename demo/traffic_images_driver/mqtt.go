@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/xact-iot/xact/demo/internal/mqttclient"
 )
 
 const (
@@ -36,6 +36,9 @@ func (p *MQTTPublisher) Connect() error {
 
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(broker)
+	if tlsConfig := mqttclient.TLSConfigFromEnv(broker); tlsConfig != nil {
+		opts.SetTLSConfig(tlsConfig)
+	}
 	opts.SetClientID("lta-traffic-images-driver")
 	opts.SetUsername("a")
 	opts.SetPassword(p.password)
@@ -64,17 +67,7 @@ func (p *MQTTPublisher) Connect() error {
 }
 
 func normalizeBrokerURL(broker string) string {
-	broker = strings.TrimSpace(broker)
-	if strings.HasPrefix(broker, "mqtt://") {
-		return "tcp://" + strings.TrimPrefix(broker, "mqtt://")
-	}
-	if strings.HasPrefix(broker, "mqtts://") {
-		return "ssl://" + strings.TrimPrefix(broker, "mqtts://")
-	}
-	if !strings.Contains(broker, "://") {
-		return "tcp://" + broker
-	}
-	return broker
+	return mqttclient.NormalizeBrokerURL(broker)
 }
 
 // Disconnect closes the MQTT connection

@@ -2,9 +2,15 @@ package mqtt
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +34,7 @@ type Client struct {
 	clientID   string
 	username   string
 	password   string
+	tlsConfig  *tls.Config
 	client     mqtt.Client
 	treeOps    *tree.TreeWithOperations
 	nc         *natsgo.Conn
@@ -43,6 +50,7 @@ type ClientConfig struct {
 	ClientID    string
 	Username    string
 	Password    string
+	TLSConfig   *tls.Config
 	WorkerCount int
 	QueueSize   int
 	EnqueueWait time.Duration
@@ -70,10 +78,11 @@ func NewClient(config ClientConfig, treeOps *tree.TreeWithOperations, nc *natsgo
 	workerPool := NewWorkerPool(config.WorkerCount, config.QueueSize, config.EnqueueWait, nc, metrics)
 
 	return &Client{
-		brokerURL:  config.BrokerURL,
+		brokerURL:  normalizeBrokerURL(config.BrokerURL),
 		clientID:   config.ClientID,
 		username:   config.Username,
 		password:   config.Password,
+		tlsConfig:  config.TLSConfig,
 		treeOps:    treeOps,
 		nc:         nc,
 		workerPool: workerPool,
@@ -117,6 +126,9 @@ func (c *Client) connect() error {
 	}
 	if c.password != "" {
 		opts.SetPassword(c.password)
+	}
+	if c.tlsConfig != nil {
+		opts.SetTLSConfig(c.tlsConfig)
 	}
 	opts.SetAutoReconnect(true)
 	opts.SetConnectRetry(true)
@@ -204,6 +216,8 @@ func NewClientFromEnv(treeOps *tree.TreeWithOperations, nc *natsgo.Conn) *Client
 		Username:  os.Getenv("MQTT_CLIENT_USERNAME"),
 		Password:  os.Getenv("MQTT_BROKER_PASSWORD"),
 	}
+	config.BrokerURL = normalizeBrokerURL(config.BrokerURL)
+	config.TLSConfig = mqttClientTLSConfigFromEnv(config.BrokerURL)
 	if workers := os.Getenv("MQTT_CLIENT_WORKERS"); workers != "" {
 		fmt.Sscanf(workers, "%d", &config.WorkerCount) //nolint:errcheck
 	}
@@ -217,4 +231,85 @@ func NewClientFromEnv(treeOps *tree.TreeWithOperations, nc *natsgo.Conn) *Client
 		}
 	}
 	return NewClient(config, treeOps, nc)
+}
+
+func normalizeBrokerURL(broker string) string {
+	broker = strings.TrimSpace(broker)
+	if strings.HasPrefix(broker, "mqtt://") {
+		return "tcp://" + strings.TrimPrefix(broker, "mqtt://")
+	}
+	if strings.HasPrefix(broker, "mqtts://") {
+		return "ssl://" + strings.TrimPrefix(broker, "mqtts://")
+	}
+	return broker
+}
+
+func mqttClientTLSConfigFromEnv(brokerURL string) *tls.Config {
+	if !isTLSBrokerURL(brokerURL) {
+		return nil
+	}
+
+	cfg := &tls.Config{} //nolint:gosec // Verification stays enabled unless explicitly disabled by env below.
+	if serverName := strings.TrimSpace(os.Getenv("MQTT_CLIENT_TLS_SERVER_NAME")); serverName != "" {
+		cfg.ServerName = serverName
+	}
+	if value := strings.TrimSpace(os.Getenv("MQTT_CLIENT_TLS_INSECURE_SKIP_VERIFY")); value != "" {
+		if insecure, err := strconv.ParseBool(value); err == nil {
+			cfg.InsecureSkipVerify = insecure //nolint:gosec // Operator opt-in for local/self-signed development installs.
+		}
+	}
+
+	caFile := strings.TrimSpace(os.Getenv("MQTT_CLIENT_TLS_CA_FILE"))
+	if caFile == "" {
+		caFile = defaultServerCertFile()
+	}
+	if caFile != "" {
+		roots, err := loadCertPool(caFile)
+		if err != nil {
+			log.Printf("MQTT client TLS: could not load CA file %s: %v", caFile, err)
+		} else {
+			cfg.RootCAs = roots
+		}
+	}
+
+	return cfg
+}
+
+func isTLSBrokerURL(brokerURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(brokerURL))
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "ssl", "tls", "mqtts":
+		return true
+	default:
+		return false
+	}
+}
+
+func defaultServerCertFile() string {
+	certsDir := strings.TrimSpace(os.Getenv("HTTP_CERTS_DIR"))
+	if certsDir == "" {
+		certsDir = strings.TrimSpace(os.Getenv("HTTPS_CERTS_DIR"))
+	}
+	if certsDir == "" {
+		return ""
+	}
+	return filepath.Join(certsDir, "server.crt")
+}
+
+func loadCertPool(caFile string) (*x509.CertPool, error) {
+	pemBytes, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, err
+	}
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		roots = x509.NewCertPool()
+	}
+	if !roots.AppendCertsFromPEM(pemBytes) {
+		return nil, fmt.Errorf("no certificates found")
+	}
+	return roots, nil
 }
