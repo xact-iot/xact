@@ -23,4 +23,4 @@ Useful flags:
 - `-template-wait 3s` lets MQTT template provisioning settle before devices are created.
 - `-provision-only` creates templates/devices once and exits.
 
-Environment defaults mirror the other XACT tools: `MQTT_BROKER`, `MQTT_USERNAME`, and `MQTT_PASSWORD`.
+Environment defaults mirror the other XACT tools: `MQTT_BROKER`, `MQTT_USERNAME`, and `MQTT_BROKER_PASSWORD`.

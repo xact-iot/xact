@@ -36,7 +36,7 @@ func (h *MqttPasswordHook) Provides(b byte) bool {
 
 // OnConnectAuthenticate validates client password
 func (h *MqttPasswordHook) OnConnectAuthenticate(cl *mqtt.Client, pk packets.Packet) bool {
-	expectedPassword := os.Getenv("MQTT_PASSWORD")
+	expectedPassword := os.Getenv("MQTT_BROKER_PASSWORD")
 	if expectedPassword == "" {
 		expectedPassword = "xact"
 	}

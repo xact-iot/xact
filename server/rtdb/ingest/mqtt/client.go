@@ -202,7 +202,7 @@ func NewClientFromEnv(treeOps *tree.TreeWithOperations, nc *natsgo.Conn) *Client
 		BrokerURL: os.Getenv("MQTT_CLIENT_URL"),
 		ClientID:  os.Getenv("MQTT_CLIENT_ID"),
 		Username:  os.Getenv("MQTT_CLIENT_USERNAME"),
-		Password:  os.Getenv("MQTT_CLIENT_PASSWORD"),
+		Password:  os.Getenv("MQTT_BROKER_PASSWORD"),
 	}
 	if workers := os.Getenv("MQTT_CLIENT_WORKERS"); workers != "" {
 		fmt.Sscanf(workers, "%d", &config.WorkerCount) //nolint:errcheck

@@ -135,7 +135,7 @@ func parseFlags() config {
 		timeout:        10 * time.Second,
 		mqttURL:        envDefault("MQTT_BROKER", "tcp://127.0.0.1:1883"),
 		mqttUsername:   envDefault("MQTT_USERNAME", "benchmark"),
-		mqttPassword:   envDefault("MQTT_PASSWORD", "xact"),
+		mqttPassword:   envDefault("MQTT_BROKER_PASSWORD", "xact"),
 		mqttClientID:   fmt.Sprintf("xact-benchmark-%d", time.Now().UnixNano()),
 		mqttQoS:        1,
 		natsURL:        envDefault("NATS_URL", natsgo.DefaultURL),

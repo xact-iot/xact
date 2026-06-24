@@ -28,11 +28,8 @@ func validateProductionSecrets() error {
 	requireSecret("NATS_INTERNAL_PASSWORD")
 	requireSecret("NATS_BROWSER_TOKEN")
 
-	if envEnabledDefault("EMBEDDED_MQTT_SERVER", true) {
-		requireSecret("MQTT_PASSWORD")
-	}
-	if envEnabledDefault("MQTT_CLIENT_ENABLED", true) {
-		requireSecret("MQTT_CLIENT_PASSWORD")
+	if envEnabledDefault("EMBEDDED_MQTT_SERVER", true) || envEnabledDefault("MQTT_CLIENT_ENABLED", true) {
+		requireSecret("MQTT_BROKER_PASSWORD")
 	}
 	if value := strings.TrimSpace(os.Getenv("XACT_BOOTSTRAP_ADMIN_PASSWORD")); value != "" && isKnownDefaultSecret(value) {
 		problems = append(problems, "XACT_BOOTSTRAP_ADMIN_PASSWORD uses an insecure default value")

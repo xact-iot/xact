@@ -13,7 +13,7 @@ Review these `.env` settings before exposing XACT beyond localhost:
 | `JWT_SECRET` | Must be unique and high entropy. Used for JWT signing and as fallback API-key hashing pepper. |
 | `API_KEY_HASH_SECRET` | Recommended for production so API-key hashes use a dedicated server-side pepper. |
 | `NATS_INTERNAL_PASSWORD` / `NATS_BROWSER_TOKEN` | Must be unique. Internal credentials are not exposed unless explicitly enabled. |
-| `MQTT_PASSWORD` / `MQTT_CLIENT_PASSWORD` | Must be unique when embedded MQTT or MQTT ingest is enabled. |
+| `MQTT_BROKER_PASSWORD` | Must be unique when embedded MQTT or MQTT ingest is enabled. |
 | `API_HOST`, `NATS_WS_HOST` | Packaged evaluation defaults bind these to `0.0.0.0` for browser access from a trusted local network. For production, bind to loopback or a trusted interface behind a reverse proxy. |
 | `NATS_HOST` | Defaults to `127.0.0.1` for the internal NATS listener. Keep it private unless clustering explicitly requires otherwise. |
 | `NATS_LOG_FILE` | Defaults to `./logs/nats.log`. Check this file when embedded NATS fails to start; startup also prints the last log lines on failure. |

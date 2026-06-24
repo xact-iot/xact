@@ -13,8 +13,7 @@ func TestValidateProductionSecretsRejectsDefaults(t *testing.T) {
 	t.Setenv("JWT_SECRET", "xact-jwt-secret-change-me")
 	t.Setenv("NATS_INTERNAL_PASSWORD", "safe-internal-secret")
 	t.Setenv("NATS_BROWSER_TOKEN", "safe-browser-token")
-	t.Setenv("MQTT_PASSWORD", "safe-mqtt-secret")
-	t.Setenv("MQTT_CLIENT_PASSWORD", "safe-mqtt-secret")
+	t.Setenv("MQTT_BROKER_PASSWORD", "safe-mqtt-secret")
 
 	if err := validateProductionSecrets(); err == nil {
 		t.Fatal("validateProductionSecrets() = nil, want default-secret error")
@@ -26,8 +25,7 @@ func TestValidateProductionSecretsAllowsConfiguredProductionSecrets(t *testing.T
 	t.Setenv("JWT_SECRET", "jwt-secret-with-enough-randomness")
 	t.Setenv("NATS_INTERNAL_PASSWORD", "internal-secret-with-enough-randomness")
 	t.Setenv("NATS_BROWSER_TOKEN", "browser-token-with-enough-randomness")
-	t.Setenv("MQTT_PASSWORD", "mqtt-secret-with-enough-randomness")
-	t.Setenv("MQTT_CLIENT_PASSWORD", "mqtt-client-secret-with-enough-randomness")
+	t.Setenv("MQTT_BROKER_PASSWORD", "mqtt-broker-secret-with-enough-randomness")
 
 	if err := validateProductionSecrets(); err != nil {
 		t.Fatalf("validateProductionSecrets() = %v, want nil", err)
@@ -134,7 +132,7 @@ func TestResolvePluginDirRandHexAndMQTTHook(t *testing.T) {
 	if !h.Provides(mqtt.OnConnectAuthenticate) || !h.Provides(mqtt.OnACLCheck) || h.Provides(0xff) {
 		t.Fatal("hook Provides mismatch")
 	}
-	t.Setenv("MQTT_PASSWORD", "secret")
+	t.Setenv("MQTT_BROKER_PASSWORD", "secret")
 	if !h.OnConnectAuthenticate(&mqtt.Client{}, packets.Packet{Connect: packets.ConnectParams{Password: []byte("secret")}}) {
 		t.Fatal("expected MQTT auth success")
 	}

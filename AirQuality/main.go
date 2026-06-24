@@ -160,7 +160,7 @@ func parseFlags() config {
 		publishTimeout: envDurationDefault("AIRQUALITY_PUBLISH_TIMEOUT", defaultPublishTimeout),
 		mqttURL:        envDefault("MQTT_BROKER", "tcp://127.0.0.1:1883"),
 		mqttUsername:   envDefault("MQTT_USERNAME", "airquality"),
-		mqttPassword:   envDefault("MQTT_PASSWORD", "xact"),
+		mqttPassword:   envDefault("MQTT_BROKER_PASSWORD", "xact"),
 		mqttClientID:   envDefault("MQTT_CLIENT_ID", fmt.Sprintf("xact-airquality-%d", time.Now().UnixNano())),
 		mqttQoS:        envIntDefault("MQTT_QOS", 1),
 	}

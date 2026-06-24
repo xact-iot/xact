@@ -22,9 +22,9 @@ All devices must authenticate using password-based authentication.
 
 **Username:** (optional, leave empty if not required)
 
-**Password:** the value of `MQTT_PASSWORD`
+**Password:** the value of `MQTT_BROKER_PASSWORD`
 
-Development builds fall back to `xact` when `MQTT_PASSWORD` is unset. Production mode requires an explicit non-default password.
+Development builds fall back to `xact` when `MQTT_BROKER_PASSWORD` is unset. Production mode requires an explicit non-default password.
 
 ### Connection Parameters
 
@@ -175,7 +175,7 @@ The following environment variables control the MQTT interface:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MQTT_URL` | `mqtt://127.0.0.1:1883` | Broker listen address |
-| `MQTT_PASSWORD` | development fallback: `xact` | Client authentication password. Production mode requires a non-default value. |
+| `MQTT_BROKER_PASSWORD` | development fallback: `xact` | Broker authentication password. Production mode requires a non-default value. |
 | `EMBEDDED_MQTT_SERVER` | `yes` | Enable embedded broker |
 | `MQTT_CLIENT_ENABLED` | `yes` | Enable MQTT client for data ingress |
 | `MQTT_CLIENT_WORKERS` | `4` | Number of processing workers |

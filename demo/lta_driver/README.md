@@ -26,7 +26,7 @@ The driver is configured via environment variables:
 |----------|----------|---------|-------------|
 | `LTA_API_KEY` | Yes | - | Your LTA DataMall API key (AccountKey) |
 | `MQTT_BROKER` | No | `tcp://127.0.0.1:1883` | MQTT broker address |
-| `MQTT_PASSWORD` | No | `xact` | MQTT authentication password |
+| `MQTT_BROKER_PASSWORD` | No | `xact` | MQTT authentication password |
 | `POLL_INTERVAL` | No | `5m` | Polling interval (e.g., `5m`, `30s`, `1h`) |
 
 ## Running

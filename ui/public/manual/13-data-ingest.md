@@ -41,8 +41,8 @@ XACT includes an embedded MQTT broker. External devices publish messages to this
 |---------|--------------|
 | Embedded broker listen address | `mqtt://127.0.0.1:1883` (`MQTT_URL`) |
 | Ingest client broker address | `tcp://127.0.0.1:1883` (`MQTT_CLIENT_URL`) |
-| Device authentication | Password-based (`MQTT_PASSWORD`, default `xact`) |
-| XACT ingest client authentication | Optional username/password (`MQTT_CLIENT_USERNAME`, `MQTT_CLIENT_PASSWORD`) |
+| Device authentication | Password-based (`MQTT_BROKER_PASSWORD`, default `xact`) |
+| XACT ingest client authentication | Optional username plus broker password (`MQTT_CLIENT_USERNAME`, `MQTT_BROKER_PASSWORD`) |
 | Protocol | MQTT v3.1.1 or v5 |
 
 The embedded broker starts by default unless `EMBEDDED_MQTT_SERVER=no`. The MQTT ingest client starts by default when an embedded broker is running or `MQTT_URL` is set, unless `MQTT_CLIENT_ENABLED=no`.

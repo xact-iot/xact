@@ -22,7 +22,7 @@ func Start() {
 		mqttBroker = "tcp://127.0.0.1:1883"
 	}
 
-	mqttPassword := os.Getenv("MQTT_PASSWORD")
+	mqttPassword := os.Getenv("MQTT_BROKER_PASSWORD")
 	if mqttPassword == "" {
 		mqttPassword = "xact"
 	}
