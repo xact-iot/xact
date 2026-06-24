@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -116,6 +117,10 @@ var laLongBeachIntersections = []intersectionAnchor{
 }
 
 func main() {
+	if err := loadEnvFiles(".env", "../demo/.env"); err != nil {
+		log.Printf("AirQuality: no .env file loaded: %v", err)
+	}
+
 	cfg := parseFlags()
 	if err := cfg.validate(); err != nil {
 		log.Fatalf("configuration error: %v", err)
@@ -802,6 +807,70 @@ func loadCertPool(caFile string) (*x509.CertPool, error) {
 		return nil, fmt.Errorf("no certificates found")
 	}
 	return roots, nil
+}
+
+func loadEnvFiles(paths ...string) error {
+	if exe, err := os.Executable(); err == nil {
+		paths = append(paths, filepath.Join(filepath.Dir(exe), ".env"))
+	}
+
+	seen := map[string]bool{}
+	var lastErr error
+	for _, path := range paths {
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		if err := loadEnvFile(path); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	if lastErr == nil {
+		lastErr = os.ErrNotExist
+	}
+	return lastErr
+}
+
+func loadEnvFile(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+		os.Setenv(key, trimEnvValue(value)) //nolint:errcheck
+	}
+	return scanner.Err()
+}
+
+func trimEnvValue(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 2 {
+		quote := value[0]
+		if (quote == '"' || quote == '\'') && value[len(value)-1] == quote {
+			return value[1 : len(value)-1]
+		}
+	}
+	return value
 }
 
 func envDefault(name, fallback string) string {

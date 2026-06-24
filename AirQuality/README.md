@@ -23,5 +23,13 @@ Useful flags:
 - `-template-wait 3s` lets MQTT template provisioning settle before devices are created.
 - `-provision-only` creates templates/devices once and exits.
 
-Environment defaults mirror the other XACT tools: `MQTT_BROKER`, `MQTT_USERNAME`, and `MQTT_BROKER_PASSWORD`.
+Environment defaults mirror the other XACT tools: `MQTT_BROKER`, `MQTT_USERNAME`, and `MQTT_BROKER_PASSWORD`. AirQuality loads environment values from exported variables, a local `.env`, or the shared `../demo/.env`.
 For MQTT over TLS, use `mqtts://...` in `MQTT_BROKER`. Publicly trusted broker certificates work like HTTPS; for a local self-signed XACT broker, set `MQTT_TLS_CA_FILE` to the broker certificate, for example `../server/certs/server.crt`.
+
+For the same local MQTT TLS setup as the demo drivers:
+
+```env
+MQTT_BROKER_PASSWORD=xact
+MQTT_BROKER=mqtts://127.0.0.1:1883
+MQTT_TLS_INSECURE_SKIP_VERIFY=true
+```
