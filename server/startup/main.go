@@ -531,7 +531,7 @@ func main() {
 	// Start MQTT client if enabled
 	mqttClientEnabled := os.Getenv("MQTT_CLIENT_ENABLED")
 	var mqttClient *mqtt.Client
-	externalBroker := os.Getenv("MQTT_URL") != ""
+	externalBroker := os.Getenv("MQTT_BROKER_URL") != ""
 	if (mqttClientEnabled == "" || mqttClientEnabled == "yes") && (embeddedBrokerRunning || externalBroker) {
 		mqttClient = mqtt.NewClientFromEnv(treeOps, nc)
 		if err := mqttClient.Start(); err != nil {

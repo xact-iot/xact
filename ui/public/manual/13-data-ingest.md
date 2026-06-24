@@ -39,15 +39,14 @@ XACT includes an embedded MQTT broker. External devices publish messages to this
 
 | Setting | Default Value |
 |---------|--------------|
-| Embedded broker listen address | `mqtt://127.0.0.1:1883` (`MQTT_URL`) |
-| Ingest client broker address | `tcp://127.0.0.1:1883` (`MQTT_CLIENT_URL`) |
+| Broker address | `mqtt://127.0.0.1:1883` (`MQTT_BROKER_URL`) |
 | Device authentication | Password-based (`MQTT_BROKER_PASSWORD`, default `xact`) |
 | XACT ingest client authentication | Optional username plus broker password (`MQTT_CLIENT_USERNAME`, `MQTT_BROKER_PASSWORD`) |
 | Protocol | MQTT v3.1.1 or v5 |
 
-The embedded broker starts by default unless `EMBEDDED_MQTT_SERVER=no`. The MQTT ingest client starts by default when an embedded broker is running or `MQTT_URL` is set, unless `MQTT_CLIENT_ENABLED=no`.
+The embedded broker starts by default unless `EMBEDDED_MQTT_SERVER=no`. The MQTT ingest client starts by default when an embedded broker is running or `MQTT_BROKER_URL` is set, unless `MQTT_CLIENT_ENABLED=no`.
 
-For MQTT over TLS, set `MQTT_CLIENT_URL` to `mqtts://...` or `ssl://...`. The ingest client verifies the broker certificate by default. Use `MQTT_CLIENT_TLS_CA_FILE` to trust a private/self-signed certificate, `MQTT_CLIENT_TLS_SERVER_NAME` when the certificate name differs from the connection host, or `MQTT_CLIENT_TLS_INSECURE_SKIP_VERIFY=true` only for local development diagnostics.
+For MQTT over TLS, set `MQTT_BROKER_URL` to `mqtts://...` or `ssl://...`. The ingest client verifies the broker certificate by default. Use `MQTT_CLIENT_TLS_CA_FILE` to trust a private/self-signed certificate, `MQTT_CLIENT_TLS_SERVER_NAME` when the certificate name differs from the connection host, or `MQTT_CLIENT_TLS_INSECURE_SKIP_VERIFY=true` only for local development diagnostics.
 
 ### Topic Format
 

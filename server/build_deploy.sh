@@ -288,7 +288,7 @@ ENABLE_AUTH_PLUGIN=no
 
 # Embedded MQTT Broker
 EMBEDDED_MQTT_SERVER=yes
-MQTT_URL=mqtt://127.0.0.1:1883
+MQTT_BROKER_URL=mqtt://127.0.0.1:1883
 MQTT_BROKER_PASSWORD=${MQTT_SECRET}
 
 # Evaluation defaults: serve the app directly over HTTP on the local network.
@@ -303,11 +303,10 @@ CORS_ALLOWED_ORIGINS=
 
 # MQTT Ingest Client
 MQTT_CLIENT_ENABLED=yes
-MQTT_CLIENT_URL=mqtt://127.0.0.1:1883
 MQTT_CLIENT_ID=xact-ingest
 MQTT_CLIENT_USERNAME=a
-# For MQTT over TLS, use mqtts:// or ssl:// above. Local self-signed certs can
-# be trusted with MQTT_CLIENT_TLS_CA_FILE=./certs/server.crt.
+# For MQTT over TLS, set MQTT_BROKER_URL to mqtts:// or ssl://. Local
+# self-signed certs can be trusted with MQTT_CLIENT_TLS_CA_FILE=./certs/server.crt.
 MQTT_CLIENT_TLS_CA_FILE=
 MQTT_CLIENT_TLS_SERVER_NAME=
 MQTT_CLIENT_TLS_INSECURE_SKIP_VERIFY=false

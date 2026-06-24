@@ -89,7 +89,7 @@ func StartMqttBroker() error {
 	}
 
 	// Get MQTT URL from environment or use default
-	mqttURL := os.Getenv("MQTT_URL")
+	mqttURL := os.Getenv("MQTT_BROKER_URL")
 	if mqttURL == "" {
 		mqttURL = "mqtt://127.0.0.1:1883"
 	}

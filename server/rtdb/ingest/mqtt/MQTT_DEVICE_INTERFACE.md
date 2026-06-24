@@ -14,7 +14,7 @@ Port: 1883 (default MQTT port)
 Protocol: MQTT v3.1.1 or v5.0
 ```
 
-The broker URL can be configured via the `MQTT_URL` environment variable on the server (default: `mqtt://127.0.0.1:1883`).
+The broker URL can be configured via the `MQTT_BROKER_URL` environment variable on the server (default: `mqtt://127.0.0.1:1883`).
 
 ### Authentication
 
@@ -174,11 +174,10 @@ The following environment variables control the MQTT interface:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MQTT_URL` | `mqtt://127.0.0.1:1883` | Broker listen address |
+| `MQTT_BROKER_URL` | `mqtt://127.0.0.1:1883` | Broker listen address |
 | `MQTT_BROKER_PASSWORD` | development fallback: `xact` | Broker authentication password. Production mode requires a non-default value. |
 | `EMBEDDED_MQTT_SERVER` | `yes` | Enable embedded broker |
 | `MQTT_CLIENT_ENABLED` | `yes` | Enable MQTT client for data ingress |
-| `MQTT_CLIENT_URL` | `tcp://127.0.0.1:1883` | Broker address used by the XACT ingest client. Use `mqtts://` or `ssl://` for TLS. |
 | `MQTT_CLIENT_TLS_CA_FILE` | unset | CA or self-signed certificate file trusted by the XACT ingest client for MQTT over TLS. Defaults to `server.crt` under `HTTP_CERTS_DIR`/`HTTPS_CERTS_DIR` when available. |
 | `MQTT_CLIENT_TLS_SERVER_NAME` | unset | Optional server name used when verifying the broker certificate. |
 | `MQTT_CLIENT_TLS_INSECURE_SKIP_VERIFY` | `false` | Disable broker certificate verification for local development only. |
