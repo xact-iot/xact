@@ -499,6 +499,7 @@ create_docker_deploy_package() {
     local PACKAGE_ROOT="$DEPLOY_DIR/intermediate/docker-deploy"
     local ENV_SRC="$PROJECT_ROOT/deploy/docker/.env.example"
     local COMPOSE_SRC="$PROJECT_ROOT/deploy/docker/docker-compose.yml"
+    local RESTORE_SRC="$DEPLOY_DIR/linux/xact-linux-$ARCH/restore"
     local ARCHIVE="$DEPLOY_DIR/xact-docker-$ARCH-$VERSION.tar.gz"
 
     if [ ! -f "$ENV_SRC" ]; then
@@ -507,6 +508,10 @@ create_docker_deploy_package() {
     fi
     if [ ! -f "$COMPOSE_SRC" ]; then
         echo -e "${RED}Docker compose file not found: $COMPOSE_SRC${NC}"
+        return 1
+    fi
+    if [ ! -x "$RESTORE_SRC" ]; then
+        echo -e "${RED}Restore utility not found: $RESTORE_SRC${NC}"
         return 1
     fi
 
@@ -529,6 +534,8 @@ create_docker_deploy_package() {
         }
     ' "$ENV_SRC" > "$PACKAGE_ROOT/.env.example"
     cp "$COMPOSE_SRC" "$PACKAGE_ROOT/docker-compose.yml"
+    cp "$RESTORE_SRC" "$PACKAGE_ROOT/restore"
+    chmod +x "$PACKAGE_ROOT/restore"
     mkdir -p \
         "$PACKAGE_ROOT/plugins/authentication" \
         "$PACKAGE_ROOT/plugins/widgets" \
@@ -540,6 +547,7 @@ create_docker_deploy_package() {
     tar -czf "$ARCHIVE" -C "$PACKAGE_ROOT" \
         .env.example \
         docker-compose.yml \
+        restore \
         plugins \
         postgres-data
     DOCKER_DEPLOY_ARCHIVE="$ARCHIVE"
