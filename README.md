@@ -108,7 +108,13 @@ Extract the package as the user who will run Docker Compose, not with `sudo`, so
 cp .env.example .env
 ```
 
-Edit `.env` and replace all `change-this...` secrets. For a public server, also set `XACT_SITE_ADDRESS` to the public DNS name. Then start the stack:
+Edit `.env` and replace all `change-this...` secrets. 
+
+Change `MQTT_BROKER_URL` to `mqtt://0.0.0.0:1883`
+
+For a public server, also set `XACT_SITE_ADDRESS` to the public DNS name. 
+
+Then start the stack:
 
 ```sh
 docker compose up -d
