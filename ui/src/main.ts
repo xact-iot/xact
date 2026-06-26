@@ -431,14 +431,35 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function findDashboardConfig(ref: string): DashboardConfig | undefined {
-    const configs = editor?.getConfigs() ?? [];
-    for (const config of configs) {
-      if (String(config.serverId ?? config.id) === ref || config.name === ref) return config;
-      for (const child of config.children ?? []) {
-        if (String(child.serverId ?? child.id) === ref || child.name === ref) return child;
+    const visit = (configs: DashboardConfig[]): DashboardConfig | undefined => {
+      for (const config of configs) {
+        if (String(config.serverId ?? config.id) === ref || config.name === ref) return config;
+        const child = visit(config.children ?? []);
+        if (child) return child;
       }
+      return undefined;
+    };
+    return visit(editor?.getConfigs() ?? []);
+  }
+
+  function findDashboardByName(name: string): DashboardConfig | undefined {
+    const visit = (configs: DashboardConfig[]): DashboardConfig | undefined => {
+      for (const config of configs) {
+        if (config.name === name && config.children === undefined) return config;
+        const child = visit(config.children ?? []);
+        if (child) return child;
+      }
+      return undefined;
+    };
+    return visit(editor?.getConfigs() ?? []);
+  }
+
+  function startupDashboardRef(): string {
+    const welcome = findDashboardByName('Welcome');
+    if (welcome) {
+      return welcome.serverId !== undefined ? String(welcome.serverId) : welcome.id;
     }
-    return undefined;
+    return 'dashboard-config-editor';
   }
 
   function resolveDashboardRef(ref: string): string {
@@ -721,8 +742,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Navigate the initial tab to the restored dashboard
     await navigateToDashboard(dashboardId, 'replace');
   } else {
-    syncActiveDashboardState(currentDashboardId());
-    writeDashboardHistory(currentDashboardId(), 'replace');
+    await navigateToDashboard(startupDashboardRef(), 'replace');
   }
 
   window.addEventListener('popstate', (event: PopStateEvent) => {

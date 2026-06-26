@@ -77,35 +77,96 @@ func TestMigrateSeedsStarterDashboards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListDashboards: %v", err)
 	}
-	if len(dashboards) != 3 {
-		t.Fatalf("starter dashboard count = %d, want 3: %#v", len(dashboards), dashboards)
+	if len(dashboards) != 9 {
+		t.Fatalf("starter dashboard count = %d, want 9: %#v", len(dashboards), dashboards)
 	}
 
-	dashboard := findDashboardMeta(t, dashboards, sqldb.StarterDashboardName)
-	if dashboard.IsCategory {
-		t.Fatal("DASHBOARD should be a dashboard, not a category")
+	welcome := findDashboardMeta(t, dashboards, sqldb.StarterWelcomeName)
+	if welcome.IsCategory {
+		t.Fatal("Welcome should be a dashboard, not a category")
 	}
-	if dashboard.ParentID != nil {
-		t.Fatalf("DASHBOARD parent = %v, want nil", *dashboard.ParentID)
+	if welcome.ParentID != nil {
+		t.Fatalf("Welcome parent = %v, want nil", *welcome.ParentID)
 	}
-	assertDashboardWidgetType(t, db, dashboard.ID, "manual-widget")
+	assertDashboardWidgetType(t, db, welcome.ID, "html-widget")
 
-	monitoring := findDashboardMeta(t, dashboards, sqldb.StarterMonitoringCategory)
-	if !monitoring.IsCategory {
-		t.Fatal("MONTORING should be a category")
+	systemMetrics := findDashboardMeta(t, dashboards, sqldb.StarterSystemMetricsName)
+	if systemMetrics.IsCategory {
+		t.Fatal("System Metrics should be a dashboard, not a category")
 	}
-	if monitoring.ParentID != nil {
-		t.Fatalf("MONTORING parent = %v, want nil", *monitoring.ParentID)
+	if systemMetrics.ParentID != nil {
+		t.Fatalf("System Metrics parent = %v, want nil", *systemMetrics.ParentID)
+	}
+	assertDashboardWidgetType(t, db, systemMetrics.ID, "text-widget")
+
+	settings := findDashboardMeta(t, dashboards, sqldb.StarterSettingsCategory)
+	if !settings.IsCategory {
+		t.Fatal("Settings should be a category")
+	}
+	if settings.ParentID != nil {
+		t.Fatalf("Settings parent = %v, want nil", *settings.ParentID)
 	}
 
-	tagView := findDashboardMeta(t, dashboards, sqldb.StarterTagViewName)
-	if tagView.IsCategory {
-		t.Fatal("Tag View should be a dashboard, not a category")
+	settingsChildren := []struct {
+		name       string
+		widgetType string
+	}{
+		{sqldb.StarterTagsManagerName, "tags-manager-widget"},
+		{sqldb.StarterOrgUsersPermsName, "tabs-widget"},
+		{sqldb.StarterTagCalcsName, "tagcalcs-widget"},
+		{sqldb.StarterSchedulerName, "scheduler-widget"},
+		{sqldb.StarterNotificationsName, "notifications-widget"},
 	}
-	if tagView.ParentID == nil || *tagView.ParentID != monitoring.ID {
-		t.Fatalf("Tag View parent = %v, want %d", tagView.ParentID, monitoring.ID)
+	for _, child := range settingsChildren {
+		dashboard := findDashboardMeta(t, dashboards, child.name)
+		if dashboard.IsCategory {
+			t.Fatalf("%s should be a dashboard, not a category", child.name)
+		}
+		if dashboard.ParentID == nil || *dashboard.ParentID != settings.ID {
+			t.Fatalf("%s parent = %v, want %d", child.name, dashboard.ParentID, settings.ID)
+		}
+		assertDashboardWidgetType(t, db, dashboard.ID, child.widgetType)
 	}
-	assertDashboardWidgetType(t, db, tagView.ID, "tags-manager-widget")
+
+	help := findDashboardMeta(t, dashboards, sqldb.StarterHelpName)
+	if help.IsCategory {
+		t.Fatal("Help should be a dashboard, not a category")
+	}
+	if help.ParentID != nil {
+		t.Fatalf("Help parent = %v, want nil", *help.ParentID)
+	}
+	assertDashboardWidgetType(t, db, help.ID, "manual-widget")
+}
+
+func TestCreateOrganisationSkipsSystemMetricsStarterDashboard(t *testing.T) {
+	ctx := context.Background()
+	db, err := NewSQLiteDB(ctx, filepath.Join(t.TempDir(), "xact.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteDB: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if err := db.CreateOrganisation(ctx, &sqldb.Organisation{
+		Name:        "plant",
+		DisplayName: "Plant",
+		Active:      true,
+	}); err != nil {
+		t.Fatalf("CreateOrganisation: %v", err)
+	}
+
+	dashboards, err := db.ListDashboards(ctx, "plant")
+	if err != nil {
+		t.Fatalf("ListDashboards: %v", err)
+	}
+	if len(dashboards) != 8 {
+		t.Fatalf("starter dashboard count = %d, want 8: %#v", len(dashboards), dashboards)
+	}
+	if hasDashboardNamed(dashboards, sqldb.StarterSystemMetricsName) {
+		t.Fatalf("non-default org should not have %q dashboard: %#v", sqldb.StarterSystemMetricsName, dashboards)
+	}
 }
 
 func TestMigrateRepairsLegacyEventsIDColumn(t *testing.T) {
@@ -358,6 +419,15 @@ func findDashboardMeta(t *testing.T, dashboards []sqldb.DashboardMeta, name stri
 	return sqldb.DashboardMeta{}
 }
 
+func hasDashboardNamed(dashboards []sqldb.DashboardMeta, name string) bool {
+	for _, dashboard := range dashboards {
+		if dashboard.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func assertDashboardWidgetType(t *testing.T, db sqldb.DB, dashboardID int, want string) {
 	t.Helper()
 	dashboard, err := db.GetDashboard(context.Background(), "default", dashboardID)
@@ -373,7 +443,10 @@ func assertDashboardWidgetType(t *testing.T, db sqldb.DB, dashboardID int, want 
 	if err := json.Unmarshal(dashboard.Widgets, &widgets); err != nil {
 		t.Fatalf("unmarshal widgets: %v; raw=%s", err, string(dashboard.Widgets))
 	}
-	if len(widgets) != 1 || widgets[0].Type != want {
-		t.Fatalf("widget type = %#v, want single %q", widgets, want)
+	for _, widget := range widgets {
+		if widget.Type == want {
+			return
+		}
 	}
+	t.Fatalf("widget type = %#v, want one %q", widgets, want)
 }

@@ -149,12 +149,13 @@ export class AppSidebar extends BaseComponent {
             </svg>` : ''}
           </button>
           ${multiOrg ? `
-          <div id="org-dropdown" class="${this.orgDropdownOpen ? '' : 'hidden'} absolute left-3 right-3 top-full z-50 rounded-md border shadow-lg py-1 mt-1"
-               style="background-color: var(--sidebar-bg); border-color: var(--border-color);">
-            <div class="px-3 py-1.5 text-xs font-mono uppercase tracking-widest opacity-30">&nbsp;</div>
+          <div id="org-dropdown" class="${this.orgDropdownOpen ? '' : 'hidden'} absolute left-3 right-3 top-full z-50 rounded-md py-1 mt-1"
+               style="background: color-mix(in srgb, var(--sidebar-bg) 76%, var(--content-bg)); border: 2px solid color-mix(in srgb, var(--accent-color) 55%, var(--border-color)); box-shadow: 0 14px 28px rgba(0,0,0,0.45), 0 0 0 1px color-mix(in srgb, var(--accent-color) 18%, transparent) inset;">
+            <div class="px-3 py-1.5 text-xs font-mono uppercase tracking-widest opacity-40"
+                 style="border-bottom: 1px solid color-mix(in srgb, var(--accent-color) 20%, var(--border-color));">&nbsp;</div>
             ${this.allowedOrgs.map(org => `
             <button class="org-option w-full text-left px-3 py-1.5 text-xs font-mono uppercase tracking-widest transition-colors hover:opacity-80 ${org === this.currentOrg ? 'font-bold' : ''}"
-                    style="${org === this.currentOrg ? 'color: var(--accent-color);' : ''}"
+                    style="${org === this.currentOrg ? 'color: var(--accent-color); background: color-mix(in srgb, var(--accent-color) 12%, transparent);' : ''}"
                     data-org="${org}">
               ${org === this.currentOrg ? '&#x25CF; ' : '&#x25CB; '}${this.escapeHTML(this.orgDetails.get(org)?.displayName || org)}
             </button>`).join('')}

@@ -3,7 +3,7 @@ import { showConfirm } from '../../components/app-dialog';
 import { registerWidgetType } from './widget-registry';
 import { registerPermissions } from '../../permissions/registry';
 import { can } from '../../permissions/permissions';
-import { getCurrentUser } from '../../auth';
+import { getCurrentUser, switchOrgSession } from '../../auth';
 import {
   listOrganisations, createOrganisation, updateOrganisation, deleteOrganisation,
   listAPIKeys, createAPIKey, deleteAPIKey,
@@ -826,15 +826,34 @@ export class OrganisationsWidget extends BaseComponent {
   private async handleDelete(name: string): Promise<void> {
     if (!this.canChange) return;
     try {
+      const isCurrentOrg = name === this.currentOrgName;
+      const fallbackOrg = isCurrentOrg ? this.selectFallbackOrg(name) : '';
+      if (isCurrentOrg) {
+        if (!fallbackOrg) {
+          throw new Error('Cannot delete the active organisation because no fallback organisation is available.');
+        }
+        await switchOrgSession(fallbackOrg);
+      }
       await deleteOrganisation(name);
       this.panelOpen = false;
       this.form = blankForm();
+      if (isCurrentOrg) {
+        window.location.href = '/xact/?org=' + encodeURIComponent(fallbackOrg);
+        return;
+      }
       await this.loadData();
       this.emit('organisations-changed');
     } catch (err: any) {
       this.form.error = err?.message ?? 'Failed to delete.';
       this.rerender();
     }
+  }
+
+  private selectFallbackOrg(deletedName: string): string {
+    const remaining = this.orgs
+      .filter(org => org.name !== deletedName && org.active !== false)
+      .map(org => org.name);
+    return remaining.find(name => name === 'default') || remaining[0] || '';
   }
 
   // -------------------------------------------------------------------------

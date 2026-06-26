@@ -4,6 +4,7 @@ package sqldb
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"github.com/xact-iot/xact/backups"
@@ -324,12 +325,81 @@ type DashboardMeta struct {
 }
 
 const (
-	StarterDashboardName        = "DASHBOARD"
-	StarterMonitoringCategory   = "MONTORING"
-	StarterTagViewName          = "Tag View"
-	StarterDashboardWidgetsJSON = `[{"id":"help-manual","type":"manual-widget","x":0,"y":0,"w":24,"h":28,"config":{}}]`
-	StarterTagViewWidgetsJSON   = `[{"id":"tag-browser","type":"tags-manager-widget","x":0,"y":0,"w":24,"h":28,"config":{}}]`
+	StarterWelcomeName              = "Welcome"
+	StarterSystemMetricsName        = "System Metrics"
+	StarterSettingsCategory         = "Settings"
+	StarterTagsManagerName          = "Tags Manager"
+	StarterOrgUsersPermsName        = "Orgs, Users, Permissions"
+	StarterTagCalcsName             = "Tag Calcs"
+	StarterSchedulerName            = "Scheduler"
+	StarterNotificationsName        = "Notifications"
+	StarterHelpName                 = "Help"
+	StarterSystemMetricsWidgetsJSON = `[{"id":"sys-cpu-title","type":"text-widget","x":0,"y":0,"w":24,"h":3,"config":{"text":"<b>CPU METRICS</b>","color":"#e2e8f0","fontSize":24,"textAlign":"center"}},{"id":"sys-cpu-load","type":"big-number-widget","x":0,"y":3,"w":6,"h":8,"config":{"headerText":"CPU Load","tagPrefix":"system.*","tagPath":"CPU.SystemLoad","decimals":2,"fontSize":48,"showIcon":false,"showSparkline":false,"refreshInterval":0}},{"id":"sys-process-load","type":"big-number-widget","x":6,"y":3,"w":6,"h":8,"config":{"headerText":"Process Load","tagPrefix":"system.*","tagPath":"CPU.ProcessLoad","decimals":2,"fontSize":48,"showIcon":false,"showSparkline":false,"refreshInterval":0}},{"id":"sys-goroutines","type":"big-number-widget","x":12,"y":3,"w":6,"h":8,"config":{"headerText":"Go Routines","tagPrefix":"system.*","tagPath":"CPU.Goroutines","decimals":0,"fontSize":48,"showIcon":false,"showSparkline":false,"refreshInterval":0}},{"id":"sys-heap-live","type":"big-number-widget","x":18,"y":3,"w":6,"h":8,"config":{"headerText":"Heap Live MB","tagPrefix":"system.*","tagPath":"Memory.HeapLive","decimals":2,"fontSize":48,"showIcon":false,"showSparkline":false,"refreshInterval":0}},{"id":"sys-cpu-chart","type":"timeseries-chart-widget","x":0,"y":11,"w":12,"h":15,"config":{"headerText":"CPU","timePeriod":24,"useUiTimeRange":true,"showGrid":true,"showZoomControl":true,"series1Enabled":true,"series1Name":"CPU Load","series1TagPrefix":"system.*","series1TagPath":"CPU.SystemLoad","series1Color":"#60a5fa","series1YAxis":"left","series1Smooth":true,"series1GradientFill":false,"series2Enabled":true,"series2Name":"Go Routines","series2TagPrefix":"system.*","series2TagPath":"CPU.Goroutines","series2Color":"#ecc55b","series2YAxis":"right","series2Smooth":true}},{"id":"sys-memory-chart","type":"timeseries-chart-widget","x":12,"y":11,"w":12,"h":15,"config":{"headerText":"Memory","timePeriod":24,"useUiTimeRange":true,"showGrid":true,"showZoomControl":true,"series1Enabled":true,"series1Name":"Heap total MB","series1TagPrefix":"system.*","series1TagPath":"Memory.HeapTotal","series1Color":"#60a5fa","series1YAxis":"left","series1Smooth":true,"series1GradientFill":false,"series2Enabled":true,"series2Name":"Heap live MB","series2TagPrefix":"system.*","series2TagPath":"Memory.HeapLive","series2Color":"#f2ef91","series2YAxis":"right","series2Smooth":true}},{"id":"sys-ingest-title","type":"text-widget","x":0,"y":26,"w":24,"h":3,"config":{"text":"<b>DATA INGEST</b>","color":"#e2e8f0","fontSize":24,"textAlign":"center"}},{"id":"sys-max-lag","type":"big-number-widget","x":0,"y":29,"w":6,"h":8,"config":{"headerText":"Max Lag ms","tagPrefix":"system.*","tagPath":"Ingest.MaxLagMs","decimals":1,"fontSize":48,"showIcon":false,"showSparkline":false,"refreshInterval":0}},{"id":"sys-avg-lag","type":"big-number-widget","x":6,"y":29,"w":6,"h":8,"config":{"headerText":"Avg Lag ms","tagPrefix":"system.*","tagPath":"Ingest.AvgLagMs","decimals":1,"fontSize":48,"showIcon":false,"showSparkline":false,"refreshInterval":0}},{"id":"sys-rate","type":"big-number-widget","x":12,"y":29,"w":6,"h":8,"config":{"headerText":"Completed / sec","tagPrefix":"system.*","tagPath":"Ingest.CompletedRatePerSec","decimals":1,"fontSize":48,"showIcon":false,"showSparkline":false,"refreshInterval":0}},{"id":"sys-pending","type":"big-number-widget","x":18,"y":29,"w":6,"h":8,"config":{"headerText":"Pending msgs","tagPrefix":"system.*","tagPath":"Ingest.NatsPendingMsgs","decimals":0,"fontSize":48,"showIcon":false,"showSparkline":false,"refreshInterval":0}},{"id":"sys-ingest-chart","type":"timeseries-chart-widget","x":0,"y":37,"w":14,"h":16,"config":{"headerText":"Data Ingest Metrics","timePeriod":24,"useUiTimeRange":true,"showGrid":true,"showZoomControl":true,"series1Enabled":true,"series1Name":"Max Lag","series1TagPrefix":"system.*","series1TagPath":"Ingest.MaxLagMs","series1Color":"#60a5fa","series1YAxis":"left","series1Smooth":true,"series1GradientFill":false,"series2Enabled":true,"series2Name":"Avg Lag","series2TagPrefix":"system.*","series2TagPath":"Ingest.AvgLagMs","series2Color":"#e8f075","series2YAxis":"right","series2Smooth":true,"series3Enabled":true,"series3Name":"Msg/s","series3TagPrefix":"system.*","series3TagPath":"Ingest.CompletedRatePerSec","series3Color":"#22c55e","series3YAxis":"right","series3Smooth":true}},{"id":"sys-ingest-table","type":"status-table-widget","x":14,"y":37,"w":10,"h":16,"config":{"headerText":"Ingest Status","tagPrefix":"system.*.Ingest","colHeader1":"Metric","colHeader2":"Value","colHeader3":"Description","rows":[{"id":"max-lag","label":"Max Lag","tagPath":"MaxLagMs","formatter":"number","col2":{"type":"value","tagPath":"MaxLagMs","formatter":"number"},"col3":{"type":"value","tagPath":"MaxLagMs:description","formatter":"text"}},{"id":"avg-lag","label":"Avg Lag","tagPath":"AvgLagMs","formatter":"number","col2":{"type":"value","tagPath":"AvgLagMs","formatter":"number"},"col3":{"type":"value","tagPath":"AvgLagMs:description","formatter":"text"}},{"id":"rate","label":"Msgs per sec","tagPath":"CompletedRatePerSec","formatter":"number","col2":{"type":"value","tagPath":"CompletedRatePerSec","formatter":"number"},"col3":{"type":"value","tagPath":"CompletedRatePerSec:description","formatter":"text"}},{"id":"pending","label":"Pending msgs","tagPath":"NatsPendingMsgs","formatter":"number","col2":{"type":"value","tagPath":"NatsPendingMsgs","formatter":"number"},"col3":{"type":"value","tagPath":"NatsPendingMsgs:description","formatter":"text"}}]}}]`
+	StarterTagsManagerWidgetsJSON   = `[{"id":"tag-browser","type":"tags-manager-widget","x":0,"y":0,"w":24,"h":28,"config":{}}]`
+	StarterOrgUsersPermsWidgetsJSON = `[{"id":"org-user-perms-tabs","type":"tabs-widget","x":0,"y":0,"w":24,"h":28,"config":{"tabs":[{"id":"tab-orgs","label":"Organisations","widgetType":"organisations-widget","widgetConfig":{}},{"id":"tab-users","label":"Users","widgetType":"users-widget","widgetConfig":{}},{"id":"tab-perms","label":"Permissions","widgetType":"permissions-widget","widgetConfig":{}}],"activeTabId":"tab-orgs"}}]`
+	StarterTagCalcsWidgetsJSON      = `[{"id":"tag-calcs","type":"tagcalcs-widget","x":0,"y":0,"w":24,"h":28,"config":{}}]`
+	StarterSchedulerWidgetsJSON     = `[{"id":"scheduler","type":"scheduler-widget","x":0,"y":0,"w":24,"h":28,"config":{}}]`
+	StarterNotificationsWidgetsJSON = `[{"id":"notifications","type":"notifications-widget","x":0,"y":0,"w":24,"h":28,"config":{}}]`
+	StarterHelpWidgetsJSON          = `[{"id":"help-manual","type":"manual-widget","x":0,"y":0,"w":24,"h":28,"config":{}}]`
 )
+
+const StarterWelcomeHTML = `
+<div style="height:100%;box-sizing:border-box;padding:32px;display:flex;flex-direction:column;justify-content:center;gap:18px;background:linear-gradient(135deg,rgba(14,165,233,.16),rgba(34,197,94,.10));border:1px solid rgba(148,163,184,.25);border-radius:8px;">
+  <div style="font-size:34px;font-weight:800;line-height:1.1;">
+    Welcome to XACT
+  </div>
+
+  <div style="max-width:860px;font-size:16px;line-height:1.6;color:var(--content-text);">
+	<p>A sample set of dashboards is provided to get going. These can be selected from the left sidebar.
+	</p>
+	<p>The UI is completely configurable, create your own dashboards and arrange the widgets as you
+	needed.
+	</p>
+	<p>This welcome page is a standard dashboard with a single HTML widget. 
+	It can be edited to suit, or deleted when no longer appropriate.
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:4px;">
+    <div style="padding:14px;border:1px solid rgba(148,163,184,.22);border-radius:8px;background:rgba(15,23,42,.22);">
+      <b>Build dashboards</b>
+	  <p>The DASHBOARDS button at the bottom of the left sidebar shows a panel that is used to add,
+		delete and re-arrange dashboards in the sidebar.
+	  </p>
+	  <p>
+	  	<ul>	
+    		<li>Start edit mode by clicking on the ☰ icon at the top right.</li>
+	  		<li>Add widgets by dragging them from widgets toolbar.</li>
+			<li>Position widgets by dragging them.</li>
+	  		<li>Resize widgets by dragging the bottom right corner.</li>
+			<li>Configure a widget by clicking the gear icon at the top right of the widget.</li>
+			<li>Save layouts by clicking the 'Save' button.</li>
+		</ul>
+	  </p>
+    </div>
+
+    <div style="padding:14px;border:1px solid rgba(148,163,184,.22);border-radius:8px;background:rgba(15,23,42,.22);">
+      <b>Connect data</b>
+	  <p>
+	  	Use your custom data source to feed data into the XACT server. See 
+		the online user manual as well as examples in the repo for how this is done.
+	  </p>
+	  <p>
+      	Use the Tags Manager dashboard to create devices, inspect values, and configure tag metadata.
+	  <p>
+    </div>
+
+    <div style="padding:14px;border:1px solid rgba(148,163,184,.22);border-radius:8px;background:rgba(15,23,42,.22);">
+      <b>Manage access</b>
+	  <p>
+    	Use the Settings dashboards to configure organisations, users, permissions, and alerts.
+	  </p>
+    </div>
+  </div>
+</div>`
+
+var StarterWelcomeWidgetsJSON = `[{"id":"welcome-start","type":"html-widget","x":0,"y":0,"w":24,"h":30,"config":{"html":` +
+	strconv.Quote(StarterWelcomeHTML) +
+	`}}]`
 
 // EventFilter specifies criteria for querying event entries.
 type EventFilter struct {

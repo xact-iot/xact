@@ -139,6 +139,10 @@ func TestOrgHandlersCreateUpdateDeleteSyncHooksAndCreatorRole(t *testing.T) {
 	if err := db.CreateUser(ctx, user, hash); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
+	_, tokenVersionBefore, err := db.GetUserAuthState(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("get auth state before org create: %v", err)
+	}
 
 	var synced []string
 	var deleted []string
@@ -176,6 +180,13 @@ func TestOrgHandlersCreateUpdateDeleteSyncHooksAndCreatorRole(t *testing.T) {
 	}
 	if !hasOrgRole(orgs, "gamma", "SystemAdmin") {
 		t.Fatalf("creator org roles = %#v, want gamma SystemAdmin", orgs)
+	}
+	_, tokenVersionAfter, err := db.GetUserAuthState(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("get auth state after org create: %v", err)
+	}
+	if tokenVersionAfter != tokenVersionBefore {
+		t.Fatalf("creator token version after org create = %d, want unchanged %d", tokenVersionAfter, tokenVersionBefore)
 	}
 
 	var updated sqldb.Organisation

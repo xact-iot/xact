@@ -443,6 +443,15 @@ func (db *PostgresDB) SetUserOrgRoles(ctx context.Context, userID int, orgName s
 
 // AssignUserToOrg adds a user to a named organisation and grants the given role names.
 func (db *PostgresDB) AssignUserToOrg(ctx context.Context, userID int, orgName string, roleNames []string) error {
+	if err := db.AssignUserToOrgWithoutTokenBump(ctx, userID, orgName, roleNames); err != nil {
+		return err
+	}
+	return db.BumpUserTokenVersion(ctx, userID)
+}
+
+// AssignUserToOrgWithoutTokenBump adds a user to an organisation without
+// invalidating the current session. It is intended for org-create auto-assign.
+func (db *PostgresDB) AssignUserToOrgWithoutTokenBump(ctx context.Context, userID int, orgName string, roleNames []string) error {
 	var orgID int
 	if err := db.pool.QueryRow(ctx,
 		"SELECT id FROM organisations WHERE name = $1", orgName,
@@ -466,7 +475,7 @@ func (db *PostgresDB) AssignUserToOrg(ctx context.Context, userID int, orgName s
 			return fmt.Errorf("assigning role %q: %w", roleName, err)
 		}
 	}
-	return db.BumpUserTokenVersion(ctx, userID)
+	return nil
 }
 
 // scanUser scans a user row (without password_hash column).

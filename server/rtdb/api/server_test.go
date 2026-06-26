@@ -34,28 +34,33 @@ type testDB struct {
 
 func newTestDB(loginName, password string) *testDB {
 	h, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	orgs := []sqldb.UserOrg{{OrgID: 1, OrgName: "default", Roles: []string{"Admin"}}}
 	return &testDB{
 		user: &sqldb.User{
 			ID: 1, LoginName: loginName, Active: true, TokenVersion: 1,
-			Orgs: []sqldb.UserOrg{{OrgID: 1, OrgName: "default", Roles: []string{"Admin"}}},
+			Orgs: orgs,
 		},
-		hash: string(h),
+		hash:     string(h),
+		userOrgs: orgs,
 	}
 }
 
 func newRoleTestDB(loginName, password, role string) *testDB {
 	db := newTestDB(loginName, password)
 	db.user.Orgs = []sqldb.UserOrg{{OrgID: 1, OrgName: "default", Roles: []string{role}}}
+	db.userOrgs = db.user.Orgs
 	return db
 }
 
 func newUnsetAdminTestDB() *testDB {
+	orgs := []sqldb.UserOrg{{OrgID: 1, OrgName: "default", Roles: []string{"SystemAdmin"}}}
 	return &testDB{
 		user: &sqldb.User{
 			ID: 1, LoginName: "admin", Active: true, TokenVersion: 1,
-			Orgs: []sqldb.UserOrg{{OrgID: 1, OrgName: "default", Roles: []string{"SystemAdmin"}}},
+			Orgs: orgs,
 		},
-		hash: sqldb.UnsetBootstrapAdminHash,
+		hash:     sqldb.UnsetBootstrapAdminHash,
+		userOrgs: orgs,
 	}
 }
 
@@ -1043,6 +1048,26 @@ func TestLoginEndpoint(t *testing.T) {
 		srv.Router().ServeHTTP(rr, req)
 		if rr.Code != http.StatusOK {
 			t.Fatalf("dashboard list status = %d; body: %s", rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("token for deleted tenant is rejected", func(t *testing.T) {
+		db := newTestDB("testuser", "testpass")
+		db.organisations = []sqldb.Organisation{{ID: 2, Name: "testorg", DisplayName: "Test Org"}}
+		db.userOrgs = []sqldb.UserOrg{{OrgID: 2, OrgName: "testorg", Roles: []string{"Admin"}}}
+		srv := NewServer(ServerConfig{}, treeOps, nil, nil, "test-secret", db, "")
+
+		token, err := srv.buildJWT("1", "testuser", "default", []string{"Admin"}, []string{"default"}, 1)
+		if err != nil {
+			t.Fatalf("buildJWT: %v", err)
+		}
+
+		req := httptest.NewRequest("GET", "/api/v1/dashboards", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("dashboard list status = %d, want 401; body: %s", rr.Code, rr.Body.String())
 		}
 	})
 }

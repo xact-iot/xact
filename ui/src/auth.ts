@@ -130,8 +130,8 @@ function isTokenExpired(token: string): boolean {
   }
 }
 
-// Switches the active organisation. Issues a new JWT and reloads to the home page.
-export async function switchOrg(orgName: string): Promise<void> {
+// Switches the stored active organisation token without navigating.
+export async function switchOrgSession(orgName: string): Promise<AuthResponse> {
   const token = getAuthToken();
   if (!token) throw new Error('not authenticated');
 
@@ -150,9 +150,12 @@ export async function switchOrg(orgName: string): Promise<void> {
   }
 
   const data: AuthResponse = await response.json();
-  authToken = data.token;
-  localStorage.setItem('xact_auth_token', authToken);
-  localStorage.setItem('xact_auth_user', JSON.stringify(data.user));
+  return storeAuthResponse(data);
+}
+
+// Switches the active organisation. Issues a new JWT and reloads to the home page.
+export async function switchOrg(orgName: string): Promise<void> {
+  await switchOrgSession(orgName);
 
   // Navigate to home and do a full refresh to clear any org-specific state.
   window.location.href = '/xact/?org=' + encodeURIComponent(orgName);

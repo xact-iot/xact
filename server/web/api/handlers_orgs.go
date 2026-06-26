@@ -22,6 +22,10 @@ type OrgNodeDeleter func(name string)
 // UserIDExtractor extracts the authenticated user's numeric ID from a request context.
 type UserIDExtractor func(ctx context.Context) (int, bool)
 
+type userOrgAssignerWithoutTokenBump interface {
+	AssignUserToOrgWithoutTokenBump(ctx context.Context, userID int, orgName string, roleNames []string) error
+}
+
 // OrgHandlers holds dependencies for organisation REST endpoints.
 type OrgHandlers struct {
 	DB            sqldb.DB
@@ -139,7 +143,11 @@ func (h *OrgHandlers) HandleCreateOrganisation(w http.ResponseWriter, r *http.Re
 	// retain full access without a separate role assignment step.
 	if h.GetUserID != nil {
 		if userID, ok := h.GetUserID(r.Context()); ok {
-			_ = h.DB.AssignUserToOrg(r.Context(), userID, org.Name, []string{"SystemAdmin"})
+			if assigner, ok := h.DB.(userOrgAssignerWithoutTokenBump); ok {
+				_ = assigner.AssignUserToOrgWithoutTokenBump(r.Context(), userID, org.Name, []string{"SystemAdmin"})
+			} else {
+				_ = h.DB.AssignUserToOrg(r.Context(), userID, org.Name, []string{"SystemAdmin"})
+			}
 		}
 	}
 

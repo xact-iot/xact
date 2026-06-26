@@ -133,7 +133,55 @@ func validateLiveAuthState(ctx context.Context, db sqldb.DB, claims *JWTClaims) 
 	if err != nil || !active {
 		return false
 	}
-	return claims.TokenVersion > 0 && claims.TokenVersion == tokenVersion
+	if claims.TokenVersion <= 0 || claims.TokenVersion != tokenVersion {
+		return false
+	}
+	return validateLiveTenant(ctx, db, userID, claims)
+}
+
+func validateLiveTenant(ctx context.Context, db sqldb.DB, userID int, claims *JWTClaims) bool {
+	if claims == nil || strings.TrimSpace(claims.TenantID) == "" {
+		return false
+	}
+
+	userOrgs, err := db.GetUserOrgs(ctx, userID)
+	if err != nil {
+		return false
+	}
+	if claimsHasSystemAdmin(claims) {
+		hasLiveSystemAdmin := false
+		for _, org := range userOrgs {
+			for _, role := range org.Roles {
+				if strings.EqualFold(role, "SystemAdmin") {
+					hasLiveSystemAdmin = true
+					break
+				}
+			}
+			if hasLiveSystemAdmin {
+				break
+			}
+		}
+		if !hasLiveSystemAdmin {
+			return false
+		}
+		orgs, err := db.ListOrganisations(ctx)
+		if err != nil {
+			return false
+		}
+		for _, org := range orgs {
+			if org.Name == claims.TenantID {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, org := range userOrgs {
+		if org.OrgName == claims.TenantID {
+			return true
+		}
+	}
+	return false
 }
 
 func unauthorized(w http.ResponseWriter) {

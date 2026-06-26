@@ -555,6 +555,14 @@ func (db *SQLiteDB) seedStarterDashboards(ctx context.Context, orgID int) error 
 		return nil
 	}
 
+	var orgName string
+	if err := db.db.QueryRowContext(ctx,
+		"SELECT name FROM organisations WHERE id = ?",
+		orgID,
+	).Scan(&orgName); err != nil {
+		return err
+	}
+
 	tx, err := db.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -562,30 +570,66 @@ func (db *SQLiteDB) seedStarterDashboards(ctx context.Context, orgID int) error 
 	defer tx.Rollback()
 
 	now := formatTimestamp(time.Now())
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO dashboards (org_id, name, description, icon, variation, device_type, permission, is_category, parent_id, sort_order, widgets, created_at, updated_at)
-		VALUES (?, ?, 'XACT help manual', 'mdi:view-dashboard', '', '', '', 0, NULL, 0, ?, ?, ?)
-	`, orgID, sqldb.StarterDashboardName, sqldb.StarterDashboardWidgetsJSON, now, now); err != nil {
-		return fmt.Errorf("inserting starter dashboard: %w", err)
+	topLevelDashboards := []struct {
+		name        string
+		description string
+		icon        string
+		sortOrder   int
+		widgets     string
+	}{
+		{sqldb.StarterWelcomeName, "Start here", "mdi:hand-wave", 0, sqldb.StarterWelcomeWidgetsJSON},
+		{sqldb.StarterHelpName, "XACT user manual", "mdi:book-open-page-variant", 8, sqldb.StarterHelpWidgetsJSON},
+	}
+	if orgName == "default" {
+		topLevelDashboards = append(topLevelDashboards, struct {
+			name        string
+			description string
+			icon        string
+			sortOrder   int
+			widgets     string
+		}{sqldb.StarterSystemMetricsName, "Server and ingest metrics", "mdi:monitor-dashboard", 1, sqldb.StarterSystemMetricsWidgetsJSON})
+	}
+	for _, dashboard := range topLevelDashboards {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO dashboards (org_id, name, description, icon, variation, device_type, permission, is_category, parent_id, sort_order, widgets, created_at, updated_at)
+			VALUES (?, ?, ?, ?, '', '', '', 0, NULL, ?, ?, ?, ?)
+		`, orgID, dashboard.name, dashboard.description, dashboard.icon, dashboard.sortOrder, dashboard.widgets, now, now); err != nil {
+			return fmt.Errorf("inserting starter dashboard %q: %w", dashboard.name, err)
+		}
 	}
 
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO dashboards (org_id, name, description, icon, variation, device_type, permission, is_category, parent_id, sort_order, widgets, created_at, updated_at)
-		VALUES (?, ?, 'Monitoring tools', 'mdi:monitor-dashboard', '', '', '', 1, NULL, 1, '[]', ?, ?)
-	`, orgID, sqldb.StarterMonitoringCategory, now, now)
+		VALUES (?, ?, 'Configuration and administration', 'mdi:cog', '', '', '', 1, NULL, 2, '[]', ?, ?)
+	`, orgID, sqldb.StarterSettingsCategory, now, now)
 	if err != nil {
-		return fmt.Errorf("inserting starter monitoring category: %w", err)
+		return fmt.Errorf("inserting starter settings category: %w", err)
 	}
-	monitoringID, err := result.LastInsertId()
+	settingsID, err := result.LastInsertId()
 	if err != nil {
 		return err
 	}
 
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO dashboards (org_id, name, description, icon, variation, device_type, permission, is_category, parent_id, sort_order, widgets, created_at, updated_at)
-		VALUES (?, ?, 'Browse and monitor tags', 'mdi:tag-multiple', '', '', '', 0, ?, 2, ?, ?, ?)
-	`, orgID, sqldb.StarterTagViewName, monitoringID, sqldb.StarterTagViewWidgetsJSON, now, now); err != nil {
-		return fmt.Errorf("inserting starter tag view: %w", err)
+	settingsDashboards := []struct {
+		name        string
+		description string
+		icon        string
+		sortOrder   int
+		widgets     string
+	}{
+		{sqldb.StarterTagsManagerName, "Browse and manage tags", "mdi:tag-multiple", 0, sqldb.StarterTagsManagerWidgetsJSON},
+		{sqldb.StarterOrgUsersPermsName, "Manage organisations, users, and roles", "mdi:account-cog", 1, sqldb.StarterOrgUsersPermsWidgetsJSON},
+		{sqldb.StarterTagCalcsName, "Calculated tag configuration", "mdi:calculator", 2, sqldb.StarterTagCalcsWidgetsJSON},
+		{sqldb.StarterSchedulerName, "Scheduled tasks and reports", "mdi:calendar-clock", 3, sqldb.StarterSchedulerWidgetsJSON},
+		{sqldb.StarterNotificationsName, "Notification profiles and channels", "mdi:bell", 4, sqldb.StarterNotificationsWidgetsJSON},
+	}
+	for _, dashboard := range settingsDashboards {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO dashboards (org_id, name, description, icon, variation, device_type, permission, is_category, parent_id, sort_order, widgets, created_at, updated_at)
+			VALUES (?, ?, ?, ?, '', '', '', 0, ?, ?, ?, ?, ?)
+		`, orgID, dashboard.name, dashboard.description, dashboard.icon, settingsID, dashboard.sortOrder, dashboard.widgets, now, now); err != nil {
+			return fmt.Errorf("inserting starter settings dashboard %q: %w", dashboard.name, err)
+		}
 	}
 
 	return tx.Commit()

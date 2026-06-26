@@ -394,6 +394,15 @@ func (db *SQLiteDB) SetUserOrgRoles(ctx context.Context, userID int, orgName str
 
 // AssignUserToOrg adds a user to a named organisation and grants the given role names.
 func (db *SQLiteDB) AssignUserToOrg(ctx context.Context, userID int, orgName string, roleNames []string) error {
+	if err := db.AssignUserToOrgWithoutTokenBump(ctx, userID, orgName, roleNames); err != nil {
+		return err
+	}
+	return db.BumpUserTokenVersion(ctx, userID)
+}
+
+// AssignUserToOrgWithoutTokenBump adds a user to an organisation without
+// invalidating the current session. It is intended for org-create auto-assign.
+func (db *SQLiteDB) AssignUserToOrgWithoutTokenBump(ctx context.Context, userID int, orgName string, roleNames []string) error {
 	var orgID int
 	if err := db.db.QueryRowContext(ctx,
 		"SELECT id FROM organisations WHERE name = ?", orgName,
@@ -416,7 +425,7 @@ func (db *SQLiteDB) AssignUserToOrg(ctx context.Context, userID int, orgName str
 			return fmt.Errorf("assigning role %q: %w", roleName, err)
 		}
 	}
-	return db.BumpUserTokenVersion(ctx, userID)
+	return nil
 }
 
 // scanUserRow scans a user row (without password_hash column).
