@@ -55,6 +55,7 @@ server/nats-store/
 server/deploy/
 server/db-backups/
 certs/
+deploy/
 backup-*.gz
 pre-restore-*.gz
 pre-restore-*.db

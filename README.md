@@ -274,11 +274,7 @@ Interactive control widgets enable operator actions directly from dashboards. Co
 
 ## 8. Roadmap
 
-- **Docker Support** - Basic Docker Compose deployment is available; broader orchestration hardening is still planned
 - **Redundancy & Clustering** - Deploy multi-node clusters for high availability with automatic failover
-- **MCP Server** - Access XACT data from AI Agents
-
-The code is designed to support these features but comprehensive testing must still be done before releasing clustering features.
 
 ---
 
