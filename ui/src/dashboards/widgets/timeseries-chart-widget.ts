@@ -6,6 +6,7 @@ import { registerWidgetType } from './widget-registry';
 import { graphic, init, type ECharts, type EChartsOption, type SeriesOption, type XAXisComponentOption, type YAXisComponentOption } from './echarts-line';
 import type { PropertyField } from './widget-properties-dialog';
 import { resolveMetricTagPath } from './tag-path-resolver';
+import { cloneValue } from '../../utils/clone';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -125,7 +126,7 @@ function isLightThemeSurface(): boolean {
 // ── Widget ────────────────────────────────────────────────────────────────────
 
 export class TimeseriesChartWidget extends BaseComponent {
-  private config: Config = structuredClone(DEFAULT_CONFIG);
+  private config: Config = cloneValue(DEFAULT_CONFIG);
 
   /** Live data storage - one DataPoint[] per series slot (0-4). */
   private seriesData: DataPoint[][] = Array.from({ length: 5 }, () => []);

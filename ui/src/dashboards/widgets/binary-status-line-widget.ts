@@ -6,6 +6,7 @@ import { registerWidgetType } from './widget-registry';
 import { init, type ECharts, type EChartsOption } from './echarts-line';
 import type { PropertyField } from './widget-properties-dialog';
 import { resolveMetricTagPath } from './tag-path-resolver';
+import { cloneValue } from '../../utils/clone';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -47,7 +48,7 @@ function cssVar(name: string): string {
 // ── Widget ────────────────────────────────────────────────────────────────────
 
 export class BinaryStatusLineWidget extends BaseComponent {
-  private config: Config = structuredClone(DEFAULT_CONFIG);
+  private config: Config = cloneValue(DEFAULT_CONFIG);
   private data: DataPoint[] = [];
   private chart: ECharts | null = null;
   private resizeObserver: ResizeObserver | null = null;

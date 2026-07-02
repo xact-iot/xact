@@ -140,16 +140,12 @@ PostgreSQL data is stored in the host directory configured by `POSTGRES_DATA_DIR
 
 Download the Windows archive. The Windows package is xact-windows-amd64-<version>.zip. Replace `<version>` with the release you need.
 
-`Note`: The Windows build has been tested using Wine on Linux, but not on a real Windows system. Please give feedback if any issues are seen.
-
 ```powershell
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\xact"
 Copy-Item .\xact-windows-amd64-<version>.zip "$env:USERPROFILE\xact\"
 Set-Location "$env:USERPROFILE\xact"
 Expand-Archive .\xact-windows-amd64-<version>.zip -DestinationPath . -Force
 ```
-
-Review `.env` before first start. For a local evaluation, the packaged defaults are enough:
 
 ```cmd
 start.bat
@@ -165,7 +161,7 @@ For production deployment guidance, open the online manual after startup and rea
 
 ### 2.5. Sending Data to XACT
 
-There are various way to send data to the XACT server and these are described in the online manual. But the simplest way to get started is probably to start with the Python program found in the repo under ```demo/python-example```. This skeleton program sends data via the XACT REST API.
+There are various way to send data to the XACT server and these are described in the online manual. But the simplest way to get started is probably to start with the Python program found in the repo under `demo/python-example`. This skeleton program sends data via the XACT REST API.
 
 ### 2.6. Next Steps
 

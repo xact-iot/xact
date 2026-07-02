@@ -344,7 +344,7 @@ const (
 )
 
 const StarterWelcomeHTML = `
-<div style="height:100%;box-sizing:border-box;padding:32px;display:flex;flex-direction:column;justify-content:center;gap:18px;background:linear-gradient(135deg,rgba(14,165,233,.16),rgba(34,197,94,.10));border:1px solid rgba(148,163,184,.25);border-radius:8px;">
+<div class="xact-welcome-panel" style="min-height:100%;box-sizing:border-box;padding:32px;display:flex;flex-direction:column;justify-content:flex-start;gap:18px;background:linear-gradient(135deg,rgba(14,165,233,.16),rgba(34,197,94,.10));border:1px solid rgba(148,163,184,.25);border-radius:8px;">
   <div style="font-size:34px;font-weight:800;line-height:1.1;">
     Welcome to XACT
   </div>

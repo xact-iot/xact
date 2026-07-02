@@ -373,7 +373,7 @@ cd /d "%SCRIPT_DIR%"
 if not exist .env (
     if exist .env.example (
         echo Creating .env from .env.example
-        copy .env.example .env >nul
+        echo F | xcopy /H .env.example .env >nul
     )
 )
 

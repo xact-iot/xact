@@ -19,13 +19,15 @@ const (
 type MQTTPublisher struct {
 	client   mqtt.Client
 	broker   string
+	username string
 	password string
 }
 
 // NewMQTTPublisher creates a new MQTT publisher
-func NewMQTTPublisher(broker, password string) *MQTTPublisher {
+func NewMQTTPublisher(broker, username, password string) *MQTTPublisher {
 	return &MQTTPublisher{
 		broker:   broker,
+		username: username,
 		password: password,
 	}
 }
@@ -40,8 +42,12 @@ func (p *MQTTPublisher) Connect() error {
 		opts.SetTLSConfig(tlsConfig)
 	}
 	opts.SetClientID("lta-traffic-images-driver")
-	opts.SetUsername("a")
-	opts.SetPassword(p.password)
+	if p.username != "" {
+		opts.SetUsername(p.username)
+	}
+	if p.password != "" {
+		opts.SetPassword(p.password)
+	}
 	opts.SetAutoReconnect(true)
 	opts.SetConnectRetry(false)
 	opts.SetConnectTimeout(mqttConnectTimeout)
@@ -89,7 +95,10 @@ func (p *MQTTPublisher) PublishTrafficImage(data TrafficImageData) error {
 			"online": true,
 		},
 		"image": map[string]any{
-			"url": data.ImageLink,
+			"url": map[string]any{
+				"value":      data.ImageLink,
+				"stalecheck": 290,
+			},
 		},
 	}
 

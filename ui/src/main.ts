@@ -10,6 +10,7 @@ window.onerror = function(msg, url, line, col) {
 
 // Import icon utilities
 import './components/icon-picker';
+import { cloneValue } from './utils/clone';
 import { preloadIconSet } from './utils/icons';
 preloadIconSet('mdi');
 
@@ -771,7 +772,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let saveQueue = Promise.resolve();
   document.addEventListener('config-change', ((e: CustomEvent) => {
     const { configs } = e.detail as { configs: DashboardConfig[] };
-    const configsSnapshot = structuredClone(configs) as DashboardConfig[];
+    const configsSnapshot = cloneValue(configs) as DashboardConfig[];
     sidebar?.setMenuItems(configsToMenuItems(configs));
     for (const tab of tabs) {
       tab.title = resolveDashboardTitle(tab.dashboardId, tab.title);

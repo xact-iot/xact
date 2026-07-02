@@ -1,4 +1,5 @@
 import { BaseComponent } from '../../components/base-component';
+import { cloneValue } from '../../utils/clone';
 import { registerWidgetType } from './widget-registry';
 import { registerPermissions } from '../../permissions/registry';
 import { can } from '../../permissions/permissions';
@@ -228,7 +229,7 @@ export class PDFTemplateWidget extends BaseComponent {
     isNew: false,
     activeTab: 'editor',
     doc: defaultDoc(),
-    variables: structuredClone(DEFAULT_VARIABLES),
+    variables: cloneValue(DEFAULT_VARIABLES),
     selectedEl: -1,
     selectedCell: null,
     templateName: '',
@@ -1839,7 +1840,7 @@ case 'events':
 
     return {
       doc,
-      variables: Array.isArray(wrapper?.variables) ? structuredClone(wrapper.variables) : undefined,
+      variables: Array.isArray(wrapper?.variables) ? cloneValue(wrapper.variables) : undefined,
       name: typeof wrapper?.name === 'string' ? wrapper.name : undefined,
       description: typeof wrapper?.description === 'string' ? wrapper.description : undefined,
     };
@@ -3245,7 +3246,7 @@ case 'events':
     s.isNew = true;
     s.editing = null;
     s.doc = defaultDoc();
-    s.variables = structuredClone(DEFAULT_VARIABLES);
+    s.variables = cloneValue(DEFAULT_VARIABLES);
     s.templateName = '';
     s.templateDesc = '';
     s.activeTab = this.canManage ? 'editor' : 'preview';
@@ -3272,7 +3273,7 @@ case 'events':
     } catch {
       s.doc = defaultDoc();
     }
-    s.variables = Array.isArray(t.variables) ? structuredClone(t.variables) : structuredClone(DEFAULT_VARIABLES);
+    s.variables = Array.isArray(t.variables) ? cloneValue(t.variables) : cloneValue(DEFAULT_VARIABLES);
     s.templateName = t.name;
     s.templateDesc = t.description;
     s.activeTab = 'editor';

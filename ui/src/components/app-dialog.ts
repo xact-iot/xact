@@ -70,7 +70,7 @@ export class AppDialog extends BaseComponent {
     const iconClasses = `background: color-mix(in srgb, ${accentFg} 12%, var(--modal-bg)); color: ${accentFg}; border-color: color-mix(in srgb, ${accentFg} 30%, var(--border-color));`;
     const confirmClasses = isDanger
       ? `background: color-mix(in srgb, var(--danger-color, #dc2626) 22%, var(--modal-bg)); color: var(--danger-color, #dc2626); border-color: color-mix(in srgb, var(--danger-color, #dc2626) 55%, var(--border-color));`
-      : `background: color-mix(in srgb, var(--accent-color) 18%, var(--modal-bg)); color: var(--accent-text); border-color: color-mix(in srgb, var(--accent-color) 55%, var(--border-color));`;
+      : `background: var(--accent-color); color: var(--accent-text); border-color: var(--accent-hover);`;
 
     this.className = 'fixed inset-0 flex items-center justify-center px-4';
     this.style.zIndex = '25000';
@@ -244,7 +244,7 @@ export class AppDialog extends BaseComponent {
 
   private choiceStyle(choice: DialogChoice): string {
     if (choice.role === 'primary') {
-      return 'background: color-mix(in srgb, var(--accent-color) 18%, var(--modal-bg)); color: var(--accent-text); border-color: color-mix(in srgb, var(--accent-color) 55%, var(--border-color));';
+      return 'background: var(--accent-color); color: var(--accent-text); border-color: var(--accent-hover);';
     }
     if (choice.role === 'danger') {
       return 'background: color-mix(in srgb, var(--danger-color, #dc2626) 18%, var(--modal-bg)); color: var(--danger-color, #dc2626); border-color: color-mix(in srgb, var(--danger-color, #dc2626) 50%, var(--border-color));';

@@ -9,6 +9,7 @@ import './widgets/widget-properties-dialog';
 import { can } from '../permissions/permissions';
 import { registerPermissions } from '../permissions/registry';
 import { showAlert, showChoice } from '../components/app-dialog';
+import { cloneValue } from '../utils/clone';
 
 registerPermissions('dashboard-container', 'Widget Layout Editing', [
   { name: 'inspect', description: 'Inspect dashboard widgets and properties without changing layout' },
@@ -953,13 +954,11 @@ function escapeHtml(value: string): string {
 }
 
 function cloneConfig(config: Record<string, any>): Record<string, any> {
-  if (typeof structuredClone === 'function') return structuredClone(config);
-  return JSON.parse(JSON.stringify(config));
+  return cloneValue(config);
 }
 
 function cloneWidgets(widgets: WidgetData[]): WidgetData[] {
-  if (typeof structuredClone === 'function') return structuredClone(widgets);
-  return JSON.parse(JSON.stringify(widgets));
+  return cloneValue(widgets);
 }
 
 customElements.define('dashboard-container', DashboardContainer);

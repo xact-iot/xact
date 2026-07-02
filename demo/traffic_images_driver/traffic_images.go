@@ -17,10 +17,8 @@ func Start() {
 	log.Println("[TrafficImages] Starting LTA Traffic Images driver")
 
 	apiKey := os.Getenv("LTA_API_KEY")
-	mqttBroker := os.Getenv("MQTT_BROKER")
-	if mqttBroker == "" {
-		mqttBroker = "tcp://127.0.0.1:1883"
-	}
+	mqttBroker := mqttBrokerFromEnv()
+	mqttUsername := os.Getenv("MQTT_BROKER_USERNAME")
 
 	mqttPassword := os.Getenv("MQTT_BROKER_PASSWORD")
 	if mqttPassword == "" {
@@ -37,9 +35,9 @@ func Start() {
 	client := NewTrafficImagesClient(apiKey)
 	fmt.Printf("[TrafficImages] Using configured LTA API key and MQTT password\n")
 
-	publisher := NewMQTTPublisher(mqttBroker, mqttPassword)
+	publisher := NewMQTTPublisher(mqttBroker, mqttUsername, mqttPassword)
 	if err := publisher.Connect(); err != nil {
-		log.Fatalf("[TrafficImages] Failed to connect to MQTT broker: %v %s %s", err, mqttBroker, mqttPassword)
+		log.Fatalf("[TrafficImages] Failed to connect to MQTT broker %s: %v", mqttBroker, err)
 	}
 	defer publisher.Disconnect()
 	fmt.Printf("[TrafficImages] Connected to MQTT broker at %s\n", mqttBroker)
@@ -61,6 +59,16 @@ func Start() {
 			return
 		}
 	}
+}
+
+func mqttBrokerFromEnv() string {
+	if broker := os.Getenv("MQTT_BROKER_URL"); broker != "" {
+		return broker
+	}
+	if broker := os.Getenv("MQTT_BROKER"); broker != "" {
+		return broker
+	}
+	return "tcp://127.0.0.1:1883"
 }
 
 func pollAndPublish(client *TrafficImagesClient, publisher *MQTTPublisher) {

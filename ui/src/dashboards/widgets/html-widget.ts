@@ -60,8 +60,22 @@ export class HtmlWidget extends BaseComponent {
   }
 
   protected render(): void {
+    this.style.display = 'block';
+    this.style.width = '100%';
+    this.style.height = '100%';
+    this.style.minHeight = '0';
+    this.style.overflow = 'hidden';
     this.innerHTML = `
       <style>
+        .html-widget-content {
+          scrollbar-width: thin;
+        }
+        .html-widget-content.html-widget-content--welcome > :first-child {
+          height: auto !important;
+          min-height: 100% !important;
+          justify-content: flex-start !important;
+          overflow: visible !important;
+        }
         .html-widget-content :where(h1, h2, h3, h4, h5, h6) {
           display: block;
           margin: 0.67em 0;
@@ -85,7 +99,7 @@ export class HtmlWidget extends BaseComponent {
         .html-widget-content :where(em, i) { font-style: italic; }
       </style>
       <div class="html-widget-content" style="
-        height:100%;width:100%;overflow:auto;
+        height:100%;width:100%;min-height:0;overflow:auto;box-sizing:border-box;
         color:var(--content-text);font-family:var(--widget-font-family);
         font-size:var(--widget-label-font-size);line-height:1.45;
       "></div>
@@ -126,7 +140,11 @@ export class HtmlWidget extends BaseComponent {
   private updateContent(): void {
     const content = this.querySelector<HTMLElement>('.html-widget-content');
     if (!content) return;
-    content.innerHTML = sanitizeHtml(this.resolveHtml());
+    const html = this.resolveHtml();
+    content.innerHTML = sanitizeHtml(html);
+    const isStarterWelcome = html.includes('Welcome to XACT') &&
+      html.includes('standard dashboard with a single HTML widget');
+    content.classList.toggle('html-widget-content--welcome', isStarterWelcome);
   }
 
   private resolveHtml(): string {
