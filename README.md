@@ -60,8 +60,6 @@ XACT does not have a separate installer. The deployment archive is copied to a s
 
 Download the platform archive, replacing `<os>`, `<arch>`, and `<version>` with the release you need. Valid `<os>` values are `linux` and `darwin`. Use `amd64`, `arm64`, or `arm` for Linux `<arch>`; use `amd64` or `arm64` for Darwin `<arch>`.
 
-`Note`: At this time only linux/amd64 has been tested. Other os/arch combinations cross compile cleanly and that usually means they will run successfully on the target. If you run XACT on alternative hardware, kindly give feedback as to how it went.
-
 ```sh
 mkdir -p ~/xact
 cp xact-<os>-<arch>-<version>.tar.gz ~/xact/
@@ -161,7 +159,7 @@ For production deployment guidance, open the online manual after startup and rea
 
 ### 2.5. Sending Data to XACT
 
-There are various way to send data to the XACT server and these are described in the online manual. But the simplest way to get started is probably to start with the Python program found in the repo under `demo/python-example`. This skeleton program sends data via the XACT REST API.
+There are various ways to send data to the XACT server and these are described in the online manual. But the simplest way to get started is probably to start with the Python program found in the repo under `demo/python-example`. This skeleton program sends data via the XACT REST API.
 
 ### 2.6. Next Steps
 
@@ -267,14 +265,7 @@ Interactive control widgets enable operator actions directly from dashboards. Co
 
 ---
 
-
-## 8. Roadmap
-
-- **Redundancy & Clustering** - Deploy multi-node clusters for high availability with automatic failover
-
----
-
-## 9. Learn More
+## 8. Learn More
 
 - **Documentation:** See the online manual.
 

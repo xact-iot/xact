@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 type captureMetricInserter struct {
@@ -103,5 +104,11 @@ func TestMetricWriterTryWriteReportsFullQueue(t *testing.T) {
 	defer cancel()
 	if err := writer.Stop(ctx); err != nil {
 		t.Fatalf("stop: %v", err)
+	}
+}
+
+func TestMetricWriterDroppedCounterIs64BitAligned(t *testing.T) {
+	if offset := unsafe.Offsetof(MetricWriter{}.dropped); offset%8 != 0 {
+		t.Fatalf("MetricWriter.dropped offset = %d, want 64-bit aligned", offset)
 	}
 }

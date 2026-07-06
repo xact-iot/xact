@@ -88,7 +88,7 @@ type MetricWriter struct {
 
 	stopOnce sync.Once
 	stopped  atomic.Bool
-	dropped  int64
+	dropped  atomic.Int64
 }
 
 func NewMetricWriter(db MetricInserter, cfg MetricWriterConfig) *MetricWriter {
@@ -167,7 +167,7 @@ func (w *MetricWriter) TryWrite(org string, entry MetricEntry) error {
 	case <-w.stopCh:
 		return ErrMetricWriterStopped
 	default:
-		atomic.AddInt64(&w.dropped, 1)
+		w.dropped.Add(1)
 		return ErrMetricWriterQueueFull
 	}
 }
@@ -190,7 +190,7 @@ func (w *MetricWriter) Dropped() int64 {
 	if w == nil {
 		return 0
 	}
-	return atomic.LoadInt64(&w.dropped)
+	return w.dropped.Load()
 }
 
 func (w *MetricWriter) Stop(ctx context.Context) error {

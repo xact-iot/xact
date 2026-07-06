@@ -295,6 +295,49 @@ describe('timeseries-chart-widget', () => {
     expect(option.xAxis.max).toBe(end);
   });
 
+  it('resolves system metrics from the device boundary instead of assuming two metric segments', () => {
+    const widget = document.createElement('timeseries-chart-widget') as any;
+    widget.config = {
+      headerText: 'Chart',
+      timePeriod: 24,
+      useUiTimeRange: false,
+      refreshInterval: 0,
+      showZoomControl: true,
+      backgroundImage: '',
+      series: series.map((s, i) => i === 0 ? {
+        ...s,
+        tagPath: 'default.system.xact.SideEffects.ProcessCPUPercent',
+      } : s),
+    };
+
+    expect(widget.getDeviceAndMetric(0)).toEqual({
+      device: 'system.xact',
+      metric: 'SideEffects.ProcessCPUPercent',
+    });
+  });
+
+  it('normalizes legacy CPU.Load chart paths to CPU.SystemLoad', () => {
+    const widget = document.createElement('timeseries-chart-widget') as any;
+    widget.config = {
+      headerText: 'Chart',
+      timePeriod: 24,
+      useUiTimeRange: false,
+      refreshInterval: 0,
+      showZoomControl: true,
+      backgroundImage: '',
+      series: series.map((s, i) => i === 0 ? {
+        ...s,
+        tagPath: 'default.system.PC4.CPU.Load',
+      } : s),
+    };
+
+    expect(widget.resolveTagPath(0)).toBe('default.system.PC4.CPU.SystemLoad');
+    expect(widget.getDeviceAndMetric(0)).toEqual({
+      device: 'system.PC4',
+      metric: 'CPU.SystemLoad',
+    });
+  });
+
   it('does not collapse UI time range data to the rolling point cap on incremental merge', () => {
     getUiStore().set('timeStart', 1);
     getUiStore().set('timeEnd', null);
@@ -347,7 +390,7 @@ describe('timeseries-chart-widget', () => {
       } : s),
     };
     widget.subscriptionActive = true;
-    widget.lastTs.set('Pump', '2026-01-01T00:00:00.000Z');
+    widget.lastTs.set('Pump\u0000flow.rate', '2026-01-01T00:00:00.000Z');
 
     const first = widget.fetchIncrementalForSeries(0);
     await widget.fetchIncrementalForSeries(0);
@@ -360,6 +403,53 @@ describe('timeseries-chart-widget', () => {
     await Promise.resolve();
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses the oldest per-series cursor when incrementally fetching sparse metrics on the same device', async () => {
+    const start = Date.now() - 120_000;
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        series: [
+          { name: 'CPU.SystemLoad', data: [[start + 61_000, 20]] },
+          { name: 'CPU.Goroutines', data: [[start + 10_000, 42]] },
+        ],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const widget = document.createElement('timeseries-chart-widget') as any;
+    widget.config = {
+      headerText: 'Chart',
+      timePeriod: 24,
+      useUiTimeRange: false,
+      refreshInterval: 0,
+      showZoomControl: true,
+      backgroundImage: '',
+      series: series.map((s, i) => {
+        if (i === 0) return { ...s, enabled: true, tagPath: 'default.system.xact.CPU.SystemLoad' };
+        if (i === 1) return { ...s, enabled: true, tagPath: 'default.system.xact.CPU.Goroutines' };
+        return s;
+      }),
+    };
+    widget.subscriptionActive = true;
+    widget.seriesData = [
+      [{ t: start + 60_000, v: 10 }],
+      [{ t: start, v: 40 }],
+      [], [], [],
+    ];
+    widget.lastTs.set('system.xact\u0000CPU.SystemLoad', new Date(start + 60_000).toISOString());
+    widget.lastTs.set('system.xact\u0000CPU.Goroutines', new Date(start).toISOString());
+    widget.applyAllSeries = vi.fn();
+
+    await widget.fetchIncrementalForSeries(0);
+
+    const url = new URL(fetchMock.mock.calls[0][0], 'https://example.test');
+    expect(url.searchParams.get('after')).toBe(new Date(start).toISOString());
+    expect(widget.seriesData[0].map((p: any) => p.v)).toEqual([10, 20]);
+    expect(widget.seriesData[1].map((p: any) => p.v)).toEqual([40, 42]);
+    expect(widget.lastTs.get('system.xact\u0000CPU.SystemLoad')).toBe(new Date(start + 61_000).toISOString());
+    expect(widget.lastTs.get('system.xact\u0000CPU.Goroutines')).toBe(new Date(start + 10_000).toISOString());
   });
 
   it('does not start a duplicate range load from live tag callbacks while the initial load is in flight', async () => {

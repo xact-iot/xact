@@ -131,7 +131,7 @@ export class TimeseriesChartWidget extends BaseComponent {
   /** Live data storage - one DataPoint[] per series slot (0-4). */
   private seriesData: DataPoint[][] = Array.from({ length: 5 }, () => []);
 
-  /** Last fetched timestamp per device path, used for incremental fetches. */
+  /** Last fetched timestamp per device/metric series, used for incremental fetches. */
   private lastTs: Map<string, string> = new Map();
 
   private chart: ECharts | null = null;
@@ -425,10 +425,13 @@ export class TimeseriesChartWidget extends BaseComponent {
           const pts: DataPoint[] = (series.data as [number, number][]).map(([t, v]) => ({ t, v }));
           this.seriesData[i] = pts;
 
-          // Track the latest timestamp for this device
+          // Track the latest timestamp for each series independently. Different
+          // metrics on the same device may be recorded at very different rates
+          // because history deadbands suppress unchanged values.
           const latestTs = new Date(pts[pts.length - 1].t).toISOString();
-          const existing = this.lastTs.get(device);
-          if (!existing || latestTs > existing) this.lastTs.set(device, latestTs);
+          const key = this.seriesCursorKey(dm.device, dm.metric);
+          const existing = this.lastTs.get(key);
+          if (!existing || latestTs > existing) this.lastTs.set(key, latestTs);
         });
       } catch (err: any) {
         if (err?.name !== 'AbortError') { /* non-fatal */ }
@@ -446,12 +449,6 @@ export class TimeseriesChartWidget extends BaseComponent {
 
     if (this.config.useUiTimeRange && this.endMs() !== null) return;
 
-    const after = this.lastTs.get(dm.device);
-    if (!after) {
-      if (!this._loadAllAbort) this.loadAllSeries();
-      return;
-    }
-
     if (this._incrementalAbortByDevice.has(dm.device)) {
       this._incrementalQueuedByDevice.add(dm.device);
       return;
@@ -467,6 +464,12 @@ export class TimeseriesChartWidget extends BaseComponent {
       if (d2?.device === dm.device) acc.push(i);
       return acc;
     }, []);
+
+    const after = this.oldestCursorForSeries(indices);
+    if (!after) {
+      if (!this._loadAllAbort) this.loadAllSeries();
+      return;
+    }
 
     const metrics = indices.map(i => this.getDeviceAndMetric(i)!.metric).join(',');
 
@@ -493,8 +496,9 @@ export class TimeseriesChartWidget extends BaseComponent {
         anyNew = true;
 
         const latestTs = new Date(this.seriesData[i][this.seriesData[i].length - 1].t).toISOString();
-        const existing = this.lastTs.get(dm.device);
-        if (!existing || latestTs > existing) this.lastTs.set(dm.device, latestTs);
+        const key = this.seriesCursorKey(m.device, m.metric);
+        const existing = this.lastTs.get(key);
+        if (!existing || latestTs > existing) this.lastTs.set(key, latestTs);
       });
 
       if (anyNew && this.subscriptionActive && !controller.signal.aborted) this.applyAllSeries();
@@ -578,7 +582,7 @@ export class TimeseriesChartWidget extends BaseComponent {
 
       // Extend the last known value to the current wall-clock time so the line
       // advances visually on each refresh tick even when the value is unchanged.
-      if (data.length > 0 && !this.config.useUiTimeRange) {
+      if (data.length > 0 && (!this.config.useUiTimeRange || this.endMs() === null)) {
         data.push([Date.now(), data[data.length - 1][1]]);
       }
 
@@ -790,7 +794,7 @@ export class TimeseriesChartWidget extends BaseComponent {
   private resolveTagPath(seriesIdx: number): string {
     const s = this.config.series[seriesIdx];
     if (!s) return '';
-    return resolveMetricTagPath(s.tagPrefix, s.tagPath);
+    return this.normalizeLegacyMetricPath(resolveMetricTagPath(s.tagPrefix, s.tagPath));
   }
 
   private getDeviceAndMetric(seriesIdx: number): { device: string; metric: string } | null {
@@ -798,9 +802,36 @@ export class TimeseriesChartWidget extends BaseComponent {
     if (!fullPath) return null;
     const parts = getMirrorStore().baseTagPath(fullPath).split('.');
     if (parts.length < 4) return null;
-    const metric = parts.slice(-2).join('.');
+
+    if (parts[1] === 'system' && parts.length > 4) {
+      const device = parts.slice(1, 3).join('.');
+      const metric = this.normalizeLegacyMetricPath(parts.slice(3).join('.'));
+      return { device, metric };
+    }
+
+    const metric = this.normalizeLegacyMetricPath(parts.slice(-2).join('.'));
     const device = parts.slice(1, -2).join('.');
     return device ? { device, metric } : null;
+  }
+
+  private normalizeLegacyMetricPath(path: string): string {
+    return path.replace(/(^|\.)CPU\.Load$/, '$1CPU.SystemLoad');
+  }
+
+  private seriesCursorKey(device: string, metric: string): string {
+    return `${device}\u0000${metric}`;
+  }
+
+  private oldestCursorForSeries(indices: number[]): string | null {
+    let oldest: string | null = null;
+    for (const i of indices) {
+      const dm = this.getDeviceAndMetric(i);
+      if (!dm) continue;
+      const ts = this.lastTs.get(this.seriesCursorKey(dm.device, dm.metric));
+      if (!ts) return null;
+      if (oldest === null || ts < oldest) oldest = ts;
+    }
+    return oldest;
   }
 
   private updateCardTitle(): void {

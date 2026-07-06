@@ -30,6 +30,7 @@ const PERIODS = [
 export class PreviousPeriodWidget extends BaseComponent {
   private config: Config = { ...DEFAULT_CONFIG };
   private _activeMs: number | null = null;
+  private _rollTimer: ReturnType<typeof setInterval> | null = null;
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -90,6 +91,7 @@ export class PreviousPeriodWidget extends BaseComponent {
       btn.addEventListener('mouseover', this._onHover);
       btn.addEventListener('mouseout', this._onHoverOut);
     });
+    this.resumeRollingRange();
   }
 
   protected detachEventListeners(): void {
@@ -98,6 +100,7 @@ export class PreviousPeriodWidget extends BaseComponent {
       btn.removeEventListener('mouseover', this._onHover);
       btn.removeEventListener('mouseout', this._onHoverOut);
     });
+    this.stopRolling();
   }
 
   // ── Handlers ────────────────────────────────────────────────────────────────
@@ -108,19 +111,56 @@ export class PreviousPeriodWidget extends BaseComponent {
     if (!ms) return;
 
     this._activeMs = ms;
-    const now = Date.now();
-    const store = getUiStore();
-    store.set('timeStart', now - ms);
-    store.set('timeEnd', now);
+    this.applyRollingRange(ms);
+    this.startRolling(ms);
 
-    // Update active styling without full rerender
+    this.updateActiveStyles();
+  };
+
+  private updateActiveStyles(): void {
     this.querySelectorAll<HTMLButtonElement>('button[data-ms]').forEach(b => {
-      const active = parseInt(b.dataset.ms ?? '0', 10) === ms;
+      const active = parseInt(b.dataset.ms ?? '0', 10) === this._activeMs;
       b.style.background = active ? 'var(--accent-color)' : 'transparent';
       b.style.color      = active ? 'var(--widget-header-bg)' : 'var(--content-text)';
       b.style.borderColor = active ? 'var(--accent-color)' : 'var(--widget-border)';
     });
-  };
+  }
+
+  private applyRollingRange(ms: number): void {
+    const store = getUiStore();
+    store.set('timeStart', Date.now() - ms);
+    store.set('timeEnd', null);
+  }
+
+  private startRolling(ms: number): void {
+    this.stopRolling();
+    this._rollTimer = setInterval(() => {
+      if (this._activeMs === ms) this.applyRollingRange(ms);
+    }, 30_000);
+  }
+
+  private resumeRollingRange(): void {
+    const store = getUiStore();
+    const start = store.get('timeStart');
+    const end = store.get('timeEnd');
+    if (start === null || end === null || end <= start) return;
+
+    const duration = end - start;
+    const period = PERIODS.find(p => Math.abs(p.ms - duration) < 1_000);
+    if (!period) return;
+
+    this._activeMs = period.ms;
+    this.applyRollingRange(period.ms);
+    this.startRolling(period.ms);
+    this.updateActiveStyles();
+  }
+
+  private stopRolling(): void {
+    if (this._rollTimer !== null) {
+      clearInterval(this._rollTimer);
+      this._rollTimer = null;
+    }
+  }
 
   private _onHover = (e: Event): void => {
     const btn = e.currentTarget as HTMLButtonElement;
