@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -54,13 +55,15 @@ func trustedPluginDir(pluginDir string) string {
 			log.Printf("plugin directory %s is not a directory; plugin loading disabled", path)
 			return ""
 		}
-		mode := info.Mode().Perm()
-		if mode&0o002 != 0 {
-			log.Printf("plugin directory %s is world-writable; plugin loading disabled", path)
-			return ""
-		}
-		if mode&0o020 != 0 {
-			log.Printf("plugin directory %s is group-writable; ensure the group is trusted", path)
+		if runtime.GOOS != "windows" {
+			mode := info.Mode().Perm()
+			if mode&0o002 != 0 {
+				log.Printf("plugin directory %s is world-writable; plugin loading disabled", path)
+				return ""
+			}
+			if mode&0o020 != 0 {
+				log.Printf("plugin directory %s is group-writable; ensure the group is trusted", path)
+			}
 		}
 	}
 	return pluginDir

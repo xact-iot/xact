@@ -441,7 +441,7 @@ func resolveSchedulerOutputDir(requested string) (string, error) {
 	if requested == "" || requested == "." {
 		return root, nil
 	}
-	if filepath.IsAbs(requested) {
+	if isAbsOrRootedPath(requested) {
 		return "", fmt.Errorf("scheduler outputDir must be relative to SCHEDULER_OUTPUT_DIR")
 	}
 	clean := filepath.Clean(requested)
@@ -465,6 +465,10 @@ func resolveSchedulerOutputDir(requested string) (string, error) {
 		return "", fmt.Errorf("scheduler outputDir must stay under SCHEDULER_OUTPUT_DIR")
 	}
 	return candidate, nil
+}
+
+func isAbsOrRootedPath(p string) bool {
+	return filepath.IsAbs(p) || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`)
 }
 
 func schedulerWorkDir() (string, error) {

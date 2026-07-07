@@ -19,7 +19,7 @@ func TestParseTS(t *testing.T) {
 	}{
 		{"float64", float64(1700000000000), true, 1700000000000},
 		{"int64", int64(1700000000000), true, 1700000000000},
-		{"int", int(1700000000000), true, 1700000000000},
+		{"int", int(1700000000), true, 1700000000},
 		{"string numeric", "1700000000000", true, 1700000000000},
 		{"string non-numeric", "not-a-number", false, 0},
 		{"bool", true, false, 0},
