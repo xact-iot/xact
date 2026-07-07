@@ -1,4 +1,4 @@
-package traffic_images_driver
+package lta_driver
 
 import "testing"
 
@@ -40,16 +40,5 @@ func TestMQTTBrokerFromEnv(t *testing.T) {
 				t.Fatalf("mqttBrokerFromEnv() = %q, want %q", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestMQTTUsernameFromEnv(t *testing.T) {
-	if got := mqttUsernameFromEnv(); got != "a" {
-		t.Fatalf("mqttUsernameFromEnv() = %q, want a", got)
-	}
-
-	t.Setenv("MQTT_BROKER_USERNAME", "demo-user")
-	if got := mqttUsernameFromEnv(); got != "demo-user" {
-		t.Fatalf("mqttUsernameFromEnv() = %q, want demo-user", got)
 	}
 }

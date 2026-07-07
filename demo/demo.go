@@ -33,7 +33,7 @@ func main() {
 }
 
 func loadDemoEnv() error {
-	paths := []string{".env"}
+	paths := []string{".env", filepath.Join("demo", ".env")}
 	if exe, err := os.Executable(); err == nil {
 		paths = append(paths, filepath.Join(filepath.Dir(exe), ".env"))
 	}

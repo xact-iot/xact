@@ -1,5 +1,8 @@
 # XACT - Industrial IoT Platform
 
+[![UI tests](https://img.shields.io/github/actions/workflow/status/xact-iot/xact/ci.yml?branch=main&label=UI%20tests)](https://github.com/xact-iot/xact/actions/workflows/ci.yml)
+[![Server tests](https://img.shields.io/github/actions/workflow/status/xact-iot/xact/ci.yml?branch=main&label=Server%20tests)](https://github.com/xact-iot/xact/actions/workflows/ci.yml)
+
 ![XACT Features](screenshots/xact-features.png)
 
 XACT is a industrial IoT platform designed for real-time monitoring, data acquisition, and process automation. XACT handles everything from hobby projects to lab deployments to installations with hundreds or even thousands of devices.

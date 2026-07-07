@@ -18,10 +18,7 @@ func Start() {
 	// Get configuration from environment (or use default)
 	apiKey := os.Getenv("LTA_API_KEY")
 
-	mqttBroker := os.Getenv("MQTT_BROKER")
-	if mqttBroker == "" {
-		mqttBroker = "tcp://127.0.0.1:1883"
-	}
+	mqttBroker := mqttBrokerFromEnv()
 
 	mqttPassword := os.Getenv("MQTT_BROKER_PASSWORD")
 	if mqttPassword == "" {
@@ -65,6 +62,16 @@ func Start() {
 			return
 		}
 	}
+}
+
+func mqttBrokerFromEnv() string {
+	if broker := os.Getenv("MQTT_BROKER_URL"); broker != "" {
+		return broker
+	}
+	if broker := os.Getenv("MQTT_BROKER"); broker != "" {
+		return broker
+	}
+	return "tcp://127.0.0.1:1883"
 }
 
 // pollAndPublish fetches VMS data and publishes it via MQTT

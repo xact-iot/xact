@@ -18,7 +18,7 @@ func Start() {
 
 	apiKey := os.Getenv("LTA_API_KEY")
 	mqttBroker := mqttBrokerFromEnv()
-	mqttUsername := os.Getenv("MQTT_BROKER_USERNAME")
+	mqttUsername := mqttUsernameFromEnv()
 
 	mqttPassword := os.Getenv("MQTT_BROKER_PASSWORD")
 	if mqttPassword == "" {
@@ -69,6 +69,13 @@ func mqttBrokerFromEnv() string {
 		return broker
 	}
 	return "tcp://127.0.0.1:1883"
+}
+
+func mqttUsernameFromEnv() string {
+	if username := os.Getenv("MQTT_BROKER_USERNAME"); username != "" {
+		return username
+	}
+	return "a"
 }
 
 func pollAndPublish(client *TrafficImagesClient, publisher *MQTTPublisher) {

@@ -1,0 +1,182 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ui:
+    name: Build UI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Build UI
+        working-directory: ui
+        run: npm run build
+
+  build-server:
+    name: Build server ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: arm
+          - goos: windows
+            goarch: amd64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Build server binaries
+        working-directory: server
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          suffix=""
+          if [ "$GOOS" = "windows" ]; then
+            suffix=".exe"
+          fi
+          go build -o "${RUNNER_TEMP}/xact-${GOOS}-${GOARCH}${suffix}" ./startup
+          go build -o "${RUNNER_TEMP}/restore-${GOOS}-${GOARCH}${suffix}" ./cmd/restore
+
+  ui-tests:
+    name: UI tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: ui
+        run: npx playwright install --with-deps chromium
+
+      - name: Run UI unit tests
+        working-directory: ui
+        run: npm run test:run
+
+      - name: Run UI Playwright tests
+        working-directory: ui
+        run: npm run test:e2e
+
+  server-tests-native:
+    name: Server tests ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+          - goos: windows
+            goarch: amd64
+            runner: windows-latest
+          - goos: darwin
+            goarch: amd64
+            runner: macos-13
+          - goos: darwin
+            goarch: arm64
+            runner: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Run server unit tests
+        working-directory: server
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOCACHE: ${{ runner.temp }}/go-build
+        shell: bash
+        run: go test ./...
+
+  server-tests-linux-arm:
+    name: Server tests linux/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: arm64
+            arch: aarch64
+            go_archive_arch: arm64
+          - goarch: arm
+            arch: armv7
+            go_archive_arch: armv6l
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Run server unit tests under Linux ${{ matrix.goarch }}
+        uses: uraimo/run-on-arch-action@v3
+        with:
+          arch: ${{ matrix.arch }}
+          distro: ubuntu22.04
+          githubToken: ${{ github.token }}
+          install: |
+            apt-get update -q -y
+            apt-get install -q -y ca-certificates curl
+            curl -fsSL "https://go.dev/dl/go1.25.0.linux-${{ matrix.go_archive_arch }}.tar.gz" -o /tmp/go.tgz
+            tar -C /usr/local -xzf /tmp/go.tgz
+          run: |
+            export PATH="/usr/local/go/bin:$PATH"
+            export GOOS=linux
+            export GOARCH=${{ matrix.goarch }}
+            export GOCACHE=/tmp/xact-go-build
+            cd server
+            go test ./...
