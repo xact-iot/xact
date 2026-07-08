@@ -1,0 +1,32 @@
+---
+- name: Prepare Kubernetes nodes
+  hosts: k3s_nodes
+  become: true
+
+  tasks:
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install required packages
+      apt:
+        name:
+          - curl
+          - wget
+          - vim
+          - net-tools
+        state: present
+
+    - name: Disable swap immediately
+      command: swapoff -a
+
+    - name: Disable swap permanently
+      replace:
+        path: /etc/fstab
+        regexp: '^([^#].*\sswap\s.*)$'
+        replace: '# \1'
+
+    - name: Set hostname
+      hostname:
+        name: "{{ inventory_hostname }}"

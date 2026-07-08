@@ -1,0 +1,75 @@
+---
+- name: Install first K3s server
+  hosts: k3s_master
+  become: true
+
+  tasks:
+
+    - name: Check if K3s is installed
+      stat:
+        path: /usr/local/bin/k3s
+      register: k3s_binary
+
+    - name: Install K3s cluster init server
+      shell: |
+        curl -sfL https://get.k3s.io | \
+        INSTALL_K3S_EXEC="server \
+        --cluster-init \
+        --node-ip 192.168.56.101 \
+        --advertise-address 192.168.56.101 \
+        --write-kubeconfig-mode 644" \
+        sh -      
+      when: not k3s_binary.stat.exists
+
+    - name: Wait for token
+      wait_for:
+        path: /var/lib/rancher/k3s/server/node-token
+        timeout: 120
+
+
+- name: Read K3s token
+  hosts: k3s_master
+  become: true
+
+  tasks:
+
+    - name: Get node token
+      slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: token_file
+
+    - name: Save token
+      set_fact:
+        k3s_token: "{{ token_file.content | b64decode | trim}}"
+
+
+- name: Install remaining K3s servers
+  hosts: k3s_nodes:!k3s_master
+  become: true
+
+  vars:
+    master_ip: 192.168.56.101
+
+  tasks:
+
+    - name: Wait for first server API
+      wait_for:
+        host: "{{ master_ip }}"
+        port: 6443
+        timeout: 120
+
+    - name: Check if K3s exists
+      stat:
+        path: /usr/local/bin/k3s
+      register: k3s_binary
+
+    - name: Join K3s cluster
+      shell: |
+        curl -sfL https://get.k3s.io | \
+        K3S_TOKEN="{{ hostvars['node1']['k3s_token'] | trim }}" \
+        INSTALL_K3S_EXEC="server \
+        --server https://{{ master_ip }}:6443 \
+        --node-ip {{ ansible_host }} \
+        --write-kubeconfig-mode 644" \
+        sh -      
+      when: not k3s_binary.stat.exists
