@@ -20,8 +20,10 @@ import (
 // *mqtt.Client satisfies this interface.
 type Sampler = ingest.IngestSampler
 
-// Collector samples CPU, memory, goroutines, and ingest queue stats once per
-// minute and publishes them to the RTDB under default/system/<serverName>.
+const goroutineHistoryDeadband = 0.0
+
+// Collector samples CPU, memory, goroutines, and ingest queue stats and
+// publishes them to the RTDB under default/system/<serverName>.
 type Collector struct {
 	nc         *natsgo.Conn
 	serverName string
@@ -266,7 +268,7 @@ func (c *Collector) publish(
 		},
 		"Goroutines": map[string]any{
 			"value":    float64(goroutines),
-			"deadband": 5.0,
+			"deadband": goroutineHistoryDeadband,
 			"history":  true,
 		},
 	}
@@ -334,7 +336,7 @@ func (c *Collector) publish(
 		"MetricQueueLen":    map[string]any{"value": float64(c.metricQueueLen()), "deadband": 1.0, "history": false, "description": "Queued historyrecorder metric points waiting for batched SQL insert."},
 		"MetricQueueCap":    map[string]any{"value": float64(c.metricQueueCap()), "deadband": 1.0, "history": false, "description": "Capacity of the historyrecorder metric writer queue."},
 		"MetricDropped":     map[string]any{"value": float64(c.metricDropped()), "deadband": 1.0, "history": false, "description": "Total historyrecorder metric points dropped because the SQL writer queue was full."},
-		"GoRoutines":        map[string]any{"value": float64(goroutines), "deadband": 5.0, "history": true, "description": "Current Go goroutine count."},
+		"GoRoutines":        map[string]any{"value": float64(goroutines), "deadband": goroutineHistoryDeadband, "history": true, "description": "Current Go goroutine count."},
 		"ProcessCPUPercent": map[string]any{"value": processCPU, "units": "%", "deadband": 2.0, "history": true, "description": "CPU used by this server process; can exceed 100% on multicore systems."},
 	}
 

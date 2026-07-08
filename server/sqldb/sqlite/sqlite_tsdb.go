@@ -194,7 +194,52 @@ func (db *SQLiteDB) QueryMetricsRange(ctx context.Context, orgName, deviceName s
 	}
 	defer rows.Close()
 
-	return scanMetricSeries(rows)
+	series, err := scanMetricSeries(rows)
+	if err != nil {
+		return nil, err
+	}
+	return db.prependPreviousMetricPoints(ctx, orgID, deviceID, metrics, start, series)
+}
+
+func (db *SQLiteDB) prependPreviousMetricPoints(ctx context.Context, orgID, deviceID int,
+	metrics []string, start time.Time, series []sqldb.MetricSeries) ([]sqldb.MetricSeries, error) {
+
+	for _, metric := range metrics {
+		var name string
+		var value float32
+		err := db.db.QueryRowContext(ctx, `
+			SELECT md.name, dm.value
+			FROM metric_definitions md
+			JOIN device_metrics dm ON dm.metric_id = md.id
+			WHERE dm.org_id = ? AND dm.device_id = ?
+			  AND md.device_id = ? AND md.name = ?
+			  AND dm.time < ?
+			ORDER BY dm.time DESC
+			LIMIT 1
+		`, orgID, deviceID, deviceID, metric, formatTimestamp(start)).Scan(&name, &value)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("querying previous metric point for %q: %w", metric, err)
+		}
+		series = prependMetricPoint(series, name, sqldb.MetricPoint{Timestamp: start, Value: value})
+	}
+	return series, nil
+}
+
+func prependMetricPoint(series []sqldb.MetricSeries, name string, point sqldb.MetricPoint) []sqldb.MetricSeries {
+	for i := range series {
+		if series[i].Name != name {
+			continue
+		}
+		if len(series[i].Data) > 0 && !series[i].Data[0].Timestamp.After(point.Timestamp) {
+			return series
+		}
+		series[i].Data = append([]sqldb.MetricPoint{point}, series[i].Data...)
+		return series
+	}
+	return append(series, sqldb.MetricSeries{Name: name, Data: []sqldb.MetricPoint{point}})
 }
 
 // QueryMetricsByTagPaths returns time-ordered series whose device+metric path matches

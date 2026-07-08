@@ -262,6 +262,54 @@ func TestInsertMetricsBatchedAndCached(t *testing.T) {
 	}
 }
 
+func TestQueryMetricsRangePrependsPreviousPoint(t *testing.T) {
+	ctx := context.Background()
+	db, err := NewSQLiteDB(ctx, filepath.Join(t.TempDir(), "xact.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteDB: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	start := time.Date(2026, 7, 7, 7, 30, 0, 0, time.UTC)
+	entries := []sqldb.MetricEntry{
+		{DeviceName: "system.PC4", MetricName: "CPU.Goroutines", Timestamp: start.Add(-2 * time.Hour), Value: 83},
+		{DeviceName: "system.PC4", MetricName: "CPU.SystemLoad", Timestamp: start.Add(10 * time.Second), Value: 42},
+		{DeviceName: "system.PC4", MetricName: "CPU.SystemLoad", Timestamp: start.Add(20 * time.Second), Value: 45},
+	}
+	if err := db.InsertMetrics(ctx, "default", entries); err != nil {
+		t.Fatalf("InsertMetrics: %v", err)
+	}
+
+	series, err := db.QueryMetricsRange(ctx, "default", "system.PC4",
+		[]string{"CPU.SystemLoad", "CPU.Goroutines"}, start, start.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("QueryMetricsRange: %v", err)
+	}
+
+	byName := map[string]sqldb.MetricSeries{}
+	for _, s := range series {
+		byName[s.Name] = s
+	}
+	goroutines := byName["CPU.Goroutines"]
+	if len(goroutines.Data) != 1 {
+		t.Fatalf("CPU.Goroutines points = %d, want 1: %#v", len(goroutines.Data), goroutines.Data)
+	}
+	if !goroutines.Data[0].Timestamp.Equal(start) || goroutines.Data[0].Value != 83 {
+		t.Fatalf("CPU.Goroutines carry-forward point = %#v, want %s/83", goroutines.Data[0], start.Format(time.RFC3339))
+	}
+	load := byName["CPU.SystemLoad"]
+	if len(load.Data) != 2 {
+		t.Fatalf("CPU.SystemLoad points = %d, want 2: %#v", len(load.Data), load.Data)
+	}
+	if !load.Data[0].Timestamp.Equal(start.Add(10 * time.Second)) {
+		t.Fatalf("CPU.SystemLoad first point = %s, want first in-range sample", load.Data[0].Timestamp.Format(time.RFC3339))
+	}
+}
+
 func TestAPIKeysAreHashedAndListedMasked(t *testing.T) {
 	t.Setenv("API_KEY_HASH_SECRET", "test-api-key-hash-secret")
 	ctx := context.Background()

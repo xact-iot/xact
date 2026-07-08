@@ -104,6 +104,12 @@ func TestCollectorHelpersPendingAndPublish(t *testing.T) {
 	c.publish(1, int64(time.Second), int64(2*time.Second), 4, int64(time.Second), 2, 2, int64(6*time.Millisecond), 9e6, sharedIngestReport{})
 }
 
+func TestGoroutineHistoryIsNotDeadbanded(t *testing.T) {
+	if goroutineHistoryDeadband != 0 {
+		t.Fatalf("goroutineHistoryDeadband = %v, want 0 so every sample can be recorded", goroutineHistoryDeadband)
+	}
+}
+
 func TestSmallMathHelpersAndServerNameFallback(t *testing.T) {
 	if positiveDelta(1, 2) != 0 || positiveDelta(5, 3) != 2 {
 		t.Fatal("positiveDelta mismatch")

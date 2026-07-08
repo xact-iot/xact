@@ -166,7 +166,62 @@ func (db *PostgresDB) QueryMetricsRange(ctx context.Context, orgName, deviceName
 	}
 	defer rows.Close()
 
-	return scanMetricSeries(rows)
+	series, err := scanMetricSeries(rows)
+	if err != nil {
+		return nil, err
+	}
+	return db.prependPreviousMetricPoints(ctx, orgID, deviceID, metrics, start, series)
+}
+
+func (db *PostgresDB) prependPreviousMetricPoints(ctx context.Context, orgID, deviceID int,
+	metrics []string, start time.Time, series []sqldb.MetricSeries) ([]sqldb.MetricSeries, error) {
+
+	rows, err := db.pool.Query(ctx, `
+		SELECT md.name, prev.value
+		FROM metric_definitions md
+		JOIN LATERAL (
+			SELECT dm.value
+			FROM device_metrics dm
+			WHERE dm.org_id = $1 AND dm.device_id = $2 AND dm.metric_id = md.id
+			  AND dm.time < $4
+			ORDER BY dm.time DESC
+			LIMIT 1
+		) prev ON true
+		WHERE md.device_id = $2
+		  AND md.name = ANY($3)
+		ORDER BY md.name ASC
+	`, orgID, deviceID, metrics, start)
+	if err != nil {
+		return nil, fmt.Errorf("querying previous metric points: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		var value float32
+		if err := rows.Scan(&name, &value); err != nil {
+			return nil, fmt.Errorf("scanning previous metric point: %w", err)
+		}
+		series = prependMetricPoint(series, name, sqldb.MetricPoint{Timestamp: start, Value: value})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating previous metric points: %w", err)
+	}
+	return series, nil
+}
+
+func prependMetricPoint(series []sqldb.MetricSeries, name string, point sqldb.MetricPoint) []sqldb.MetricSeries {
+	for i := range series {
+		if series[i].Name != name {
+			continue
+		}
+		if len(series[i].Data) > 0 && !series[i].Data[0].Timestamp.After(point.Timestamp) {
+			return series
+		}
+		series[i].Data = append([]sqldb.MetricPoint{point}, series[i].Data...)
+		return series
+	}
+	return append(series, sqldb.MetricSeries{Name: name, Data: []sqldb.MetricPoint{point}})
 }
 
 // QueryMetricsByTagPaths returns time-ordered series whose exact device+metric
