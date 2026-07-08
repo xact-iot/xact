@@ -155,9 +155,11 @@ jobs:
           - goarch: arm64
             arch: aarch64
             go_archive_arch: arm64
+            platform: linux/arm64/v8
           - goarch: arm
             arch: armv7
             go_archive_arch: armv6l
+            platform: linux/arm/v7
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -168,6 +170,8 @@ jobs:
           arch: ${{ matrix.arch }}
           distro: ubuntu22.04
           githubToken: ${{ github.token }}
+          dockerRunArgs: |
+            --platform ${{ matrix.platform }}
           install: |
             apt-get update -q -y
             apt-get install -q -y ca-certificates curl

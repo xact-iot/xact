@@ -80,14 +80,10 @@ func TestMetricWriterBatchesAndGroupsByOrg(t *testing.T) {
 }
 
 func TestMetricWriterTryWriteReportsFullQueue(t *testing.T) {
-	db := &captureMetricInserter{}
-	writer := NewMetricWriter(db, MetricWriterConfig{
-		QueueSize:      1,
-		BatchSize:      100,
-		FlushInterval:  time.Hour,
-		InsertTimeout:  time.Second,
-		EnqueueTimeout: time.Second,
-	})
+	writer := &MetricWriter{
+		input:  make(chan metricWrite, 1),
+		stopCh: make(chan struct{}),
+	}
 
 	entry := MetricEntry{DeviceName: "device", MetricName: "metric", Timestamp: time.Now(), Value: 1}
 	if err := writer.TryWrite("alpha", entry); err != nil {
@@ -98,12 +94,6 @@ func TestMetricWriterTryWriteReportsFullQueue(t *testing.T) {
 	}
 	if got := writer.Dropped(); got != 1 {
 		t.Fatalf("Dropped = %d, want 1", got)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	if err := writer.Stop(ctx); err != nil {
-		t.Fatalf("stop: %v", err)
 	}
 }
 
