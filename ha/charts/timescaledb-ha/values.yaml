@@ -1,0 +1,22 @@
+image:
+  repository: timescale/timescaledb-ha
+
+  tag: pg17
+
+  pullPolicy: IfNotPresent
+
+cluster:
+
+  replicas: 3
+
+storage:
+
+  size: 10Gi
+
+database:
+
+  name: xact
+
+  user: xact
+
+  password: change_me
