@@ -10,6 +10,7 @@
       - "--advertise-address {{ k3s_primary_ip }}"
       - "--write-kubeconfig-mode {{ k3s_write_kubeconfig_mode | default('644') }}"
     k3s_tls_san_args: "{{ (k3s_tls_sans | default([])) | map('regex_replace', '^(.*)$', '--tls-san \\1') | list }}"
+    k3s_flannel_iface_args: "{{ ['--flannel-iface ' ~ k3s_flannel_iface] if (k3s_flannel_iface | default('') | length > 0) else [] }}"
 
   tasks:
 
@@ -22,7 +23,7 @@
       shell: |
         curl -sfL https://get.k3s.io | \
         {{ k3s_install_version_env }} \
-        INSTALL_K3S_EXEC="server {{ (['--cluster-init'] + k3s_common_server_args + k3s_tls_san_args + (k3s_extra_server_args | default([]))) | join(' ') }}" \
+        INSTALL_K3S_EXEC="server {{ (['--cluster-init'] + k3s_common_server_args + k3s_tls_san_args + k3s_flannel_iface_args + (k3s_extra_server_args | default([]))) | join(' ') }}" \
         sh -
       when: not k3s_binary.stat.exists
 
@@ -62,6 +63,7 @@
       - "--advertise-address {{ ansible_host }}"
       - "--write-kubeconfig-mode {{ k3s_write_kubeconfig_mode | default('644') }}"
     k3s_tls_san_args: "{{ (k3s_tls_sans | default([])) | map('regex_replace', '^(.*)$', '--tls-san \\1') | list }}"
+    k3s_flannel_iface_args: "{{ ['--flannel-iface ' ~ k3s_flannel_iface] if (k3s_flannel_iface | default('') | length > 0) else [] }}"
 
   tasks:
 
@@ -81,6 +83,6 @@
         curl -sfL https://get.k3s.io | \
         K3S_TOKEN="{{ hostvars[master_name]['k3s_token'] | trim }}" \
         {{ k3s_install_version_env }} \
-        INSTALL_K3S_EXEC="server {{ (k3s_common_server_args + k3s_tls_san_args + (k3s_extra_server_args | default([]))) | join(' ') }}" \
+        INSTALL_K3S_EXEC="server {{ (k3s_common_server_args + k3s_tls_san_args + k3s_flannel_iface_args + (k3s_extra_server_args | default([]))) | join(' ') }}" \
         sh -
       when: not k3s_binary.stat.exists

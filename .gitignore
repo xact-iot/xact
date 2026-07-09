@@ -67,6 +67,7 @@ architecture/
 AirQuality/AirQuality
 ha/chatgpt.md
 ha/.ansible/
+ha/.cache/
 ha/.vagrant/
 ha/.vagrant.d/
 ha/k3s/kubeconfig

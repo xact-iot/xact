@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-This stage creates a three-node HA Kubernetes cluster using K3s running inside VirtualBox virtual machines. The same process is intended to be reusable later with physical machines replacing the VMs.
+This stage creates a three-node HA Kubernetes cluster using K3s running inside VMware virtual machines. The same process is intended to be reusable later with physical machines replacing the VMs.
 
 The following tools are required on the development host:
 
@@ -11,7 +11,8 @@ The following tools are required on the development host:
 | Tool                            | Purpose                                                 |
 | ------------------------------- | ------------------------------------------------------- |
 | Linux host (Ubuntu recommended) | Development environment                                 |
-| VirtualBox                      | Virtual machine provider                                |
+| VMware Workstation or Fusion    | Virtual machine provider                                |
+| Vagrant VMware provider         | Vagrant integration for VMware                          |
 | Vagrant                         | Automated VM creation and lifecycle management          |
 | Ansible                         | Automated operating system and Kubernetes configuration |
 | Git                             | Source control and deployment repository management     |
@@ -21,11 +22,15 @@ The following tools are required on the development host:
 Confirm the tools are installed:
 
 ```bash
-virtualbox --version
+vmware -v
 ```
 
 ```bash
 vagrant --version
+```
+
+```bash
+vagrant plugin list
 ```
 
 ```bash
@@ -73,7 +78,7 @@ The cluster uses:
 * K3s Kubernetes distribution
 * Embedded etcd datastore
 * Three server nodes
-* VirtualBox virtual machines for development
+* VMware virtual machines for development
 
 ---
 
@@ -108,13 +113,13 @@ ha/
 
 # Virtual Machine Configuration
 
-Three Ubuntu Server virtual machines are created using Vagrant.
+Three Ubuntu Server virtual machines are created using Vagrant and the `vmware_desktop` provider.
 
 | Node  | IP Address     | Purpose          |
 | ----- | -------------- | ---------------- |
-| node1 | 192.168.56.101 | First K3s server |
-| node2 | 192.168.56.102 | K3s server       |
-| node3 | 192.168.56.103 | K3s server       |
+| node1 | 192.168.57.101 | First K3s server |
+| node2 | 192.168.57.102 | K3s server       |
+| node3 | 192.168.57.103 | K3s server       |
 
 Each VM:
 
@@ -130,13 +135,13 @@ Each VM:
 Start the cluster:
 
 ```bash
-vagrant up
+make up
 ```
 
 Verify status:
 
 ```bash
-vagrant status
+make status
 ```
 
 Expected:
@@ -156,8 +161,8 @@ vagrant ssh node1
 Inside the VM:
 
 ```bash
-ping 192.168.56.102
-ping 192.168.56.103
+ping 192.168.57.102
+ping 192.168.57.103
 ```
 
 ---
@@ -176,9 +181,9 @@ Example:
 
 ```ini
 [k3s_nodes]
-node1 ansible_host=192.168.56.101
-node2 ansible_host=192.168.56.102
-node3 ansible_host=192.168.56.103
+node1 ansible_host=192.168.57.101
+node2 ansible_host=192.168.57.102
+node3 ansible_host=192.168.57.103
 
 [k3s_master]
 node1
@@ -253,9 +258,9 @@ performs:
 The nodes advertise their private network addresses:
 
 ```
-node1 192.168.56.101
-node2 192.168.56.102
-node3 192.168.56.103
+node1 192.168.57.101
+node2 192.168.57.102
+node3 192.168.57.103
 ```
 
 This ensures Kubernetes certificates include the correct addresses.

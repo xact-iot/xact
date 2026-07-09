@@ -20,9 +20,9 @@ This uses `Vagrantfile` to create:
 
 | Node  | IP Address     |
 | ----- | -------------- |
-| node1 | 192.168.56.101 |
-| node2 | 192.168.56.102 |
-| node3 | 192.168.56.103 |
+| node1 | 192.168.57.101 |
+| node2 | 192.168.57.102 |
+| node3 | 192.168.57.103 |
 
 Check their state:
 
@@ -30,43 +30,35 @@ Check their state:
 make status
 ```
 
-### Host-side VirtualBox checks
+### Host-side VMware checks
 
-If `make status` or `make up` fails before it reaches the VMs, check VirtualBox from the host:
-
-```bash
-VBoxManage --version
-```
-
-If the output says `/dev/vboxdrv` does not exist, the VirtualBox kernel driver is not loaded. On Ubuntu this is usually repaired with:
+If `make status` or `make up` fails before it reaches the VMs, first confirm Vagrant can see the VMware provider:
 
 ```bash
-sudo /sbin/vboxconfig
+vagrant plugin list
 ```
 
-If `vboxconfig` reports `Cannot unload module vboxnetflt`, stop any running or stale VirtualBox VMs first. In this lab, check:
+The local lab expects the `vmware_desktop` provider. VMware Workstation or Fusion must also be installed and usable on the host.
+
+If Vagrant reports that the VMware provider is missing, install or repair the Vagrant VMware provider before continuing. If VMware itself cannot start VMs, repair VMware on the host first; rebuilding the K3s cluster will not fix a broken hypervisor.
+
+For a completely clean lab rebuild, destroy the old Vagrant machines first:
 
 ```bash
-ps -ef | rg '[V]Box|k3s-node'
+make destroy
 ```
 
-Then stop the VMs with Vagrant if possible:
+Then start fresh:
 
 ```bash
-make down
+make up
 ```
-
-If Vagrant reports the machines as `aborted`, retry:
-
-```bash
-sudo /sbin/vboxconfig
-```
-
-If `make up` fails with `failed to open /dev/vboxnetctl`, that is also a VirtualBox kernel driver/device-file problem. Re-run `sudo /sbin/vboxconfig`. Secure Boot can also block module loading, but this host reported `SecureBoot disabled`, so module signing should not be required here.
-
-If Vagrant reports that the installed VirtualBox version is unsupported, either update Vagrant to a release that supports your VirtualBox version or install one of the VirtualBox versions listed in the Vagrant error message.
 
 ## 2. Test Ansible connectivity
+
+The default Makefile inventory is `ansible/inventory.vagrant.ini`, which is
+only for the local VMware lab. Production deployments should pass
+`INVENTORY=inventory.ini` after creating a production inventory.
 
 ```bash
 make ping
@@ -77,7 +69,7 @@ Ansible should report `SUCCESS` for all three nodes.
 If this fails, the usual causes are:
 
 * the VMs are not running
-* VirtualBox host-only networking is not available
+* VMware private networking is not available
 * Vagrant has not created the SSH keys yet
 
 ## 3. Prepare the operating systems
@@ -126,7 +118,7 @@ This writes:
 ha/k3s/kubeconfig
 ```
 
-The playbook rewrites the default K3s API address from `127.0.0.1` to `192.168.56.101`, so host-side `kubectl` can talk to the cluster.
+The playbook rewrites the default K3s API address from `127.0.0.1` to `192.168.57.101`, so host-side `kubectl` can talk to the cluster.
 
 Then test through SSH on `node1`:
 
@@ -170,7 +162,7 @@ The K3s binary includes a `kubectl` subcommand. This is only a development conve
 
 At the end of this stage:
 
-* VirtualBox is running three Ubuntu nodes
+* VMware is running three Ubuntu nodes
 * each node is a K3s server
 * K3s uses embedded etcd
 * the host has a kubeconfig for the cluster

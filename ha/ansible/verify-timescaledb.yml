@@ -1,0 +1,51 @@
+---
+- name: Verify TimescaleDB HA
+  hosts: k3s_master
+  become: true
+
+  tasks:
+    - name: Wait for TimescaleDB HelmChart job to complete
+      command: >
+        k3s kubectl -n kube-system
+        wait --for=condition=complete
+        job/helm-install-{{ timescaledb_release_name }}
+        --timeout=600s
+      register: helm_wait
+      changed_when: false
+
+    - name: Wait for TimescaleDB StatefulSet rollout
+      command: >
+        k3s kubectl -n {{ timescaledb_namespace }}
+        rollout status statefulset/{{ timescaledb_release_name }}
+        --timeout=900s
+      register: statefulset_rollout
+      changed_when: false
+
+    - name: Show database pods
+      command: >
+        k3s kubectl -n {{ timescaledb_namespace }}
+        get pods -l release={{ timescaledb_release_name }} -o wide
+      register: database_pods
+      changed_when: false
+
+    - name: Show database services
+      command: >
+        k3s kubectl -n {{ timescaledb_namespace }}
+        get svc -l release={{ timescaledb_release_name }} -o wide
+      register: database_services
+      changed_when: false
+
+    - name: Show database PVCs
+      command: >
+        k3s kubectl -n {{ timescaledb_namespace }}
+        get pvc -l release={{ timescaledb_release_name }} -o wide
+      register: database_pvcs
+      changed_when: false
+
+    - name: Show TimescaleDB status
+      debug:
+        msg:
+          - "{{ statefulset_rollout.stdout_lines }}"
+          - "{{ database_pods.stdout_lines }}"
+          - "{{ database_services.stdout_lines }}"
+          - "{{ database_pvcs.stdout_lines }}"

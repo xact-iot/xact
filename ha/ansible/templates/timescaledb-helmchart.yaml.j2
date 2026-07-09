@@ -1,0 +1,48 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: {{ timescaledb_release_name }}
+  namespace: kube-system
+spec:
+  chart: {{ timescaledb_release_name }}
+  chartContent: {{ lookup('file', timescaledb_chart_archive) | b64encode }}
+  targetNamespace: {{ timescaledb_namespace }}
+  createNamespace: true
+  valuesContent: |-
+    replicaCount: {{ timescaledb_replicas }}
+    fullnameOverride: {{ timescaledb_release_name }}
+    clusterName: {{ timescaledb_release_name }}
+
+    secrets:
+      credentialsSecretName: {{ timescaledb_credentials_secret }}
+
+    persistentVolumes:
+      data:
+        enabled: true
+        size: {{ timescaledb_data_size }}
+        storageClass: {{ timescaledb_storage_class }}
+        accessModes:
+          - ReadWriteOnce
+      wal:
+        enabled: true
+        size: {{ timescaledb_wal_size }}
+        storageClass: {{ timescaledb_storage_class }}
+        accessModes:
+          - ReadWriteOnce
+
+    service:
+      primary:
+        type: ClusterIP
+        port: 5432
+      replica:
+        type: ClusterIP
+        port: 5432
+
+    backup:
+      enabled: false
+
+    prometheus:
+      enabled: false
+
+    networkPolicy:
+      enabled: false

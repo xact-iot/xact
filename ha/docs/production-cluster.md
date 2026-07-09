@@ -57,7 +57,11 @@ Minimum starting point:
 
 ## Inventory
 
-Copy the example inventory:
+Use a production inventory with SSH access to your servers. The local Vagrant
+lab uses `inventory.vagrant.ini`, which contains the disposable `vagrant`
+credential; do not use that pattern for production.
+
+Copy the production example inventory:
 
 ```bash
 cd ha/ansible
@@ -75,6 +79,10 @@ node3 ansible_host=10.0.0.13 ansible_user=ubuntu
 [k3s_master]
 node1
 ```
+
+Prefer SSH keys managed outside this repository. If your environment requires
+different SSH options, set them in your local `inventory.ini` or through your
+Ansible configuration rather than committing secrets.
 
 ## K3s Settings
 
@@ -97,24 +105,45 @@ k3s_tls_sans:
 
 If you do not set `k3s_api_endpoint`, node2 and node3 join through node1. That is acceptable for the Vagrant demo, but a stable API endpoint is better for production operations.
 
+On hosts with more than one network interface, set `k3s_flannel_iface` so Flannel uses the interface that can reach the other nodes. This is required in the Vagrant demo because every VM has the same provider NAT address on `eth0`, while node-to-node traffic uses `eth1`.
+
+```ini
+[k3s_nodes:vars]
+k3s_flannel_iface=eth1
+```
+
 ## Deploy
 
 From `ha`:
 
 ```bash
-make ping
+make ping INVENTORY=inventory.ini
 ```
 
 ```bash
-make prepare
+make prepare INVENTORY=inventory.ini
 ```
 
 ```bash
-make install
+make install INVENTORY=inventory.ini
 ```
 
 ```bash
-make verify
+make configure-network INVENTORY=inventory.ini
+```
+
+```bash
+make verify INVENTORY=inventory.ini
+```
+
+Deploy the database:
+
+```bash
+make db-deploy INVENTORY=inventory.ini
+```
+
+```bash
+make db-verify INVENTORY=inventory.ini
 ```
 
 ## Inspect
@@ -137,7 +166,6 @@ For local testing:
 
 ```bash
 cd ha
-cp ansible/inventory.vagrant.ini ansible/inventory.ini
 make up
 make ping
 make prepare

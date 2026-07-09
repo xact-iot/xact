@@ -1,0 +1,40 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ timescaledb_release_name }}-patroni-services
+  namespace: {{ timescaledb_namespace }}
+  labels:
+    app.kubernetes.io/name: {{ timescaledb_release_name }}
+    app.kubernetes.io/component: database-rbac
+    app.kubernetes.io/managed-by: ansible
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - create
+      - get
+      - list
+      - patch
+      - update
+      - watch
+      - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ timescaledb_release_name }}-patroni-services
+  namespace: {{ timescaledb_namespace }}
+  labels:
+    app.kubernetes.io/name: {{ timescaledb_release_name }}
+    app.kubernetes.io/component: database-rbac
+    app.kubernetes.io/managed-by: ansible
+subjects:
+  - kind: ServiceAccount
+    name: {{ timescaledb_release_name }}
+    namespace: {{ timescaledb_namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ timescaledb_release_name }}-patroni-services

@@ -1,17 +1,22 @@
 Vagrant.configure("2") do |config|
   config.vm.box = "bento/ubuntu-24.04"
+  config.ssh.insert_key = false
+  config.vm.synced_folder ".", "/vagrant", disabled: true
 
   (1..3).each do |i|
     config.vm.define "node#{i}" do |node|
       node.vm.hostname = "node#{i}"
 
       node.vm.network "private_network",
-        ip: "192.168.56.10#{i}"
+        ip: "192.168.57.10#{i}"
 
-      node.vm.provider "virtualbox" do |vb|
-        vb.name = "k3s-node#{i}"
-        vb.memory = 4096
-        vb.cpus = 2
+      node.vm.provider "vmware_desktop" do |vmware|
+        vmware.gui = false
+        vmware.force_vmware_license = "workstation pro"
+        vmware.enable_vmrun_ip_lookup = false
+        vmware.vmx["displayName"] = "k3s-node#{i}"
+        vmware.vmx["memsize"] = "4096"
+        vmware.vmx["numvcpus"] = "2"
       end
     end
   end

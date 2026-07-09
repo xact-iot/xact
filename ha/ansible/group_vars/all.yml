@@ -13,6 +13,11 @@ k3s_tls_sans: []
 
 k3s_write_kubeconfig_mode: "644"
 
+# Set this on multi-NIC hosts when K3s/Flannel should use a specific network
+# interface for pod-to-pod traffic. The Vagrant demo sets this to eth1 because
+# every VM has the same provider NAT address on eth0.
+# k3s_flannel_iface: "eth1"
+
 # Extra server flags are appended to every K3s server install command.
 # Examples:
 # k3s_extra_server_args:
@@ -20,3 +25,18 @@ k3s_write_kubeconfig_mode: "644"
 #   - "--cluster-cidr=10.42.0.0/16"
 #   - "--service-cidr=10.43.0.0/16"
 k3s_extra_server_args: []
+
+# TimescaleDB HA deployment. This uses the K3s Helm controller, so Helm does
+# not need to be installed on the control host.
+timescaledb_namespace: "database"
+timescaledb_release_name: "xact-timescaledb"
+timescaledb_chart_repo: "https://charts.timescale.com"
+timescaledb_chart_name: "timescaledb-single"
+timescaledb_chart_version: "0.33.1"
+timescaledb_chart_archive: "../.cache/charts/timescaledb-single-0.33.1.tgz"
+timescaledb_chart_url: "https://charts.timescale.com/timescaledb-single-0.33.1.tgz"
+timescaledb_credentials_secret: "xact-timescaledb-credentials"
+timescaledb_storage_class: "local-path"
+timescaledb_data_size: "10Gi"
+timescaledb_wal_size: "2Gi"
+timescaledb_replicas: 3

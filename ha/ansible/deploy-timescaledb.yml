@@ -1,0 +1,84 @@
+---
+- name: Deploy TimescaleDB HA
+  hosts: k3s_master
+  become: true
+
+  tasks:
+    - name: Ensure local chart cache directory exists
+      become: false
+      delegate_to: localhost
+      file:
+        path: "{{ timescaledb_chart_archive | dirname }}"
+        state: directory
+        mode: "0755"
+
+    - name: Download pinned TimescaleDB chart on the control host
+      become: false
+      delegate_to: localhost
+      get_url:
+        url: "{{ timescaledb_chart_url }}"
+        dest: "{{ timescaledb_chart_archive }}"
+        mode: "0644"
+
+    - name: Ensure database namespace exists
+      shell: |
+        k3s kubectl create namespace {{ timescaledb_namespace }} --dry-run=client -o yaml | \
+        k3s kubectl apply -f -
+      changed_when: "'created' in namespace_apply.stdout or 'configured' in namespace_apply.stdout"
+      register: namespace_apply
+
+    - name: Check whether TimescaleDB credentials secret exists
+      command: >
+        k3s kubectl -n {{ timescaledb_namespace }}
+        get secret {{ timescaledb_credentials_secret }}
+      register: credentials_secret
+      failed_when: false
+      changed_when: false
+
+    - name: Create TimescaleDB credentials secret if absent
+      shell: |
+        set -euo pipefail
+        postgres_password="$(openssl rand -base64 36 | tr -d '\n')"
+        replication_password="$(openssl rand -base64 36 | tr -d '\n')"
+        admin_password="$(openssl rand -base64 36 | tr -d '\n')"
+
+        k3s kubectl -n {{ timescaledb_namespace }} create secret generic {{ timescaledb_credentials_secret }} \
+          --from-literal=PATRONI_SUPERUSER_PASSWORD="${postgres_password}" \
+          --from-literal=PATRONI_REPLICATION_PASSWORD="${replication_password}" \
+          --from-literal=PATRONI_admin_PASSWORD="${admin_password}"
+      args:
+        executable: /bin/bash
+      no_log: true
+      when: credentials_secret.rc != 0
+
+    - name: Render TimescaleDB HelmChart manifest
+      template:
+        src: timescaledb-helmchart.yaml.j2
+        dest: /tmp/{{ timescaledb_release_name }}-helmchart.yaml
+        mode: "0600"
+
+    - name: Apply TimescaleDB HelmChart manifest
+      command: >
+        k3s kubectl apply -f /tmp/{{ timescaledb_release_name }}-helmchart.yaml
+      register: helmchart_apply
+      changed_when: "'created' in helmchart_apply.stdout or 'configured' in helmchart_apply.stdout"
+
+    - name: Show HelmChart apply result
+      debug:
+        msg: "{{ helmchart_apply.stdout }}"
+
+    - name: Render TimescaleDB Patroni RBAC compatibility manifest
+      template:
+        src: timescaledb-rbac-compat.yaml.j2
+        dest: /tmp/{{ timescaledb_release_name }}-rbac-compat.yaml
+        mode: "0600"
+
+    - name: Apply TimescaleDB Patroni RBAC compatibility manifest
+      command: >
+        k3s kubectl apply -f /tmp/{{ timescaledb_release_name }}-rbac-compat.yaml
+      register: rbac_apply
+      changed_when: "'created' in rbac_apply.stdout or 'configured' in rbac_apply.stdout"
+
+    - name: Show RBAC compatibility apply result
+      debug:
+        msg: "{{ rbac_apply.stdout_lines }}"
