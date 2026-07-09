@@ -65,3 +65,8 @@ benchmark/main
 build_and_setup.sh
 architecture/
 AirQuality/AirQuality
+ha/chatgpt.md
+ha/.ansible/
+ha/.vagrant/
+ha/.vagrant.d/
+ha/k3s/kubeconfig

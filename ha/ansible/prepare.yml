@@ -16,10 +16,15 @@
           - wget
           - vim
           - net-tools
+          - ca-certificates
+          - gnupg
+          - open-iscsi
+          - nfs-common
         state: present
 
     - name: Disable swap immediately
       command: swapoff -a
+      changed_when: false
 
     - name: Disable swap permanently
       replace:
@@ -30,3 +35,11 @@
     - name: Set hostname
       hostname:
         name: "{{ inventory_hostname }}"
+
+    - name: Ensure private node hostnames resolve locally
+      lineinfile:
+        path: /etc/hosts
+        regexp: '.*\s{{ item }}$'
+        line: "{{ hostvars[item].ansible_host }} {{ item }}"
+        state: present
+      loop: "{{ groups['k3s_nodes'] }}"

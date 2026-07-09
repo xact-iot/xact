@@ -1,0 +1,22 @@
+---
+# Pin K3s for repeatable deployments. Set to an empty string only if you
+# intentionally want the installer to pull the latest stable K3s release.
+k3s_version: "v1.36.2+k3s1"
+
+# For a production cluster, point this at a stable load balancer or virtual IP
+# in front of the server nodes. The Vagrant lab leaves this unset and joins
+# through node1.
+# k3s_api_endpoint: "10.0.0.10"
+
+# Add the stable API endpoint and any DNS names clients will use for the K3s API.
+k3s_tls_sans: []
+
+k3s_write_kubeconfig_mode: "644"
+
+# Extra server flags are appended to every K3s server install command.
+# Examples:
+# k3s_extra_server_args:
+#   - "--disable=traefik"
+#   - "--cluster-cidr=10.42.0.0/16"
+#   - "--service-cidr=10.43.0.0/16"
+k3s_extra_server_args: []

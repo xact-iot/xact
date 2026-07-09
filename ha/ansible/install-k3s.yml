@@ -2,6 +2,14 @@
 - name: Install first K3s server
   hosts: k3s_master
   become: true
+  vars:
+    k3s_primary_ip: "{{ ansible_host }}"
+    k3s_install_version_env: "{{ ('INSTALL_K3S_VERSION=' ~ k3s_version) if (k3s_version | default('') | length > 0) else '' }}"
+    k3s_common_server_args:
+      - "--node-ip {{ k3s_primary_ip }}"
+      - "--advertise-address {{ k3s_primary_ip }}"
+      - "--write-kubeconfig-mode {{ k3s_write_kubeconfig_mode | default('644') }}"
+    k3s_tls_san_args: "{{ (k3s_tls_sans | default([])) | map('regex_replace', '^(.*)$', '--tls-san \\1') | list }}"
 
   tasks:
 
@@ -13,12 +21,9 @@
     - name: Install K3s cluster init server
       shell: |
         curl -sfL https://get.k3s.io | \
-        INSTALL_K3S_EXEC="server \
-        --cluster-init \
-        --node-ip 192.168.56.101 \
-        --advertise-address 192.168.56.101 \
-        --write-kubeconfig-mode 644" \
-        sh -      
+        {{ k3s_install_version_env }} \
+        INSTALL_K3S_EXEC="server {{ (['--cluster-init'] + k3s_common_server_args + k3s_tls_san_args + (k3s_extra_server_args | default([]))) | join(' ') }}" \
+        sh -
       when: not k3s_binary.stat.exists
 
     - name: Wait for token
@@ -48,13 +53,21 @@
   become: true
 
   vars:
-    master_ip: 192.168.56.101
+    master_name: "{{ groups['k3s_master'][0] }}"
+    k3s_join_endpoint: "{{ k3s_api_endpoint | default(hostvars[master_name].ansible_host) }}"
+    k3s_install_version_env: "{{ ('INSTALL_K3S_VERSION=' ~ k3s_version) if (k3s_version | default('') | length > 0) else '' }}"
+    k3s_common_server_args:
+      - "--server https://{{ k3s_join_endpoint }}:6443"
+      - "--node-ip {{ ansible_host }}"
+      - "--advertise-address {{ ansible_host }}"
+      - "--write-kubeconfig-mode {{ k3s_write_kubeconfig_mode | default('644') }}"
+    k3s_tls_san_args: "{{ (k3s_tls_sans | default([])) | map('regex_replace', '^(.*)$', '--tls-san \\1') | list }}"
 
   tasks:
 
     - name: Wait for first server API
       wait_for:
-        host: "{{ master_ip }}"
+        host: "{{ k3s_join_endpoint }}"
         port: 6443
         timeout: 120
 
@@ -66,10 +79,8 @@
     - name: Join K3s cluster
       shell: |
         curl -sfL https://get.k3s.io | \
-        K3S_TOKEN="{{ hostvars['node1']['k3s_token'] | trim }}" \
-        INSTALL_K3S_EXEC="server \
-        --server https://{{ master_ip }}:6443 \
-        --node-ip {{ ansible_host }} \
-        --write-kubeconfig-mode 644" \
-        sh -      
+        K3S_TOKEN="{{ hostvars[master_name]['k3s_token'] | trim }}" \
+        {{ k3s_install_version_env }} \
+        INSTALL_K3S_EXEC="server {{ (k3s_common_server_args + k3s_tls_san_args + (k3s_extra_server_args | default([]))) | join(' ') }}" \
+        sh -
       when: not k3s_binary.stat.exists
