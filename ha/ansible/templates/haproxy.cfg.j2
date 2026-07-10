@@ -53,7 +53,11 @@ backend xact_mqtt_nodes
 {% endfor %}
 
 frontend xact_nats_tls
-  bind {{ edge_vip }}:{{ edge_nats_tls_port }}{% if edge_nats_terminate_tls | bool %} ssl crt {{ edge_tls_pem_path }}{% endif %}
+{% if edge_nats_terminate_tls | bool %}
+  bind {{ edge_vip }}:{{ edge_nats_tls_port }} ssl crt {{ edge_tls_pem_path }}
+{% else %}
+  bind {{ edge_vip }}:{{ edge_nats_tls_port }}
+{% endif %}
   default_backend xact_nats_nodes
 
 backend xact_nats_nodes

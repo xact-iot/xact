@@ -478,6 +478,7 @@ build_docker_image() {
     local ATTEMPT=1
     local MAX_ATTEMPTS=3
     until docker build \
+        --no-cache \
         --platform "$OS/$ARCH" \
         --build-arg "XACT_ARTIFACT_DIR=server/deploy/intermediate/docker-image" \
         -t "$DOCKER_IMAGE" \

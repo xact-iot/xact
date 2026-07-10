@@ -107,6 +107,7 @@ metadata:
   namespace: {{ xact_namespace }}
 spec:
   serviceName: {{ xact_release_name }}-headless
+  podManagementPolicy: Parallel
   replicas: {{ xact_replicas }}
   selector:
     matchLabels:

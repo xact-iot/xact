@@ -42,7 +42,7 @@
         nats_internal_password="$(openssl rand -base64 36 | tr -d '\n')"
         nats_browser_token="$(openssl rand -base64 36 | tr -d '\n')"
         mqtt_password="$(openssl rand -base64 36 | tr -d '\n')"
-        database_url="postgres://{{ xact_database_user }}:${TIMESCALEDB_PASSWORD}@{{ xact_database_service }}:{{ xact_database_port }}/{{ xact_database_name }}?sslmode=disable"
+        database_url="postgres://{{ xact_database_user }}:${TIMESCALEDB_PASSWORD}@{{ xact_database_service }}:{{ xact_database_port }}/{{ xact_database_name }}?sslmode={{ xact_database_sslmode }}"
 
         args=(
           -n {{ xact_namespace }} create secret generic {{ xact_secret_name }}

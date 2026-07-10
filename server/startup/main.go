@@ -88,6 +88,23 @@ func natsClusterRoutes(raw string) []*url.URL {
 	return routes
 }
 
+func getBroadcastStreamWithRetry(name nats.SubjectName, timeout time.Duration) (*nats.BroadcastStream, error) {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		stream, err := nats.GetBroadcastStream(name)
+		if err == nil {
+			return stream, nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			return nil, lastErr
+		}
+		log.Printf("Waiting for embedded NATS JetStream to become ready: %v", err)
+		time.Sleep(2 * time.Second)
+	}
+}
+
 func main() {
 	spew.Config.Indent = "   "
 
@@ -269,7 +286,7 @@ func main() {
 	if err := nats.PreparePubDedup(s, nc); err != nil {
 		log.Fatalf("Failed to prepare publish de-dup: %v", err)
 	}
-	tagPublisher, err := nats.GetBroadcastStream(nats.TagValueStream)
+	tagPublisher, err := getBroadcastStreamWithRetry(nats.TagValueStream, time.Duration(envIntDefault("NATS_JETSTREAM_STARTUP_TIMEOUT_SECONDS", 120))*time.Second)
 	if err != nil {
 		log.Fatalf("Failed to prepare tag value publisher: %v", err)
 	}

@@ -84,6 +84,7 @@ xact_database_name: "postgres"
 xact_database_user: "postgres"
 xact_database_service: "xact-timescaledb.database.svc.cluster.local"
 xact_database_port: 5432
+xact_database_sslmode: "require"
 xact_api_port: 8080
 xact_nats_port: 4222
 xact_nats_cluster_port: 6222
