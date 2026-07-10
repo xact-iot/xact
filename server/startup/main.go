@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -45,6 +46,46 @@ var Version string
 
 func appVersion() string {
 	return strings.TrimSpace(Version)
+}
+
+func natsServerName() string {
+	for _, name := range []string{"NATS_SERVER_NAME", "SERVER_NAME", "HOSTNAME"} {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
+		}
+	}
+	if hostname, err := os.Hostname(); err == nil && strings.TrimSpace(hostname) != "" {
+		return strings.TrimSpace(hostname)
+	}
+	return ""
+}
+
+func natsClusterRoutes(raw string) []*url.URL {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+
+	hostname, _ := os.Hostname()
+	hostname = strings.TrimSpace(hostname)
+	routes := make([]*url.URL, 0)
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		routeURL, err := url.Parse(part)
+		if err != nil {
+			log.Printf("Warning: ignoring invalid NATS cluster route %q: %v", part, err)
+			continue
+		}
+		routeHost := routeURL.Hostname()
+		if hostname != "" && (strings.EqualFold(routeHost, hostname) || strings.HasPrefix(strings.ToLower(routeHost), strings.ToLower(hostname)+".")) {
+			continue
+		}
+		routes = append(routes, routeURL)
+	}
+	return routes
 }
 
 func main() {
@@ -116,6 +157,8 @@ func main() {
 	natsPort := envIntDefault("NATS_PORT", 4222)
 	natsWSHost := envStringDefault("NATS_WS_HOST", "127.0.0.1")
 	natsWSPort := envIntDefault("NATS_WS_PORT", 9222)
+	natsClusterHost := envStringDefault("NATS_CLUSTER_HOST", "")
+	natsClusterPort := envIntDefault("NATS_CLUSTER_PORT", 0)
 	natsLogFile := envStringDefault("NATS_LOG_FILE", "./logs/nats.log")
 	if err := ensureParentDir(natsLogFile); err != nil {
 		log.Fatalf("Failed to prepare NATS log file %s: %v", natsLogFile, err)
@@ -135,8 +178,11 @@ func main() {
 	}
 
 	opts := &server.Options{
-		Host: natsHost,
-		Port: natsPort,
+		ServerName: natsServerName(),
+		Host:       natsHost,
+		Port:       natsPort,
+		HTTPHost:   envStringDefault("NATS_HTTP_HOST", ""),
+		HTTPPort:   envIntDefault("NATS_HTTP_PORT", 0),
 		Websocket: server.WebsocketOpts{
 			Host:      natsWSHost,
 			Port:      natsWSPort,
@@ -182,6 +228,16 @@ func main() {
 				},
 			},
 		},
+	}
+	if natsClusterPort > 0 {
+		opts.Cluster = server.ClusterOpts{
+			Name:           envStringDefault("NATS_CLUSTER_NAME", "xact"),
+			Host:           natsClusterHost,
+			Port:           natsClusterPort,
+			ConnectRetries: envIntDefault("NATS_CLUSTER_CONNECT_RETRIES", 60),
+			ConnectBackoff: true,
+		}
+		opts.Routes = natsClusterRoutes(os.Getenv("NATS_CLUSTER_ROUTES"))
 	}
 
 	// Create and start NATS server

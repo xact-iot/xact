@@ -13,7 +13,10 @@ The baseline cluster is:
 * embedded etcd on each node
 * Kubernetes workloads scheduled on the same nodes
 
-For production, place a stable TCP load balancer or virtual IP in front of the K3s API on port `6443`.
+For production, place a stable TCP load balancer or virtual IP in front of the
+K3s API on port `6443`. For the VM lab and small on-prem profile, the kit uses
+Keepalived and HAProxy on the three nodes. For datacenter/cloud deployments,
+use the provider load balancer instead.
 
 ```text
 admin host
@@ -94,7 +97,7 @@ ha/ansible/group_vars/all.yml
 
 For repeatability, `k3s_version` is pinned. Change it deliberately during an upgrade.
 
-For production, set `k3s_api_endpoint` to a stable load balancer or virtual IP:
+For the Keepalived/HAProxy profile, set `k3s_api_endpoint` to the edge VIP:
 
 ```yaml
 k3s_api_endpoint: "10.0.0.10"
@@ -104,6 +107,10 @@ k3s_tls_sans:
 ```
 
 If you do not set `k3s_api_endpoint`, node2 and node3 join through node1. That is acceptable for the Vagrant demo, but a stable API endpoint is better for production operations.
+
+The current VM lab defaults now use the edge VIP by default so node failure can
+be tested through the same user-facing address. See `docs/ingress.md` for the
+edge contract and deployment order.
 
 On hosts with more than one network interface, set `k3s_flannel_iface` so Flannel uses the interface that can reach the other nodes. This is required in the Vagrant demo because every VM has the same provider NAT address on `eth0`, while node-to-node traffic uses `eth1`.
 
@@ -124,8 +131,22 @@ make ping INVENTORY=inventory.ini
 make prepare INVENTORY=inventory.ini
 ```
 
+Deploy the HA edge before installing K3s so joining nodes use the stable API
+endpoint:
+
+```bash
+make edge-deploy INVENTORY=inventory.ini
+```
+
 ```bash
 make install INVENTORY=inventory.ini
+```
+
+Run the edge deployment again after K3s is installed so it can create the
+Traefik NodePort service:
+
+```bash
+make edge-deploy INVENTORY=inventory.ini
 ```
 
 ```bash
@@ -144,6 +165,16 @@ make db-deploy INVENTORY=inventory.ini
 
 ```bash
 make db-verify INVENTORY=inventory.ini
+```
+
+Deploy XACT:
+
+```bash
+make xact-deploy INVENTORY=inventory.ini
+```
+
+```bash
+make xact-verify INVENTORY=inventory.ini
 ```
 
 ## Inspect
@@ -169,8 +200,16 @@ cd ha
 make up
 make ping
 make prepare
+make edge-deploy
 make install
+make edge-deploy
+make configure-network
 make verify
+make edge-verify
+make db-deploy
+make db-verify
+make xact-deploy
+make xact-verify
 ```
 
 The Vagrant environment is only a convenience for development and documentation.

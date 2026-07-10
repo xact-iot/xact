@@ -175,6 +175,7 @@ The following environment variables control the MQTT interface:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MQTT_BROKER_URL` | `mqtt://127.0.0.1:1883` | Broker listen address |
+| `MQTT_CLIENT_BROKER_URL` | `MQTT_BROKER_URL` | Optional MQTT client connection URL when the embedded broker listens on a different address than clients should dial. |
 | `MQTT_BROKER_PASSWORD` | development fallback: `xact` | Broker authentication password. Production mode requires a non-default value. |
 | `EMBEDDED_MQTT_SERVER` | `yes` | Enable embedded broker |
 | `MQTT_CLIENT_ENABLED` | `yes` | Enable MQTT client for data ingress |

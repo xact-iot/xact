@@ -3,13 +3,40 @@
 # intentionally want the installer to pull the latest stable K3s release.
 k3s_version: "v1.36.2+k3s1"
 
-# For a production cluster, point this at a stable load balancer or virtual IP
-# in front of the server nodes. The Vagrant lab leaves this unset and joins
-# through node1.
-# k3s_api_endpoint: "10.0.0.10"
+# Front edge for the VM lab and small on-prem clusters. Cloud/datacenter
+# deployments can leave this disabled and use the provider load balancer.
+edge_mode: "keepalived_haproxy"
+edge_vip: "192.168.57.100"
+edge_interface: "{{ k3s_flannel_iface | default('eth1') }}"
+edge_virtual_router_id: 57
+edge_auth_pass: "xact-ha"
+edge_health_check_interval_seconds: 2
+edge_health_check_fall: 2
+edge_health_check_rise: 2
+
+# Public edge ports. HTTPS is routed to K3s Traefik. MQTT and NATS are routed
+# to fixed XACT NodePorts because they are raw TCP inputs, not HTTP ingress.
+edge_http_port: 80
+edge_https_port: 443
+edge_k3s_api_port: 6443
+edge_mqtt_tls_port: 8883
+edge_nats_tls_port: 4222
+edge_nats_terminate_tls: true
+edge_tls_cert_path: "/etc/haproxy/xact-edge.crt"
+edge_tls_key_path: "/etc/haproxy/xact-edge.key"
+edge_tls_pem_path: "/etc/haproxy/xact-edge.pem"
+edge_traefik_http_node_port: 30080
+edge_traefik_https_node_port: 30443
+edge_xact_mqtt_node_port: 31883
+edge_xact_nats_node_port: 31222
+
+# For HA installs, point K3s server joins and clients at the stable edge VIP.
+# Datacenter/cloud inventories can override this with the provider load balancer.
+k3s_api_endpoint: "{{ edge_vip }}"
 
 # Add the stable API endpoint and any DNS names clients will use for the K3s API.
-k3s_tls_sans: []
+k3s_tls_sans:
+  - "{{ edge_vip }}"
 
 k3s_write_kubeconfig_mode: "644"
 
@@ -19,12 +46,16 @@ k3s_write_kubeconfig_mode: "644"
 # k3s_flannel_iface: "eth1"
 
 # Extra server flags are appended to every K3s server install command.
+# ServiceLB is disabled for the HA edge profile because HAProxy owns the
+# external VIP ports on the same nodes. Traefik remains installed and is
+# exposed through the stable NodePorts above.
 # Examples:
 # k3s_extra_server_args:
 #   - "--disable=traefik"
 #   - "--cluster-cidr=10.42.0.0/16"
 #   - "--service-cidr=10.43.0.0/16"
-k3s_extra_server_args: []
+k3s_extra_server_args:
+  - "--disable=servicelb"
 
 # TimescaleDB HA deployment. This uses the K3s Helm controller, so Helm does
 # not need to be installed on the control host.
@@ -40,3 +71,31 @@ timescaledb_storage_class: "local-path"
 timescaledb_data_size: "10Gi"
 timescaledb_wal_size: "2Gi"
 timescaledb_replicas: 3
+
+# XACT Kubernetes deployment. Use xact_image=ghcr.io/xact-iot/xact:latest for
+# published images, or xact:local with imagePullPolicy=Never for local testing
+# after loading the image onto each K3s node.
+xact_namespace: "xact"
+xact_release_name: "xact"
+xact_image: "ghcr.io/xact-iot/xact:latest"
+xact_image_pull_policy: "IfNotPresent"
+xact_replicas: 3
+xact_database_name: "postgres"
+xact_database_user: "postgres"
+xact_database_service: "xact-timescaledb.database.svc.cluster.local"
+xact_database_port: 5432
+xact_api_port: 8080
+xact_nats_port: 4222
+xact_nats_cluster_port: 6222
+xact_nats_http_port: 8222
+xact_nats_ws_port: 9222
+xact_mqtt_port: 8883
+xact_nats_store_size: "2Gi"
+xact_metrics_retention_days: 180
+xact_event_retention_days: 0
+xact_bootstrap_admin_password: ""
+xact_secret_name: "xact-secrets"
+xact_tls_secret_name: "xact-edge-tls"
+xact_enable_https: "no"
+xact_enable_mqtt_tls: "yes"
+xact_site_host: "{{ edge_vip }}"

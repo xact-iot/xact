@@ -1,0 +1,36 @@
+---
+- name: Verify XACT application
+  hosts: k3s_master
+  become: true
+
+  tasks:
+    - name: Wait for XACT deployment rollout
+      command: >
+        k3s kubectl -n {{ xact_namespace }}
+        rollout status statefulset/{{ xact_release_name }}
+        --timeout=600s
+      changed_when: false
+
+    - name: Show XACT resources
+      command: >
+        k3s kubectl -n {{ xact_namespace }}
+        get statefulset,pods,pvc,svc,ingress -o wide
+      register: xact_resources
+      changed_when: false
+
+    - name: Show embedded NATS route status
+      shell: |
+        set -e
+        for pod in $(k3s kubectl -n {{ xact_namespace }} get pods -l app.kubernetes.io/name={{ xact_release_name }} -o jsonpath='{.items[*].metadata.name}'); do
+          printf '%s\n' "== ${pod} routez =="
+          k3s kubectl -n {{ xact_namespace }} exec "${pod}" -- wget -qO- http://127.0.0.1:{{ xact_nats_http_port }}/routez || true
+          printf '\n'
+        done
+      register: xact_nats_routes
+      changed_when: false
+
+    - name: Show XACT status
+      debug:
+        msg:
+          - "{{ xact_resources.stdout_lines }}"
+          - "{{ xact_nats_routes.stdout_lines }}"

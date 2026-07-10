@@ -1,0 +1,25 @@
+---
+- name: Load local XACT image into K3s nodes
+  hosts: k3s_nodes
+  become: true
+
+  vars:
+    xact_local_image_archive: "../.cache/images/xact-local.tar"
+    xact_node_image_archive: "/tmp/xact-local.tar"
+
+  tasks:
+    - name: Copy local image archive to node
+      copy:
+        src: "{{ xact_local_image_archive }}"
+        dest: "{{ xact_node_image_archive }}"
+        mode: "0644"
+
+    - name: Import local image into K3s containerd
+      command: >
+        k3s ctr images import {{ xact_node_image_archive }}
+      register: image_import
+      changed_when: true
+
+    - name: Show import result
+      debug:
+        msg: "{{ image_import.stdout_lines }}"

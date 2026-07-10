@@ -1,0 +1,273 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ xact_namespace }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ xact_release_name }}
+  namespace: {{ xact_namespace }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ xact_release_name }}
+  ports:
+    - name: http
+      port: {{ xact_api_port }}
+      targetPort: http
+    - name: nats-ws
+      port: {{ xact_nats_ws_port }}
+      targetPort: nats-ws
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ xact_release_name }}-headless
+  namespace: {{ xact_namespace }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: {{ xact_release_name }}
+  ports:
+    - name: nats-cluster
+      port: {{ xact_nats_cluster_port }}
+      targetPort: nats-cluster
+    - name: nats
+      port: {{ xact_nats_port }}
+      targetPort: nats
+    - name: nats-http
+      port: {{ xact_nats_http_port }}
+      targetPort: nats-http
+    - name: http
+      port: {{ xact_api_port }}
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ xact_release_name }}-mqtt
+  namespace: {{ xact_namespace }}
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: {{ xact_release_name }}
+  ports:
+    - name: mqtt-tls
+      port: {{ xact_mqtt_port }}
+      targetPort: mqtt
+      nodePort: {{ edge_xact_mqtt_node_port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ xact_release_name }}-nats
+  namespace: {{ xact_namespace }}
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: {{ xact_release_name }}
+  ports:
+    - name: nats
+      port: {{ xact_nats_port }}
+      targetPort: nats
+      nodePort: {{ edge_xact_nats_node_port }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ xact_release_name }}
+  namespace: {{ xact_namespace }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /xact/ws
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ xact_release_name }}
+                port:
+                  name: nats-ws
+          - path: /xact
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ xact_release_name }}
+                port:
+                  name: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ xact_release_name }}
+  namespace: {{ xact_namespace }}
+spec:
+  serviceName: {{ xact_release_name }}-headless
+  replicas: {{ xact_replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ xact_release_name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ xact_release_name }}
+    spec:
+      containers:
+        - name: xact
+          image: {{ xact_image }}
+          imagePullPolicy: {{ xact_image_pull_policy }}
+          ports:
+            - name: http
+              containerPort: {{ xact_api_port }}
+            - name: nats
+              containerPort: {{ xact_nats_port }}
+            - name: nats-cluster
+              containerPort: {{ xact_nats_cluster_port }}
+            - name: nats-http
+              containerPort: {{ xact_nats_http_port }}
+            - name: nats-ws
+              containerPort: {{ xact_nats_ws_port }}
+            - name: mqtt
+              containerPort: {{ xact_mqtt_port }}
+          env:
+            - name: XACT_ENV
+              value: production
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ xact_secret_name }}
+                  key: DATABASE_URL
+            - name: STATIC_SERVE_MODE
+              value: server
+            - name: STATIC_DIR
+              value: /opt/xact/web
+            - name: PLUGIN_DIR
+              value: /opt/xact/plugins
+            - name: API_HOST
+              value: 0.0.0.0
+            - name: API_PORT
+              value: "{{ xact_api_port }}"
+            - name: NATS_HOST
+              value: 0.0.0.0
+            - name: NATS_PORT
+              value: "{{ xact_nats_port }}"
+            - name: NATS_CLUSTER_NAME
+              value: xact
+            - name: NATS_CLUSTER_HOST
+              value: 0.0.0.0
+            - name: NATS_CLUSTER_PORT
+              value: "{{ xact_nats_cluster_port }}"
+            - name: NATS_CLUSTER_ROUTES
+              value: "{% for i in range(xact_replicas | int) %}nats://{{ xact_release_name }}-{{ i }}.{{ xact_release_name }}-headless.{{ xact_namespace }}.svc.cluster.local:{{ xact_nats_cluster_port }}{% if not loop.last %},{% endif %}{% endfor %}"
+            - name: NATS_HTTP_HOST
+              value: 127.0.0.1
+            - name: NATS_HTTP_PORT
+              value: "{{ xact_nats_http_port }}"
+            - name: CLUSTERED
+              value: "true"
+            - name: NATS_WS_HOST
+              value: 0.0.0.0
+            - name: NATS_WS_PORT
+              value: "{{ xact_nats_ws_port }}"
+            - name: NATS_WS_PATH
+              value: /xact/ws
+            - name: NATS_STORE_DIR
+              value: /var/lib/xact/nats-store
+            - name: NATS_LOG_FILE
+              value: /var/log/xact/nats.log
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ xact_secret_name }}
+                  key: JWT_SECRET
+            - name: NATS_INTERNAL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ xact_secret_name }}
+                  key: NATS_INTERNAL_PASSWORD
+            - name: NATS_BROWSER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ xact_secret_name }}
+                  key: NATS_BROWSER_TOKEN
+            - name: EMBEDDED_MQTT_SERVER
+              value: "yes"
+            - name: MQTT_BROKER_URL
+              value: "mqtts://0.0.0.0:{{ xact_mqtt_port }}"
+            - name: MQTT_CLIENT_BROKER_URL
+              value: "mqtts://127.0.0.1:{{ xact_mqtt_port }}"
+            - name: MQTT_BROKER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ xact_secret_name }}
+                  key: MQTT_BROKER_PASSWORD
+            - name: MQTT_CLIENT_ENABLED
+              value: "yes"
+            - name: MQTT_CLIENT_USERNAME
+              value: xact
+            - name: MQTT_CLIENT_TLS_INSECURE_SKIP_VERIFY
+              value: "true"
+            - name: ENABLE_HTTPS
+              value: "{{ xact_enable_https }}"
+            - name: ENABLE_TLS
+              value: "{{ xact_enable_mqtt_tls }}"
+            - name: HTTP_CERTS_DIR
+              value: /etc/xact/tls
+            - name: METRICS_RETENTION_DAYS
+              value: "{{ xact_metrics_retention_days }}"
+            - name: EVENT_RETENTION_DAYS
+              value: "{{ xact_event_retention_days }}"
+            - name: NATS_BROWSER_ALLOW_COMMANDS
+              value: "no"
+{% if xact_bootstrap_admin_password | length > 0 %}
+            - name: XACT_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ xact_secret_name }}
+                  key: XACT_BOOTSTRAP_ADMIN_PASSWORD
+{% endif %}
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/xact/tls
+              readOnly: true
+            - name: nats-store
+              mountPath: /var/lib/xact/nats-store
+            - name: logs
+              mountPath: /var/log/xact
+            - name: plugins
+              mountPath: /opt/xact/plugins
+          readinessProbe:
+            httpGet:
+              path: /xact/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /xact/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ xact_tls_secret_name }}
+        - name: logs
+          emptyDir: {}
+        - name: plugins
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: nats-store
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ xact_nats_store_size }}

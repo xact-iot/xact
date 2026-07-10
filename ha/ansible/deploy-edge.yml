@@ -1,0 +1,114 @@
+---
+- name: Deploy HA edge with Keepalived and HAProxy
+  hosts: k3s_nodes
+  become: true
+
+  tasks:
+    - name: Install edge packages
+      apt:
+        name:
+          - haproxy
+          - keepalived
+          - openssl
+        state: present
+        update_cache: yes
+
+    - name: Allow HAProxy to bind the VIP before it is local
+      sysctl:
+        name: net.ipv4.ip_nonlocal_bind
+        value: "1"
+        state: present
+        reload: yes
+
+    - name: Check whether edge TLS certificate exists
+      stat:
+        path: "{{ edge_tls_pem_path }}"
+      register: edge_tls_pem
+
+    - name: Generate self-signed edge certificate if absent
+      command: >
+        openssl req -x509 -nodes -newkey rsa:2048
+        -keyout {{ edge_tls_key_path }}
+        -out {{ edge_tls_cert_path }}
+        -days 3650
+        -subj /CN={{ edge_vip }}
+        -addext subjectAltName=IP:{{ edge_vip }}
+      when: not edge_tls_pem.stat.exists
+
+    - name: Build HAProxy PEM certificate if absent
+      shell: >
+        cat {{ edge_tls_cert_path }} {{ edge_tls_key_path }} > {{ edge_tls_pem_path }}
+      when: not edge_tls_pem.stat.exists
+
+    - name: Restrict edge TLS key material
+      file:
+        path: "{{ item }}"
+        mode: "0600"
+      loop:
+        - "{{ edge_tls_key_path }}"
+        - "{{ edge_tls_pem_path }}"
+
+    - name: Render HAProxy configuration
+      template:
+        src: haproxy.cfg.j2
+        dest: /etc/haproxy/haproxy.cfg
+        mode: "0644"
+      notify: Restart haproxy
+
+    - name: Render Keepalived configuration
+      template:
+        src: keepalived.conf.j2
+        dest: /etc/keepalived/keepalived.conf
+        mode: "0600"
+      notify: Restart keepalived
+
+    - name: Enable and start HAProxy
+      service:
+        name: haproxy
+        enabled: yes
+        state: started
+
+    - name: Enable and start Keepalived
+      service:
+        name: keepalived
+        enabled: yes
+        state: started
+
+  handlers:
+    - name: Restart haproxy
+      service:
+        name: haproxy
+        state: restarted
+
+    - name: Restart keepalived
+      service:
+        name: keepalived
+        state: restarted
+
+- name: Configure cluster edge services when K3s is installed
+  hosts: k3s_master
+  become: true
+
+  tasks:
+    - name: Check whether K3s is installed
+      stat:
+        path: /usr/local/bin/k3s
+      register: k3s_binary
+
+    - name: Render Traefik edge NodePort service
+      template:
+        src: traefik-edge-service.yaml.j2
+        dest: /tmp/traefik-edge-service.yaml
+        mode: "0600"
+      when: k3s_binary.stat.exists
+
+    - name: Apply Traefik edge NodePort service
+      command: >
+        k3s kubectl apply -f /tmp/traefik-edge-service.yaml
+      register: traefik_edge_apply
+      changed_when: "'created' in traefik_edge_apply.stdout or 'configured' in traefik_edge_apply.stdout"
+      when: k3s_binary.stat.exists
+
+    - name: Show Traefik edge service result
+      debug:
+        msg: "{{ traefik_edge_apply.stdout_lines | default(['K3s is not installed yet; rerun edge-deploy after install.']) }}"

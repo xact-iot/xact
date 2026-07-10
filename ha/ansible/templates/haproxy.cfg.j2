@@ -1,0 +1,63 @@
+global
+  log /dev/log local0
+  log /dev/log local1 notice
+  daemon
+  maxconn 4096
+
+defaults
+  log global
+  mode tcp
+  option dontlognull
+  timeout connect 5s
+  timeout client 60s
+  timeout server 60s
+
+frontend k3s_api
+  bind {{ edge_vip }}:{{ edge_k3s_api_port }}
+  default_backend k3s_api_nodes
+
+backend k3s_api_nodes
+  option tcp-check
+{% for host in groups['k3s_nodes'] %}
+  server {{ host }} {{ hostvars[host].ansible_host }}:{{ edge_k3s_api_port }} check inter {{ edge_health_check_interval_seconds }}s fall {{ edge_health_check_fall }} rise {{ edge_health_check_rise }}
+{% endfor %}
+
+frontend xact_http
+  bind {{ edge_vip }}:{{ edge_http_port }}
+  default_backend traefik_http_nodes
+
+backend traefik_http_nodes
+  option tcp-check
+{% for host in groups['k3s_nodes'] %}
+  server {{ host }} {{ hostvars[host].ansible_host }}:{{ edge_traefik_http_node_port }} check inter {{ edge_health_check_interval_seconds }}s fall {{ edge_health_check_fall }} rise {{ edge_health_check_rise }}
+{% endfor %}
+
+frontend xact_https
+  bind {{ edge_vip }}:{{ edge_https_port }}
+  default_backend traefik_https_nodes
+
+backend traefik_https_nodes
+  option tcp-check
+{% for host in groups['k3s_nodes'] %}
+  server {{ host }} {{ hostvars[host].ansible_host }}:{{ edge_traefik_https_node_port }} check inter {{ edge_health_check_interval_seconds }}s fall {{ edge_health_check_fall }} rise {{ edge_health_check_rise }}
+{% endfor %}
+
+frontend xact_mqtt_tls
+  bind {{ edge_vip }}:{{ edge_mqtt_tls_port }}
+  default_backend xact_mqtt_nodes
+
+backend xact_mqtt_nodes
+  option tcp-check
+{% for host in groups['k3s_nodes'] %}
+  server {{ host }} {{ hostvars[host].ansible_host }}:{{ edge_xact_mqtt_node_port }} check inter {{ edge_health_check_interval_seconds }}s fall {{ edge_health_check_fall }} rise {{ edge_health_check_rise }}
+{% endfor %}
+
+frontend xact_nats_tls
+  bind {{ edge_vip }}:{{ edge_nats_tls_port }}{% if edge_nats_terminate_tls | bool %} ssl crt {{ edge_tls_pem_path }}{% endif %}
+  default_backend xact_nats_nodes
+
+backend xact_nats_nodes
+  option tcp-check
+{% for host in groups['k3s_nodes'] %}
+  server {{ host }} {{ hostvars[host].ansible_host }}:{{ edge_xact_nats_node_port }} check inter {{ edge_health_check_interval_seconds }}s fall {{ edge_health_check_fall }} rise {{ edge_health_check_rise }}
+{% endfor %}

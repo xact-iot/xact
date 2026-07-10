@@ -1,0 +1,19 @@
+---
+- name: Verify HA edge
+  hosts: k3s_nodes
+  become: true
+
+  tasks:
+    - name: Show edge services
+      shell: |
+        set -e
+        printf '%s\n' "== $(hostname) =="
+        systemctl is-active haproxy
+        systemctl is-active keepalived
+        ip -brief addr show {{ edge_interface }} | cat
+      register: edge_status
+      changed_when: false
+
+    - name: Show edge status
+      debug:
+        msg: "{{ edge_status.stdout_lines }}"

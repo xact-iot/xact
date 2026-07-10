@@ -1,0 +1,40 @@
+global_defs {
+  router_id XACT_{{ inventory_hostname | upper }}
+  enable_script_security
+  script_user root
+}
+
+vrrp_script chk_haproxy {
+  script "/usr/bin/systemctl is-active --quiet haproxy"
+  interval {{ edge_health_check_interval_seconds }}
+  fall {{ edge_health_check_fall }}
+  rise {{ edge_health_check_rise }}
+}
+
+vrrp_instance XACT_EDGE {
+  state BACKUP
+  interface {{ edge_interface }}
+  virtual_router_id {{ edge_virtual_router_id }}
+  priority {{ 150 - (groups['k3s_nodes'].index(inventory_hostname) * 10) }}
+  advert_int 1
+
+  authentication {
+    auth_type PASS
+    auth_pass {{ edge_auth_pass }}
+  }
+
+  unicast_src_ip {{ ansible_host }}
+  unicast_peer {
+{% for host in groups['k3s_nodes'] if host != inventory_hostname %}
+    {{ hostvars[host].ansible_host }}
+{% endfor %}
+  }
+
+  virtual_ipaddress {
+    {{ edge_vip }}/24 dev {{ edge_interface }}
+  }
+
+  track_script {
+    chk_haproxy
+  }
+}

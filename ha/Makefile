@@ -10,7 +10,10 @@ KUBECTL := $(shell command -v kubectl 2>/dev/null || true)
 ANSIBLE := ansible -i $(INVENTORY)
 ANSIBLE_PLAYBOOK := ansible-playbook -i $(INVENTORY)
 
-.PHONY: help up status ssh-node1 ping prepare install configure-network verify db-deploy db-verify db-status db-logs kubeconfig k3s-bin nodes pods local-nodes local-pods down destroy clean reset-state
+XACT_IMAGE ?= xact:local
+XACT_IMAGE_ARCHIVE ?= .cache/images/xact-local.tar
+
+.PHONY: help up status ssh-node1 ping prepare install configure-network verify edge-deploy edge-verify db-deploy db-verify db-status db-logs xact-build-local-image xact-load-local-image xact-deploy xact-deploy-local xact-verify xact-status kubeconfig k3s-bin nodes pods local-nodes local-pods down destroy clean reset-state
 
 help:
 	@printf '%s\n' "K3s HA lab targets"
@@ -22,10 +25,18 @@ help:
 	@printf '%s\n' "  make install     Install the 3-server K3s HA cluster"
 	@printf '%s\n' "  make configure-network  Apply K3s network config such as flannel iface"
 	@printf '%s\n' "  make verify      Show nodes and pods from inside the cluster"
+	@printf '%s\n' "  make edge-deploy Deploy Keepalived + HAProxy front edge"
+	@printf '%s\n' "  make edge-verify Verify front edge services and VIP placement"
 	@printf '%s\n' "  make db-deploy   Deploy TimescaleDB HA using the K3s Helm controller"
 	@printf '%s\n' "  make db-verify   Verify TimescaleDB HA resources and pod readiness"
 	@printf '%s\n' "  make db-status   Show database namespace pods, PVCs, and services"
 	@printf '%s\n' "  make db-logs     Show TimescaleDB Helm install job logs"
+	@printf '%s\n' "  make xact-build-local-image  Build local Docker image for XACT"
+	@printf '%s\n' "  make xact-load-local-image   Import local XACT image into all K3s nodes"
+	@printf '%s\n' "  make xact-deploy Deploy XACT application"
+	@printf '%s\n' "  make xact-deploy-local Deploy XACT using xact:local already loaded on nodes"
+	@printf '%s\n' "  make xact-verify Verify XACT rollout and services"
+	@printf '%s\n' "  make xact-status Show XACT namespace resources"
 	@printf '%s\n' "  make kubeconfig  Fetch kubeconfig to $(KUBECONFIG)"
 	@printf '%s\n' "  make k3s-bin     Fetch the K3s binary for host-side kubectl fallback"
 	@printf '%s\n' "  make nodes       Show nodes through SSH on node1"
@@ -64,6 +75,12 @@ configure-network:
 verify:
 	cd $(ANSIBLE_DIR) && $(ANSIBLE_PLAYBOOK) verify-k3s.yml
 
+edge-deploy:
+	cd $(ANSIBLE_DIR) && $(ANSIBLE_PLAYBOOK) deploy-edge.yml
+
+edge-verify:
+	cd $(ANSIBLE_DIR) && $(ANSIBLE_PLAYBOOK) verify-edge.yml
+
 db-deploy:
 	cd $(ANSIBLE_DIR) && $(ANSIBLE_PLAYBOOK) deploy-timescaledb.yml
 
@@ -75,6 +92,26 @@ db-status:
 
 db-logs:
 	cd $(ANSIBLE_DIR) && $(ANSIBLE) node1 -b -m shell -a "k3s kubectl -n kube-system logs job/helm-install-xact-timescaledb --tail=200"
+
+xact-build-local-image:
+	../server/build_deploy.sh --docker --docker-image $(XACT_IMAGE)
+	mkdir -p $(dir $(XACT_IMAGE_ARCHIVE))
+	docker save $(XACT_IMAGE) -o $(XACT_IMAGE_ARCHIVE)
+
+xact-load-local-image:
+	cd $(ANSIBLE_DIR) && $(ANSIBLE_PLAYBOOK) load-xact-image.yml -e xact_local_image_archive=../$(XACT_IMAGE_ARCHIVE)
+
+xact-deploy:
+	cd $(ANSIBLE_DIR) && $(ANSIBLE_PLAYBOOK) deploy-xact.yml
+
+xact-deploy-local:
+	cd $(ANSIBLE_DIR) && $(ANSIBLE_PLAYBOOK) deploy-xact.yml -e xact_image=$(XACT_IMAGE) -e xact_image_pull_policy=Never
+
+xact-verify:
+	cd $(ANSIBLE_DIR) && $(ANSIBLE_PLAYBOOK) verify-xact.yml
+
+xact-status:
+	cd $(ANSIBLE_DIR) && $(ANSIBLE) node1 -b -m shell -a "k3s kubectl -n xact get statefulset,pods,pvc,svc,ingress -o wide"
 
 kubeconfig:
 	mkdir -p k3s .ansible/tmp

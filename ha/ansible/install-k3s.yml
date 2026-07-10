@@ -8,6 +8,7 @@
     k3s_common_server_args:
       - "--node-ip {{ k3s_primary_ip }}"
       - "--advertise-address {{ k3s_primary_ip }}"
+      - "--bind-address {{ k3s_primary_ip }}"
       - "--write-kubeconfig-mode {{ k3s_write_kubeconfig_mode | default('644') }}"
     k3s_tls_san_args: "{{ (k3s_tls_sans | default([])) | map('regex_replace', '^(.*)$', '--tls-san \\1') | list }}"
     k3s_flannel_iface_args: "{{ ['--flannel-iface ' ~ k3s_flannel_iface] if (k3s_flannel_iface | default('') | length > 0) else [] }}"
@@ -61,6 +62,7 @@
       - "--server https://{{ k3s_join_endpoint }}:6443"
       - "--node-ip {{ ansible_host }}"
       - "--advertise-address {{ ansible_host }}"
+      - "--bind-address {{ ansible_host }}"
       - "--write-kubeconfig-mode {{ k3s_write_kubeconfig_mode | default('644') }}"
     k3s_tls_san_args: "{{ (k3s_tls_sans | default([])) | map('regex_replace', '^(.*)$', '--tls-san \\1') | list }}"
     k3s_flannel_iface_args: "{{ ['--flannel-iface ' ~ k3s_flannel_iface] if (k3s_flannel_iface | default('') | length > 0) else [] }}"

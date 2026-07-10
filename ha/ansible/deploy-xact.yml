@@ -1,0 +1,114 @@
+---
+- name: Deploy XACT application
+  hosts: k3s_master
+  become: true
+
+  tasks:
+    - name: Ensure XACT namespace exists
+      command: >
+        k3s kubectl create namespace {{ xact_namespace }}
+        --dry-run=client -o yaml
+      register: xact_namespace_yaml
+      changed_when: false
+
+    - name: Apply XACT namespace
+      command: k3s kubectl apply -f -
+      args:
+        stdin: "{{ xact_namespace_yaml.stdout }}"
+      register: xact_namespace_apply
+      changed_when: "'created' in xact_namespace_apply.stdout or 'configured' in xact_namespace_apply.stdout"
+
+    - name: Read TimescaleDB superuser password
+      shell: >
+        k3s kubectl -n {{ timescaledb_namespace }}
+        get secret {{ timescaledb_credentials_secret }}
+        -o jsonpath='{.data.PATRONI_SUPERUSER_PASSWORD}' | base64 -d
+      register: timescaledb_superuser_password
+      changed_when: false
+      no_log: true
+
+    - name: Check whether XACT secret exists
+      command: >
+        k3s kubectl -n {{ xact_namespace }}
+        get secret {{ xact_secret_name }}
+      register: xact_secret
+      failed_when: false
+      changed_when: false
+
+    - name: Create XACT secret if absent
+      shell: |
+        set -euo pipefail
+        jwt_secret="$(openssl rand -hex 32)"
+        nats_internal_password="$(openssl rand -base64 36 | tr -d '\n')"
+        nats_browser_token="$(openssl rand -base64 36 | tr -d '\n')"
+        mqtt_password="$(openssl rand -base64 36 | tr -d '\n')"
+        database_url="postgres://{{ xact_database_user }}:${TIMESCALEDB_PASSWORD}@{{ xact_database_service }}:{{ xact_database_port }}/{{ xact_database_name }}?sslmode=disable"
+
+        args=(
+          -n {{ xact_namespace }} create secret generic {{ xact_secret_name }}
+          --from-literal=DATABASE_URL="${database_url}"
+          --from-literal=JWT_SECRET="${jwt_secret}"
+          --from-literal=NATS_INTERNAL_PASSWORD="${nats_internal_password}"
+          --from-literal=NATS_BROWSER_TOKEN="${nats_browser_token}"
+          --from-literal=MQTT_BROKER_PASSWORD="${mqtt_password}"
+        )
+        {% if xact_bootstrap_admin_password | length > 0 %}
+        args+=(--from-literal=XACT_BOOTSTRAP_ADMIN_PASSWORD="{{ xact_bootstrap_admin_password }}")
+        {% endif %}
+        k3s kubectl "${args[@]}"
+      args:
+        executable: /bin/bash
+      environment:
+        TIMESCALEDB_PASSWORD: "{{ timescaledb_superuser_password.stdout }}"
+      when: xact_secret.rc != 0
+      no_log: true
+
+    - name: Check whether XACT TLS secret exists
+      command: >
+        k3s kubectl -n {{ xact_namespace }}
+        get secret {{ xact_tls_secret_name }}
+      register: xact_tls_secret
+      failed_when: false
+      changed_when: false
+
+    - name: Create temporary certificate directory
+      tempfile:
+        state: directory
+        suffix: xact-tls
+      register: xact_tls_tempdir
+      when: xact_tls_secret.rc != 0
+
+    - name: Generate self-signed XACT edge certificate if absent
+      command: >
+        openssl req -x509 -nodes -newkey rsa:2048
+        -keyout {{ xact_tls_tempdir.path }}/server.key
+        -out {{ xact_tls_tempdir.path }}/server.crt
+        -days 3650
+        -subj /CN={{ xact_site_host }}
+        -addext subjectAltName=IP:{{ edge_vip }},DNS:{{ xact_site_host }}
+      when: xact_tls_secret.rc != 0
+
+    - name: Create XACT TLS secret if absent
+      command: >
+        k3s kubectl -n {{ xact_namespace }}
+        create secret generic {{ xact_tls_secret_name }}
+        --from-file=server.crt={{ xact_tls_tempdir.path }}/server.crt
+        --from-file=server.key={{ xact_tls_tempdir.path }}/server.key
+      when: xact_tls_secret.rc != 0
+      no_log: true
+
+    - name: Render XACT manifests
+      template:
+        src: xact-manifests.yaml.j2
+        dest: /tmp/{{ xact_release_name }}-manifests.yaml
+        mode: "0600"
+
+    - name: Apply XACT manifests
+      command: >
+        k3s kubectl apply -f /tmp/{{ xact_release_name }}-manifests.yaml
+      register: xact_apply
+      changed_when: "'created' in xact_apply.stdout or 'configured' in xact_apply.stdout"
+
+    - name: Show XACT apply result
+      debug:
+        msg: "{{ xact_apply.stdout_lines }}"

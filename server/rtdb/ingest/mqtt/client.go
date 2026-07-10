@@ -210,8 +210,12 @@ func (c *Client) SnapshotIngest() ingest.IngestSnapshot {
 
 // NewClientFromEnv creates an MQTT client from environment variables.
 func NewClientFromEnv(treeOps *tree.TreeWithOperations, nc *natsgo.Conn) *Client {
+	brokerURL := os.Getenv("MQTT_CLIENT_BROKER_URL")
+	if brokerURL == "" {
+		brokerURL = os.Getenv("MQTT_BROKER_URL")
+	}
 	config := ClientConfig{
-		BrokerURL: os.Getenv("MQTT_BROKER_URL"),
+		BrokerURL: brokerURL,
 		Password:  os.Getenv("MQTT_BROKER_PASSWORD"),
 		ClientID:  os.Getenv("MQTT_CLIENT_ID"),
 		Username:  os.Getenv("MQTT_CLIENT_USERNAME"),
