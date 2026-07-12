@@ -18,7 +18,7 @@ XACT_IMAGE_ARCHIVE ?= .cache/images/xact-local.tar
 help:
 	@printf '%s\n' "K3s HA lab targets"
 	@printf '%s\n' ""
-	@printf '%s\n' "  make up          Create/start the three VMware VMs"
+	@printf '%s\n' "  make up          Create/start VMs and restore a provisioned cluster"
 	@printf '%s\n' "  make status      Show Vagrant VM status"
 	@printf '%s\n' "  make ping        Test Ansible connectivity to all nodes"
 	@printf '%s\n' "  make prepare     Prepare Ubuntu nodes for Kubernetes"
@@ -43,7 +43,7 @@ help:
 	@printf '%s\n' "  make pods        Show pods through SSH on node1"
 	@printf '%s\n' "  make local-nodes Show nodes from the host using fetched kubeconfig"
 	@printf '%s\n' "  make local-pods  Show pods from the host using fetched kubeconfig"
-	@printf '%s\n' "  make down        Stop the VMs"
+	@printf '%s\n' "  make down        Quiesce workloads and cleanly stop the VMs"
 	@printf '%s\n' "  make destroy     Delete the VMs"
 	@printf '%s\n' "  make reset-state Remove local Vagrant and fetched K3s state"
 	@printf '%s\n' ""
@@ -53,6 +53,7 @@ help:
 
 up:
 	$(VAGRANT) up --provider $(VAGRANT_PROVIDER)
+	cd $(ANSIBLE_DIR) && $(ANSIBLE_PLAYBOOK) start-cluster.yml
 
 status:
 	$(VAGRANT) status
@@ -144,6 +145,7 @@ local-pods:
 	KUBECONFIG=$(KUBECONFIG) $(KUBECTL) get pods -A -o wide
 
 down:
+	cd $(ANSIBLE_DIR) && $(ANSIBLE_PLAYBOOK) stop-cluster.yml
 	$(VAGRANT) halt
 
 destroy:

@@ -1,0 +1,116 @@
+---
+- name: Wait for HA cluster VMs
+  hosts: k3s_nodes
+  gather_facts: false
+
+  tasks:
+    - name: Wait for SSH after VM startup
+      wait_for_connection:
+        timeout: 300
+
+- name: Restore provisioned HA cluster workloads
+  hosts: k3s_master
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Check whether K3s is installed
+      stat:
+        path: /usr/local/bin/k3s
+      register: k3s_binary
+
+    - name: Explain first-time VM startup
+      debug:
+        msg: >-
+          K3s is not installed yet; VMs are running. Continue with the initial
+          provisioning sequence documented in README.md.
+      when: not k3s_binary.stat.exists
+
+    - name: Wait for every Kubernetes node to become Ready
+      command: k3s kubectl wait node --all --for=condition=Ready --timeout=300s
+      changed_when: false
+      when: k3s_binary.stat.exists
+
+    - name: Recreate platform pods on fresh post-boot networking
+      command: >
+        k3s kubectl -n kube-system rollout restart
+        deployment/coredns deployment/metrics-server deployment/traefik
+        deployment/local-path-provisioner
+      when: k3s_binary.stat.exists
+
+    - name: Wait for platform deployments
+      command: >
+        k3s kubectl -n kube-system rollout status deployment/{{ item }}
+        --timeout=300s
+      loop:
+        - coredns
+        - metrics-server
+        - traefik
+        - local-path-provisioner
+      changed_when: false
+      when: k3s_binary.stat.exists
+
+    - name: Check whether TimescaleDB is deployed
+      command: >
+        k3s kubectl -n {{ timescaledb_namespace }}
+        get statefulset/{{ timescaledb_release_name }}
+      register: timescaledb_statefulset
+      changed_when: false
+      failed_when: false
+      when: k3s_binary.stat.exists
+
+    - name: Check whether XACT is deployed
+      command: >
+        k3s kubectl -n {{ xact_namespace }}
+        get statefulset/{{ xact_release_name }}
+      register: xact_statefulset
+      changed_when: false
+      failed_when: false
+      when: k3s_binary.stat.exists
+
+    - name: Restore TimescaleDB replicas
+      command: >
+        k3s kubectl -n {{ timescaledb_namespace }}
+        scale statefulset/{{ timescaledb_release_name }}
+        --replicas={{ timescaledb_replicas }}
+      when:
+        - k3s_binary.stat.exists
+        - timescaledb_statefulset.rc == 0
+
+    - name: Wait for TimescaleDB rollout
+      command: >
+        k3s kubectl -n {{ timescaledb_namespace }}
+        rollout status statefulset/{{ timescaledb_release_name }}
+        --timeout=900s
+      changed_when: false
+      when:
+        - k3s_binary.stat.exists
+        - timescaledb_statefulset.rc == 0
+
+    - name: Restore XACT replicas
+      command: >
+        k3s kubectl -n {{ xact_namespace }}
+        scale statefulset/{{ xact_release_name }} --replicas={{ xact_replicas }}
+      when:
+        - k3s_binary.stat.exists
+        - xact_statefulset.rc == 0
+
+    - name: Wait for XACT rollout
+      command: >
+        k3s kubectl -n {{ xact_namespace }}
+        rollout status statefulset/{{ xact_release_name }} --timeout=600s
+      changed_when: false
+      when:
+        - k3s_binary.stat.exists
+        - xact_statefulset.rc == 0
+
+    - name: Show restored workload status
+      command: k3s kubectl get pods -A -o wide
+      register: restored_pods
+      changed_when: false
+      when: k3s_binary.stat.exists
+
+    - name: Print restored workload status
+      debug:
+        var: restored_pods.stdout_lines
+      when: k3s_binary.stat.exists

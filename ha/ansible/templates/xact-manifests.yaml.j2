@@ -154,6 +154,10 @@ spec:
               value: "{{ xact_api_port }}"
             - name: NATS_HOST
               value: 0.0.0.0
+            - name: NATS_SERVER_TAG
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
             - name: NATS_PORT
               value: "{{ xact_nats_port }}"
             - name: NATS_CLUSTER_NAME
@@ -247,6 +251,13 @@ spec:
               port: http
             initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 5
+          startupProbe:
+            httpGet:
+              path: /xact/health
+              port: http
+            failureThreshold: 60
+            periodSeconds: 5
             timeoutSeconds: 5
           livenessProbe:
             httpGet:

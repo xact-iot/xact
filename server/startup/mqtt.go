@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	"github.com/wind-c/comqtt/v2/mqtt"
 	"github.com/wind-c/comqtt/v2/mqtt/listeners"
@@ -62,13 +61,8 @@ func StartMqttBroker() error {
 	broker := mqtt.New(nil)
 	_ = broker.AddHook(new(MqttPasswordHook), nil)
 
-	tlsEnabled, parseError := strconv.ParseBool(os.Getenv("ENABLE_TLS"))
-	if parseError != nil {
-		tlsEnabled = false
-	}
-
 	var tlsConfig *tls.Config
-	if tlsEnabled {
+	if envEnabled("ENABLE_TLS") {
 		certsDir := os.Getenv("HTTP_CERTS_DIR")
 		if certsDir == "" {
 			certsDir = os.Getenv("HTTPS_CERTS_DIR")

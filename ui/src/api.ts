@@ -25,6 +25,7 @@ export interface HealthInfo {
   timestamp?: number;
   appVersion?: string;
   goVersion?: string;
+  clustered?: boolean;
 }
 
 export async function fetchHealth(): Promise<HealthInfo> {

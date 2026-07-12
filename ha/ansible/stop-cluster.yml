@@ -1,0 +1,81 @@
+---
+- name: Quiesce HA cluster before VM shutdown
+  hosts: k3s_master
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Check whether K3s is installed
+      stat:
+        path: /usr/local/bin/k3s
+      register: k3s_binary
+
+    - name: Check whether XACT is deployed
+      command: >
+        k3s kubectl -n {{ xact_namespace }}
+        get statefulset/{{ xact_release_name }}
+      register: xact_statefulset
+      changed_when: false
+      failed_when: false
+      when: k3s_binary.stat.exists
+
+    - name: Check whether TimescaleDB is deployed
+      command: >
+        k3s kubectl -n {{ timescaledb_namespace }}
+        get statefulset/{{ timescaledb_release_name }}
+      register: timescaledb_statefulset
+      changed_when: false
+      failed_when: false
+      when: k3s_binary.stat.exists
+
+    - name: Stop XACT application pods cleanly
+      command: >
+        k3s kubectl -n {{ xact_namespace }}
+        scale statefulset/{{ xact_release_name }} --replicas=0
+      when:
+        - k3s_binary.stat.exists
+        - xact_statefulset.rc == 0
+
+    - name: Wait for XACT pods to terminate
+      shell: |
+        end=$((SECONDS + 300))
+        while [ "${SECONDS}" -lt "${end}" ]; do
+          count=$(k3s kubectl -n {{ xact_namespace }} get pods \
+            -l app.kubernetes.io/name={{ xact_release_name }} \
+            --no-headers 2>/dev/null | wc -l)
+          [ "${count}" -eq 0 ] && exit 0
+          sleep 2
+        done
+        exit 1
+      args:
+        executable: /bin/bash
+      changed_when: false
+      when:
+        - k3s_binary.stat.exists
+        - xact_statefulset.rc == 0
+
+    - name: Stop TimescaleDB pods cleanly
+      command: >
+        k3s kubectl -n {{ timescaledb_namespace }}
+        scale statefulset/{{ timescaledb_release_name }} --replicas=0
+      when:
+        - k3s_binary.stat.exists
+        - timescaledb_statefulset.rc == 0
+
+    - name: Wait for TimescaleDB pods to terminate
+      shell: |
+        end=$((SECONDS + 600))
+        while [ "${SECONDS}" -lt "${end}" ]; do
+          count=$(k3s kubectl -n {{ timescaledb_namespace }} get pods \
+            -l app={{ timescaledb_release_name }} \
+            --no-headers 2>/dev/null | wc -l)
+          [ "${count}" -eq 0 ] && exit 0
+          sleep 2
+        done
+        exit 1
+      args:
+        executable: /bin/bash
+      changed_when: false
+      when:
+        - k3s_binary.stat.exists
+        - timescaledb_statefulset.rc == 0

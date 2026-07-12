@@ -858,6 +858,7 @@ type healthResponse struct {
 	Timezone   string `json:"timezone"`
 	AppVersion string `json:"appVersion"`
 	GoVersion  string `json:"goVersion"`
+	Clustered  bool   `json:"clustered"`
 }
 
 func (s *Server) handleHealthWithSchema() openAPIHandler {
@@ -873,7 +874,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		Timezone:   serverTimezone(),
 		AppVersion: strings.TrimSpace(s.config.AppVersion),
 		GoVersion:  runtime.Version(),
+		Clustered:  clusteredDeployment(),
 	})
+}
+
+func clusteredDeployment() bool {
+	clustered, err := strconv.ParseBool(strings.TrimSpace(os.Getenv("CLUSTERED")))
+	return err == nil && clustered
 }
 
 // serverTimezone returns the IANA timezone name (e.g. "America/New_York").

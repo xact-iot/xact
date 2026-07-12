@@ -1,4 +1,5 @@
 import *  as nats from "@nats-io/nats-core";
+import { setConnectedNatsServer } from '../connection-info';
 import { Kvm, KV, KvWatchOptions, KvWatchEntry } from "@nats-io/kv";
 import { loadNode, loadTag } from '../api';
 import { getCurrentUser } from '../auth';
@@ -214,6 +215,8 @@ export class MirrorStore {
                 opts.pass = password;
             }
             this.nc = await nats.wsconnect(opts);
+            await this.updateConnectedNatsServer(this.nc);
+            void this.monitorNatsServer(this.nc);
             const kvm = new Kvm(this.nc);
             this.kv = await kvm.create(kvBucket);
             for (const path of this.desiredTagValuePaths) {
@@ -245,7 +248,28 @@ export class MirrorStore {
             await this.nc.close();
         }
         this.nc = null;
+        setConnectedNatsServer(undefined);
         this.kv = null;
+    }
+
+    private async monitorNatsServer(connection: nats.NatsConnection): Promise<void> {
+        for await (const _status of connection.status()) {
+            if (this.nc !== connection) return;
+            await this.updateConnectedNatsServer(connection);
+        }
+    }
+
+    private async updateConnectedNatsServer(connection: nats.NatsConnection): Promise<void> {
+        try {
+            const connectionWithContext = connection as nats.NatsConnection & {
+                context(): Promise<{ server: { tags: string[] } }>;
+            };
+            const context = await connectionWithContext.context();
+            const nodeTag = context.server.tags.find((tag: string) => tag.startsWith('node:'));
+            setConnectedNatsServer(nodeTag?.slice('node:'.length) || connection.info?.server_name);
+        } catch {
+            setConnectedNatsServer(connection.info?.server_name);
+        }
     }
 
     public async request(subject: string, payload: unknown, timeoutMs: number): Promise<any> {

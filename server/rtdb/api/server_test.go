@@ -950,6 +950,9 @@ func TestHealthEndpoint(t *testing.T) {
 	if response["goVersion"] != runtime.Version() {
 		t.Errorf("expected goVersion %s, got %v", runtime.Version(), response["goVersion"])
 	}
+	if response["clustered"] != false {
+		t.Errorf("expected clustered false, got %v", response["clustered"])
+	}
 }
 
 func TestLoginEndpoint(t *testing.T) {

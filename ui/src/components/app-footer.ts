@@ -3,6 +3,7 @@ import { showAlert } from './app-dialog';
 import { fetchHealth, type HealthInfo } from '../api';
 import packageInfo from '../../package.json';
 import typescriptInfo from 'typescript/package.json';
+import { getConnectedNatsServer, NATS_SERVER_CHANGED_EVENT } from '../connection-info';
 
 type ConnectionState = 'checking' | 'online' | 'offline';
 
@@ -13,6 +14,7 @@ export class AppFooter extends BaseComponent {
   private connectionState: ConnectionState = 'checking';
   private healthCheckTimer: number | null = null;
   private appVersion: string = '';
+  private clustered = false;
 
   protected render(): void {
     this.className = 'flex items-center justify-center px-2 sm:px-6 text-xs border-t gap-1 sm:gap-2 whitespace-nowrap overflow-hidden transition-all duration-300';
@@ -32,6 +34,7 @@ export class AppFooter extends BaseComponent {
 
   protected attachEventListeners(): void {
     this.querySelector('#about-link')?.addEventListener('click', this.handleAboutClick);
+    window.addEventListener(NATS_SERVER_CHANGED_EVENT, this.handleNatsServerChanged);
     void this.checkHealth();
     this.healthCheckTimer = window.setInterval(
       () => void this.checkHealth(),
@@ -41,6 +44,7 @@ export class AppFooter extends BaseComponent {
 
   protected detachEventListeners(): void {
     this.querySelector('#about-link')?.removeEventListener('click', this.handleAboutClick);
+    window.removeEventListener(NATS_SERVER_CHANGED_EVENT, this.handleNatsServerChanged);
     if (this.healthCheckTimer !== null) {
       window.clearInterval(this.healthCheckTimer);
       this.healthCheckTimer = null;
@@ -51,6 +55,15 @@ export class AppFooter extends BaseComponent {
     e.preventDefault();
     void this.showAbout();
   };
+
+  private handleNatsServerChanged = (): void => {
+    if (this.connectionState === 'online') this.updateConnectedStatus();
+  };
+
+  private updateConnectedStatus(): void {
+    const serverName = this.clustered ? getConnectedNatsServer() : '';
+    this.setConnectionStatus(serverName ? `Connected to ${serverName}` : 'Connected', true);
+  }
 
   setConnectionStatus(status: string, isOnline: boolean): void {
     this.statusText = isOnline ? status : 'Server disconnected';
@@ -123,7 +136,9 @@ export class AppFooter extends BaseComponent {
       const status = health.status?.toLowerCase();
       const isOnline = status === 'healthy' || status === 'ok';
       this.setAppVersion(health.appVersion);
-      this.setConnectionStatus(isOnline ? 'Connected' : 'Disconnected', isOnline);
+      this.clustered = health.clustered === true;
+      if (isOnline) this.updateConnectedStatus();
+      else this.setConnectionStatus('Disconnected', false);
     } catch {
       this.setConnectionStatus('Disconnected', false);
     }

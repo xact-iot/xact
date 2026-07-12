@@ -1,10 +1,42 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import '../src/components/app-footer';
+import { setConnectedNatsServer } from '../src/connection-info';
 
 describe('app-footer health status', () => {
   afterEach(() => {
     document.body.innerHTML = '';
     vi.unstubAllGlobals();
+    setConnectedNatsServer(undefined);
+  });
+
+  it('shows the connected NATS node only in clustered mode', async () => {
+    setConnectedNatsServer('node2');
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ status: 'healthy', clustered: true }),
+    } as Response)));
+
+    const footer = document.createElement('app-footer');
+    document.body.appendChild(footer);
+
+    await vi.waitFor(() => {
+      expect(footer.querySelector('#status-text')?.textContent).toBe('Connected to node2');
+    });
+  });
+
+  it('does not show the NATS server in standalone mode', async () => {
+    setConnectedNatsServer('standalone-host');
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ status: 'healthy', clustered: false }),
+    } as Response)));
+
+    const footer = document.createElement('app-footer');
+    document.body.appendChild(footer);
+
+    await vi.waitFor(() => {
+      expect(footer.querySelector('#status-text')?.textContent).toBe('Connected');
+    });
   });
 
   it('shows connected in green when health succeeds', async () => {
