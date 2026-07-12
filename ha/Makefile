@@ -13,7 +13,7 @@ ANSIBLE_PLAYBOOK := ansible-playbook -i $(INVENTORY)
 XACT_IMAGE ?= xact:local
 XACT_IMAGE_ARCHIVE ?= .cache/images/xact-local.tar
 
-.PHONY: help up status ssh-node1 ping prepare install configure-network verify edge-deploy edge-verify db-deploy db-verify db-status db-logs xact-build-local-image xact-load-local-image xact-deploy xact-deploy-local xact-verify xact-status kubeconfig k3s-bin nodes pods local-nodes local-pods down destroy clean reset-state
+.PHONY: help up status ssh-node1 ping prepare install configure-network verify edge-deploy edge-verify db-deploy db-verify db-status db-logs xact-build-local-image xact-load-local-image xact-deploy xact-deploy-local xact-refresh-local xact-verify xact-status kubeconfig k3s-bin nodes pods local-nodes local-pods down destroy clean reset-state
 
 help:
 	@printf '%s\n' "K3s HA lab targets"
@@ -35,6 +35,7 @@ help:
 	@printf '%s\n' "  make xact-load-local-image   Import local XACT image into all K3s nodes"
 	@printf '%s\n' "  make xact-deploy Deploy XACT application"
 	@printf '%s\n' "  make xact-deploy-local Deploy XACT using xact:local already loaded on nodes"
+	@printf '%s\n' "  make xact-refresh-local Build, load, deploy, and verify local XACT image"
 	@printf '%s\n' "  make xact-verify Verify XACT rollout and services"
 	@printf '%s\n' "  make xact-status Show XACT namespace resources"
 	@printf '%s\n' "  make kubeconfig  Fetch kubeconfig to $(KUBECONFIG)"
@@ -107,6 +108,14 @@ xact-deploy:
 
 xact-deploy-local:
 	cd $(ANSIBLE_DIR) && $(ANSIBLE_PLAYBOOK) deploy-xact.yml -e xact_image=$(XACT_IMAGE) -e xact_image_pull_policy=Never
+
+# Recipe steps keep this workflow sequential even if Make is invoked with -j.
+# Make stops immediately when any recursive invocation returns non-zero.
+xact-refresh-local:
+	$(MAKE) xact-build-local-image
+	$(MAKE) xact-load-local-image
+	$(MAKE) xact-deploy-local
+	$(MAKE) xact-verify
 
 xact-verify:
 	cd $(ANSIBLE_DIR) && $(ANSIBLE_PLAYBOOK) verify-xact.yml

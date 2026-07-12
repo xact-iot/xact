@@ -120,6 +120,21 @@ VM network state can leave VXLAN interfaces stale.
 `make destroy` permanently deletes the VMs and requires the full deployment
 sequence to rebuild them.
 
+## Refresh a local XACT build
+
+Build the local application image, import it into every K3s node, deploy it,
+and wait for the rollout using one command:
+
+```bash
+make xact-refresh-local
+```
+
+The four stages run sequentially, and Make stops immediately if the build,
+image load, deployment, or rollout verification returns an error. The
+individual `xact-build-local-image`, `xact-load-local-image`,
+`xact-deploy-local`, and `xact-verify` targets remain available for running a
+single stage.
+
 ## Inspect the cluster
 
 The SSH-backed commands require no host installation of `kubectl`:

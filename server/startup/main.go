@@ -189,10 +189,12 @@ func main() {
 		LogFile:       natsLogFile,
 	}
 
-	browserPublishAllow := []string{"$JS.API.>", "_INBOX.>"}
+	browserPublishAllow := []string{"$JS.API.>", "$SYS.REQ.USER.INFO", "_INBOX.>"}
 	if envEnabled("NATS_BROWSER_ALLOW_COMMANDS") {
 		browserPublishAllow = append(browserPublishAllow, "xact.command.>")
 	}
+	appAccount := server.NewAccount("$G")
+	systemAccount := server.NewAccount("$SYS")
 
 	opts := &server.Options{
 		ServerName: natsServerName(),
@@ -206,18 +208,21 @@ func main() {
 			NoTLS:     wsNoTLS,
 			TLSConfig: wsTLSConfig,
 		},
-		StoreDir:   natsStoreDir,
-		JetStream:  true,
-		NoLog:      false,
-		Debug:      envEnabled("NATS_DEBUG"),
-		Trace:      envEnabled("NATS_TRACE"),
-		LogFile:    natsLogFile,
-		Logtime:    true,
-		MaxPayload: 8 * 1024 * 1024,
+		StoreDir:      natsStoreDir,
+		JetStream:     true,
+		NoLog:         false,
+		Debug:         envEnabled("NATS_DEBUG"),
+		Trace:         envEnabled("NATS_TRACE"),
+		LogFile:       natsLogFile,
+		Logtime:       true,
+		MaxPayload:    8 * 1024 * 1024,
+		Accounts:      []*server.Account{appAccount, systemAccount},
+		SystemAccount: "$SYS",
 		Users: []*server.User{
 			{
 				Username: "internal",
 				Password: internalPassword,
+				Account:  appAccount,
 				Permissions: &server.Permissions{
 					Publish:   &server.SubjectPermission{Allow: []string{">"}},
 					Subscribe: &server.SubjectPermission{Allow: []string{">"}},
@@ -229,6 +234,7 @@ func main() {
 				// application subjects (rtdb.>, xact.>) is denied.
 				Username: "browser",
 				Password: browserToken,
+				Account:  appAccount,
 				Permissions: &server.Permissions{
 					Publish: &server.SubjectPermission{
 						Allow: browserPublishAllow,
@@ -243,6 +249,11 @@ func main() {
 						},
 					},
 				},
+			},
+			{
+				Username: "system",
+				Password: internalPassword,
+				Account:  systemAccount,
 			},
 		},
 	}
