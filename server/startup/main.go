@@ -246,6 +246,9 @@ func main() {
 			},
 		},
 	}
+	if nodeName := strings.TrimSpace(os.Getenv("NATS_SERVER_TAG")); nodeName != "" {
+		opts.Tags.Add("node:" + nodeName)
+	}
 	if natsClusterPort > 0 {
 		opts.Cluster = server.ClusterOpts{
 			Name:           envStringDefault("NATS_CLUSTER_NAME", "xact"),
