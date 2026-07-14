@@ -2,6 +2,7 @@ import { BaseComponent } from './base-component';
 import { getMyProfile, updateMyProfile, changeMyPassword } from '../api';
 import type { UserRecord } from '../api';
 import { can } from '../permissions/permissions';
+import { enhancePasswordInputs } from './password-visibility';
 
 export class ProfileDialog extends BaseComponent {
   private profileStatus: { message: string; error: boolean } | null = null;
@@ -19,10 +20,11 @@ export class ProfileDialog extends BaseComponent {
 
     this.innerHTML = `
       <div id="profile-backdrop" class="absolute inset-0 bg-black/60"></div>
-      <div class="relative w-full max-w-md mx-4 border shadow-2xl" style="background-color: var(--modal-bg); color: var(--modal-text); border-color: var(--border-color);">
+      <div class="relative w-full max-w-md mx-4 border shadow-2xl flex flex-col overflow-hidden"
+           style="max-height: calc(100vh - 2rem); max-height: calc(100dvh - 2rem); background-color: var(--modal-bg); color: var(--modal-text); border-color: var(--border-color);">
 
         <!-- Header bar -->
-        <div class="flex items-center justify-between px-5 py-4 border-b" style="border-color: var(--border-color);">
+        <div class="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style="border-color: var(--border-color);">
           <div class="flex items-center gap-3">
             <div class="w-8 h-8 flex items-center justify-center text-xs font-mono font-semibold border" style="border-color: var(--accent-color); color: var(--accent-color);">
               ${this.user ? (this.user.firstName?.[0] || this.user.loginName?.[0] || '?').toUpperCase() : '?'}
@@ -39,7 +41,7 @@ export class ProfileDialog extends BaseComponent {
           </button>
         </div>
 
-        <div class="p-5 space-y-6">
+        <div class="p-5 space-y-6 overflow-y-auto min-h-0">
 
           <!-- Personal Information -->
           <div>
@@ -188,6 +190,7 @@ export class ProfileDialog extends BaseComponent {
   }
 
   protected attachEventListeners(): void {
+    enhancePasswordInputs(this);
     this.querySelector('#profile-close')?.addEventListener('click', this.close);
     this.querySelector('#profile-backdrop')?.addEventListener('click', this.close);
     this.querySelector('#profile-save')?.addEventListener('click', this.handleSaveProfile);

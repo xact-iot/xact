@@ -4,11 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/xact-iot/xact/sqldb"
@@ -225,7 +228,7 @@ func (db *PostgresDB) CreateUser(ctx context.Context, user *sqldb.User, password
 	if opts == nil {
 		opts = []byte("{}")
 	}
-	return db.pool.QueryRow(ctx, `
+	err := db.pool.QueryRow(ctx, `
 		INSERT INTO users (first_name, last_name, login_name, password_hash, email,
 		                   notification_options, active, token_version)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, 1)
@@ -233,6 +236,7 @@ func (db *PostgresDB) CreateUser(ctx context.Context, user *sqldb.User, password
 	`, user.FirstName, user.LastName, user.LoginName, passwordHash, user.Email,
 		opts, user.Active,
 	).Scan(&user.ID, &user.TokenVersion, &user.CreatedAt)
+	return postgresUserWriteError(err)
 }
 
 // UpdateUser updates mutable user fields (not password, not login_name).
@@ -248,12 +252,26 @@ func (db *PostgresDB) UpdateUser(ctx context.Context, user *sqldb.User) error {
 		WHERE id = $1
 	`, user.ID, user.FirstName, user.LastName, user.Email, opts, user.Active)
 	if err != nil {
+		if duplicateErr := postgresUserWriteError(err); duplicateErr != err {
+			return duplicateErr
+		}
 		return fmt.Errorf("updating user %d: %w", user.ID, err)
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("user %d not found", user.ID)
 	}
 	return nil
+}
+
+func postgresUserWriteError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" && strings.Contains(strings.ToLower(pgErr.ConstraintName), "email") {
+		return sqldb.ErrEmailAlreadyExists
+	}
+	return err
 }
 
 // SetUserPassword updates a user's password hash.

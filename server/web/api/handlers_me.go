@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/xact-iot/xact/openapischema"
 	"github.com/xact-iot/xact/sqldb"
@@ -91,13 +93,18 @@ func (h *MeHandlers) HandleUpdateMe(w http.ResponseWriter, r *http.Request) {
 		user.LastName = req.LastName
 	}
 	if req.Email != "" {
-		user.Email = req.Email
+		user.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	}
 	if req.NotificationOptions != nil {
 		user.NotificationOptions = *req.NotificationOptions
 	}
 
 	if err := h.DB.UpdateUser(r.Context(), user); err != nil {
+		if errors.Is(err, sqldb.ErrEmailAlreadyExists) {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": sqldb.ErrEmailAlreadyExists.Error()})
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

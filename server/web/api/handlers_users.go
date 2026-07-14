@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/xact-iot/xact/openapischema"
@@ -109,11 +111,16 @@ func (h *UserHandlers) HandleCreateUser(w http.ResponseWriter, r *http.Request) 
 		FirstName: req.FirstName,
 		LastName:  req.LastName,
 		LoginName: req.LoginName,
-		Email:     req.Email,
+		Email:     strings.ToLower(strings.TrimSpace(req.Email)),
 		Active:    true,
 	}
 
 	if err := h.DB.CreateUser(r.Context(), user, hash); err != nil {
+		if errors.Is(err, sqldb.ErrEmailAlreadyExists) {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": sqldb.ErrEmailAlreadyExists.Error()})
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -216,7 +223,7 @@ func (h *UserHandlers) HandleUpdateUser(w http.ResponseWriter, r *http.Request) 
 		user.LastName = req.LastName
 	}
 	if req.Email != "" {
-		user.Email = req.Email
+		user.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	}
 	if req.Active != nil {
 		user.Active = *req.Active
@@ -226,6 +233,11 @@ func (h *UserHandlers) HandleUpdateUser(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.DB.UpdateUser(r.Context(), user); err != nil {
+		if errors.Is(err, sqldb.ErrEmailAlreadyExists) {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": sqldb.ErrEmailAlreadyExists.Error()})
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

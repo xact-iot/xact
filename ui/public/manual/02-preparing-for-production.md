@@ -47,6 +47,33 @@ After installing packages, initialise and start PostgreSQL if your distribution 
 sudo systemctl enable --now postgresql
 ```
 
+TimescaleDB must be loaded when PostgreSQL starts. Some packages configure this automatically, but if `CREATE EXTENSION` or XACT startup reports `FATAL: extension "timescaledb" must be preloaded`, find the active PostgreSQL configuration file:
+
+```sh
+sudo -u postgres psql -c "SHOW config_file;"
+```
+
+Open the returned `postgresql.conf` path as an administrator. Find `shared_preload_libraries` (it may be commented out) and add `timescaledb`:
+
+```conf
+shared_preload_libraries = 'timescaledb'
+```
+
+If other libraries are already configured, keep them and add TimescaleDB to the comma-separated list. For example:
+
+```conf
+shared_preload_libraries = 'pg_stat_statements,timescaledb'
+```
+
+Restart PostgreSQL for the preload setting to take effect, then verify it:
+
+```sh
+sudo systemctl restart postgresql
+sudo -u postgres psql -c "SHOW shared_preload_libraries;"
+```
+
+Service names vary by distribution and may include the PostgreSQL major version or cluster name. Use the appropriate service name for your installation if `postgresql` is not available.
+
 Create a database and user for XACT. Use a strong password and keep it in the server's environment file rather than in shell history or shared notes:
 
 ```sh

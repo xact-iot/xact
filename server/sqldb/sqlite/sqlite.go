@@ -130,6 +130,7 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 		`ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_login_name_unique ON users(login_name)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_ci_unique ON users(lower(email))`,
 
 		`CREATE TABLE IF NOT EXISTS dashboards (
 			id          INTEGER PRIMARY KEY,

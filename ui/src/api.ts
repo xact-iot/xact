@@ -544,7 +544,10 @@ export async function updateUser(id: number, data: {
     headers: getHeaders(),
     body: JSON.stringify(data),
   });
-  if (!response.ok) throw new Error(`Failed to update user: ${response.status}`);
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || `Failed to update user: ${response.status}`);
+  }
   return response.json();
 }
 

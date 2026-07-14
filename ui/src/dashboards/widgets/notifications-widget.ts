@@ -9,6 +9,7 @@ import {
   listRoles, listUsers,
 } from '../../api';
 import type { NotificationProfile, ChannelConfig, Role, UserRecord } from '../../api';
+import { enhancePasswordInputs } from '../../components/password-visibility';
 
 registerPermissions('notifications', 'Notifications', [
   { name: 'view', description: 'View notification profiles and channels' },
@@ -424,6 +425,7 @@ export class NotificationsWidget extends BaseComponent {
   }
 
   protected attachEventListeners(): void {
+    enhancePasswordInputs(this);
     // Tab switching
     this.querySelectorAll('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {

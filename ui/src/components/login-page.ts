@@ -1,4 +1,5 @@
 import { getBootstrapAdminStatus, login, setBootstrapAdminPassword } from '../auth';
+import { enhancePasswordInputs } from './password-visibility';
 
 const STYLE = `
   :host {
@@ -337,6 +338,7 @@ export class LoginPage extends HTMLElement {
         </div>
       </div>
     `;
+    enhancePasswordInputs(this.shadow);
     this.shadow.querySelector('form')?.addEventListener('submit', this.handleSubmit.bind(this));
   }
 

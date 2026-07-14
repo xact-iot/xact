@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -172,7 +173,7 @@ func (db *SQLiteDB) CreateUser(ctx context.Context, user *sqldb.User, passwordHa
 	`, user.FirstName, user.LastName, user.LoginName, passwordHash, user.Email,
 		string(opts), active, now, now)
 	if err != nil {
-		return err
+		return sqliteUserWriteError(err)
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
@@ -202,6 +203,9 @@ func (db *SQLiteDB) UpdateUser(ctx context.Context, user *sqldb.User) error {
 		WHERE id = ?
 	`, user.FirstName, user.LastName, user.Email, string(opts), active, now, user.ID)
 	if err != nil {
+		if duplicateErr := sqliteUserWriteError(err); duplicateErr != err {
+			return duplicateErr
+		}
 		return fmt.Errorf("updating user %d: %w", user.ID, err)
 	}
 	n, _ := result.RowsAffected()
@@ -209,6 +213,13 @@ func (db *SQLiteDB) UpdateUser(ctx context.Context, user *sqldb.User) error {
 		return fmt.Errorf("user %d not found", user.ID)
 	}
 	return nil
+}
+
+func sqliteUserWriteError(err error) error {
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "unique constraint failed") && strings.Contains(strings.ToLower(err.Error()), "email") {
+		return sqldb.ErrEmailAlreadyExists
+	}
+	return err
 }
 
 // SetUserPassword updates a user's password hash.

@@ -447,6 +447,7 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		ALTER TABLE users ALTER COLUMN token_version SET NOT NULL;
 		ALTER TABLE users ALTER COLUMN created_at SET NOT NULL;
 		ALTER TABLE users ALTER COLUMN updated_at SET NOT NULL;
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_ci_unique ON users (lower(email));
 
 		CREATE TABLE IF NOT EXISTS events (
 			id              BIGSERIAL,

@@ -6,6 +6,7 @@ import {
   listUsers, createUser, updateUser, resetUserPassword, listRoles,
 } from '../../api';
 import type { UserRecord, Role, NotificationOptions } from '../../api';
+import { enhancePasswordInputs } from '../../components/password-visibility';
 
 registerPermissions('users', 'User Accounts', [
   { name: 'view', description: 'View user accounts' },
@@ -409,6 +410,7 @@ export class UsersWidget extends BaseComponent {
   }
 
   protected attachEventListeners(): void {
+    enhancePasswordInputs(this);
     if (this.canManage) this.querySelector('#add-user-btn')?.addEventListener('click', () => this.openCreateDialog());
     this.querySelector('#dismiss-reset')?.addEventListener('click', () => {
       this.resetFeedback = null;

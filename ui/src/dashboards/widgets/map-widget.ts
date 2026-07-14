@@ -7,6 +7,7 @@
  */
 
 import { BaseComponent } from '../../components/base-component';
+import { enhancePasswordInputs } from '../../components/password-visibility';
 import { ensureWidgetTypeLoaded, ensureWidgetTypesLoaded, getAvailableWidgets, getWidgetMeta, registerWidgetType } from './widget-registry';
 import { getMirrorStore } from '../../store/store';
 import { getOrganisation, listDashboards } from '../../api';
@@ -2357,6 +2358,7 @@ export class AreaMapWidget extends BaseComponent {
   }
 
   private attachConfigListeners(overlay: HTMLElement): void {
+    enhancePasswordInputs(overlay);
     overlay.querySelector('#cfg-back')?.addEventListener('click', () => {
       overlay.remove();
       this.cfgOpen = false;

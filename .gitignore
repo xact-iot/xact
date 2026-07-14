@@ -60,6 +60,7 @@ backup-*.gz
 pre-restore-*.gz
 pre-restore-*.db
 
+ha/
 demo/demo
 benchmark/main
 build_and_setup.sh

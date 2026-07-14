@@ -68,6 +68,25 @@ func TestMeHandlersUnauthorizedAndMissingUser(t *testing.T) {
 	}
 }
 
+func TestMeHandlersRejectDuplicateEmail(t *testing.T) {
+	ctx := context.Background()
+	db := newWebAPITestDB(t, "me-duplicate-email")
+	user := createWebAPIUser(t, ctx, db, "sam", "password")
+	createWebAPIUser(t, ctx, db, "alex", "password")
+
+	h := NewMeHandlers(db, func(context.Context) (int, bool) { return user.ID, true })
+	r := chi.NewRouter()
+	r.Put("/me", h.HandleUpdateMe)
+
+	var response map[string]string
+	doJSON(t, r, http.MethodPut, "/me", map[string]any{
+		"email": "ALEX@EXAMPLE.TEST",
+	}, http.StatusConflict, &response)
+	if response["error"] != sqldb.ErrEmailAlreadyExists.Error() {
+		t.Fatalf("error = %q, want %q", response["error"], sqldb.ErrEmailAlreadyExists.Error())
+	}
+}
+
 func TestMeHandlersChangePassword(t *testing.T) {
 	ctx := context.Background()
 	db := newWebAPITestDB(t, "me-password")

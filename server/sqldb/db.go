@@ -4,12 +4,16 @@ package sqldb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"time"
 
 	"github.com/xact-iot/xact/backups"
 	"github.com/xact-iot/xact/events"
 )
+
+// ErrEmailAlreadyExists is returned when a user email conflicts with another account.
+var ErrEmailAlreadyExists = errors.New("email address is already in use")
 
 // DB defines the interface for all persistent database operations.
 // All implementations must be safe for concurrent use.
