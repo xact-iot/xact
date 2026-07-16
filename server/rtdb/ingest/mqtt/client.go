@@ -30,18 +30,19 @@ const (
 
 // Client is an MQTT client that ingests device data into the RTDB.
 type Client struct {
-	brokerURL  string
-	clientID   string
-	username   string
-	password   string
-	tlsConfig  *tls.Config
-	client     mqtt.Client
-	treeOps    *tree.TreeWithOperations
-	nc         *natsgo.Conn
-	workerPool *WorkerPool
-	metrics    *Metrics
-	stopCh     chan struct{}
-	wg         sync.WaitGroup
+	brokerURL   string
+	clientID    string
+	username    string
+	password    string
+	sharedGroup string
+	tlsConfig   *tls.Config
+	client      mqtt.Client
+	treeOps     *tree.TreeWithOperations
+	nc          *natsgo.Conn
+	workerPool  *WorkerPool
+	metrics     *Metrics
+	stopCh      chan struct{}
+	wg          sync.WaitGroup
 }
 
 // ClientConfig holds configuration for the MQTT client.
@@ -50,6 +51,7 @@ type ClientConfig struct {
 	ClientID    string
 	Username    string
 	Password    string
+	SharedGroup string
 	TLSConfig   *tls.Config
 	WorkerCount int
 	QueueSize   int
@@ -78,16 +80,17 @@ func NewClient(config ClientConfig, treeOps *tree.TreeWithOperations, nc *natsgo
 	workerPool := NewWorkerPool(config.WorkerCount, config.QueueSize, config.EnqueueWait, nc, metrics)
 
 	return &Client{
-		brokerURL:  normalizeBrokerURL(config.BrokerURL),
-		clientID:   config.ClientID,
-		username:   config.Username,
-		password:   config.Password,
-		tlsConfig:  config.TLSConfig,
-		treeOps:    treeOps,
-		nc:         nc,
-		workerPool: workerPool,
-		metrics:    metrics,
-		stopCh:     make(chan struct{}),
+		brokerURL:   normalizeBrokerURL(config.BrokerURL),
+		clientID:    config.ClientID,
+		username:    config.Username,
+		password:    config.Password,
+		sharedGroup: strings.TrimSpace(config.SharedGroup),
+		tlsConfig:   config.TLSConfig,
+		treeOps:     treeOps,
+		nc:          nc,
+		workerPool:  workerPool,
+		metrics:     metrics,
+		stopCh:      make(chan struct{}),
 	}
 }
 
@@ -151,19 +154,21 @@ func (c *Client) connect() error {
 }
 
 func (c *Client) subscribe() error {
-	token := c.client.Subscribe(TopicPattern, 1, c.messageHandler)
+	zoneLessTopic := sharedSubscriptionTopic(c.sharedGroup, TopicPattern)
+	token := c.client.Subscribe(zoneLessTopic, 1, c.messageHandler)
 	token.Wait()
 	if token.Error() != nil {
 		return token.Error()
 	}
-	log.Printf("MQTT client: subscribed to %s (zoneless)", TopicPattern)
+	log.Printf("MQTT client: subscribed to %s (zoneless)", zoneLessTopic)
 
-	tokenZoned := c.client.Subscribe(TopicPatternZoned, 1, c.messageHandler)
+	zonedTopic := sharedSubscriptionTopic(c.sharedGroup, TopicPatternZoned)
+	tokenZoned := c.client.Subscribe(zonedTopic, 1, c.messageHandler)
 	tokenZoned.Wait()
 	if tokenZoned.Error() != nil {
 		return tokenZoned.Error()
 	}
-	log.Printf("MQTT client: subscribed to %s (zoned)", TopicPatternZoned)
+	log.Printf("MQTT client: subscribed to %s (zoned)", zonedTopic)
 
 	return nil
 }
@@ -211,10 +216,11 @@ func (c *Client) SnapshotIngest() ingest.IngestSnapshot {
 // NewClientFromEnv creates an MQTT client from environment variables.
 func NewClientFromEnv(treeOps *tree.TreeWithOperations, nc *natsgo.Conn) *Client {
 	config := ClientConfig{
-		BrokerURL: os.Getenv("MQTT_BROKER_URL"),
-		Password:  os.Getenv("MQTT_BROKER_PASSWORD"),
-		ClientID:  os.Getenv("MQTT_CLIENT_ID"),
-		Username:  os.Getenv("MQTT_CLIENT_USERNAME"),
+		BrokerURL:   os.Getenv("MQTT_BROKER_URL"),
+		Password:    os.Getenv("MQTT_BROKER_PASSWORD"),
+		ClientID:    os.Getenv("MQTT_CLIENT_ID"),
+		Username:    os.Getenv("MQTT_CLIENT_USERNAME"),
+		SharedGroup: os.Getenv("MQTT_CLIENT_SHARED_GROUP"),
 	}
 	config.BrokerURL = normalizeBrokerURL(config.BrokerURL)
 	config.TLSConfig = mqttClientTLSConfigFromEnv(config.BrokerURL)
@@ -231,6 +237,14 @@ func NewClientFromEnv(treeOps *tree.TreeWithOperations, nc *natsgo.Conn) *Client
 		}
 	}
 	return NewClient(config, treeOps, nc)
+}
+
+func sharedSubscriptionTopic(group, topic string) string {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return topic
+	}
+	return "$share/" + group + "/" + topic
 }
 
 func normalizeBrokerURL(broker string) string {

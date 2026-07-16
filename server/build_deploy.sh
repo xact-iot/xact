@@ -288,8 +288,13 @@ ENABLE_AUTH_PLUGIN=no
 
 # Embedded MQTT Broker
 EMBEDDED_MQTT_SERVER=yes
+# Optional dedicated listener address. Set this when the broker must listen on
+# a local interface while the ingest client connects through a proxy.
+EMBEDDED_MQTT_LISTEN_URL=
 MQTT_BROKER_URL=mqtt://127.0.0.1:1883
 MQTT_BROKER_PASSWORD=${MQTT_SECRET}
+MQTT_TLS_CERT_FILE=
+MQTT_TLS_KEY_FILE=
 
 # Evaluation defaults: serve the app directly over HTTP on the local network.
 # For production, set ENABLE_HTTPS=yes with certificates in HTTP_CERTS_DIR.
@@ -305,6 +310,9 @@ CORS_ALLOWED_ORIGINS=
 MQTT_CLIENT_ENABLED=yes
 MQTT_CLIENT_ID=xact-ingest
 MQTT_CLIENT_USERNAME=a
+# Set the same group on clustered XACT instances so each MQTT publication is
+# processed by one ingest worker rather than every instance.
+MQTT_CLIENT_SHARED_GROUP=
 # For MQTT over TLS, set MQTT_BROKER_URL to mqtts:// or ssl://. Local
 # self-signed certs can be trusted with MQTT_CLIENT_TLS_CA_FILE=./certs/server.crt.
 MQTT_CLIENT_TLS_CA_FILE=

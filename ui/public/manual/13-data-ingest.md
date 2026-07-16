@@ -46,6 +46,10 @@ XACT includes an embedded MQTT broker. External devices publish messages to this
 
 The embedded broker starts by default unless `EMBEDDED_MQTT_SERVER=no`. The MQTT ingest client starts by default when an embedded broker is running or `MQTT_BROKER_URL` is set, unless `MQTT_CLIENT_ENABLED=no`.
 
+By default, the embedded broker listens at `MQTT_BROKER_URL`. Clustered deployments can set `EMBEDDED_MQTT_LISTEN_URL` separately so each broker listens on a local interface while the ingest client retains its own broker URL. For example, a TLS broker can listen on `mqtts://0.0.0.0:8883` while its local ingest client connects to `mqtts://localhost:8883`. Set `MQTT_TLS_CERT_FILE` and `MQTT_TLS_KEY_FILE` to use a broker-specific certificate; otherwise the broker uses `server.crt` and `server.key` from the configured HTTP certificates directory.
+
+When several XACT instances connect to the same broker endpoint, give each instance a unique `MQTT_CLIENT_ID` and set the same `MQTT_CLIENT_SHARED_GROUP` on every instance. XACT then uses MQTT shared subscriptions so one healthy ingest worker processes each publication.
+
 For MQTT over TLS, set `MQTT_BROKER_URL` to `mqtts://...` or `ssl://...`. The ingest client verifies the broker certificate by default. Use `MQTT_CLIENT_TLS_CA_FILE` to trust a private/self-signed certificate, `MQTT_CLIENT_TLS_SERVER_NAME` when the certificate name differs from the connection host, or `MQTT_CLIENT_TLS_INSECURE_SKIP_VERIFY=true` only for local development diagnostics.
 
 ### Topic Format

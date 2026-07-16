@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/wind-c/comqtt/v2/mqtt"
 	"github.com/wind-c/comqtt/v2/mqtt/listeners"
@@ -52,6 +53,48 @@ func (h *MqttPasswordHook) OnConnect(cl *mqtt.Client, pk packets.Packet) error {
 	return nil
 }
 
+func embeddedMQTTListenURL() string {
+	listenURL := strings.TrimSpace(os.Getenv("EMBEDDED_MQTT_LISTEN_URL"))
+	if listenURL != "" {
+		return listenURL
+	}
+
+	// Retain the historical behaviour when a separate listener URL has not
+	// been configured. Clustered installations should set both variables:
+	// the listener URL identifies the local interface and MQTT_BROKER_URL
+	// identifies the client-facing broker endpoint.
+	brokerURL := strings.TrimSpace(os.Getenv("MQTT_BROKER_URL"))
+	if brokerURL != "" {
+		return brokerURL
+	}
+	return "mqtt://127.0.0.1:1883"
+}
+
+func embeddedMQTTTLSEnabled(listenURL string) bool {
+	if u, err := url.Parse(listenURL); err == nil {
+		switch strings.ToLower(u.Scheme) {
+		case "mqtts", "ssl", "tls":
+			return true
+		}
+	}
+	enabled, err := strconv.ParseBool(strings.TrimSpace(os.Getenv("ENABLE_TLS")))
+	return err == nil && enabled
+}
+
+func embeddedMQTTTLSFiles() (string, string) {
+	crtFile := strings.TrimSpace(os.Getenv("MQTT_TLS_CERT_FILE"))
+	keyFile := strings.TrimSpace(os.Getenv("MQTT_TLS_KEY_FILE"))
+	if crtFile != "" || keyFile != "" {
+		return crtFile, keyFile
+	}
+
+	certsDir := strings.TrimSpace(os.Getenv("HTTP_CERTS_DIR"))
+	if certsDir == "" {
+		certsDir = strings.TrimSpace(os.Getenv("HTTPS_CERTS_DIR"))
+	}
+	return filepath.Join(certsDir, "server.crt"), filepath.Join(certsDir, "server.key")
+}
+
 // StartMqttBroker starts the embedded MQTT broker and returns once the broker
 // is listening and ready to accept connections. The broker serve loop runs in
 // a background goroutine. Returns a non-nil error if the broker could not bind
@@ -62,19 +105,15 @@ func StartMqttBroker() error {
 	broker := mqtt.New(nil)
 	_ = broker.AddHook(new(MqttPasswordHook), nil)
 
-	tlsEnabled, parseError := strconv.ParseBool(os.Getenv("ENABLE_TLS"))
-	if parseError != nil {
-		tlsEnabled = false
-	}
+	listenURL := embeddedMQTTListenURL()
+	tlsEnabled := embeddedMQTTTLSEnabled(listenURL)
 
 	var tlsConfig *tls.Config
 	if tlsEnabled {
-		certsDir := os.Getenv("HTTP_CERTS_DIR")
-		if certsDir == "" {
-			certsDir = os.Getenv("HTTPS_CERTS_DIR")
+		crtFile, keyFile := embeddedMQTTTLSFiles()
+		if crtFile == "" || keyFile == "" {
+			return fmt.Errorf("MQTT broker TLS certificate and key must both be configured")
 		}
-		crtFile := filepath.Join(certsDir, "server.crt")
-		keyFile := filepath.Join(certsDir, "server.key")
 
 		cert, err := tls.LoadX509KeyPair(crtFile, keyFile)
 		if err != nil {
@@ -88,20 +127,14 @@ func StartMqttBroker() error {
 		}
 	}
 
-	// Get MQTT URL from environment or use default
-	mqttURL := os.Getenv("MQTT_BROKER_URL")
-	if mqttURL == "" {
-		mqttURL = "mqtt://127.0.0.1:1883"
-	}
-
 	// listeners.NewTCP expects a bare host:port, not a full URL.
 	// Strip any scheme prefix (e.g. "mqtt://") before passing it.
-	listenAddr := mqttURL
-	if u, err := url.Parse(mqttURL); err == nil && u.Host != "" {
+	listenAddr := listenURL
+	if u, err := url.Parse(listenURL); err == nil && u.Host != "" {
 		listenAddr = u.Host
 	}
 
-	log.Printf("MQTT broker listening\n")
+	log.Printf("MQTT broker listening on %s (TLS=%t)\n", listenAddr, tlsEnabled)
 	// Create a listener on a standard port.
 	tcp := listeners.NewTCP("broker_tcp", listenAddr, &listeners.Config{
 		TLSConfig: tlsConfig,
@@ -118,6 +151,6 @@ func StartMqttBroker() error {
 		}
 	}()
 
-	log.Println("MQTT broker started on", mqttURL)
+	log.Println("MQTT broker started on", listenURL)
 	return nil
 }

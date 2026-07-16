@@ -24,6 +24,15 @@ func TestNormalizeBrokerURL(t *testing.T) {
 	}
 }
 
+func TestSharedSubscriptionTopic(t *testing.T) {
+	if got := sharedSubscriptionTopic("xact-ingest", TopicPattern); got != "$share/xact-ingest/"+TopicPattern {
+		t.Fatalf("sharedSubscriptionTopic() = %q", got)
+	}
+	if got := sharedSubscriptionTopic("", TopicPattern); got != TopicPattern {
+		t.Fatalf("sharedSubscriptionTopic() without group = %q", got)
+	}
+}
+
 func TestMQTTClientTLSConfigFromEnvUsesCAAndOverrides(t *testing.T) {
 	caFile := writeTestCert(t)
 	t.Setenv("MQTT_CLIENT_TLS_CA_FILE", caFile)

@@ -1,0 +1,244 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">XACT Development HA Cluster</title>
+  <desc id="desc">Architecture of the XACT VMware development cluster, with HAProxy application balancing, PgBouncer database routing, PostgreSQL streaming replication, and repmgr automatic failover.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f8fbff"/>
+      <stop offset="1" stop-color="#eef4fa"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="7" flood-color="#17324d" flood-opacity="0.14"/>
+    </filter>
+    <marker id="arrow-teal" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#087f8c"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6637a3"/>
+    </marker>
+    <marker id="arrow-orange" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e85d04"/>
+    </marker>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#225ea8"/>
+    </marker>
+    <style>
+      text { font-family: Inter, "Segoe UI", Arial, sans-serif; fill: #102a43; }
+      .title { font-size: 42px; font-weight: 800; letter-spacing: .3px; }
+      .subtitle { font-size: 17px; fill: #486581; }
+      .section { font-size: 24px; font-weight: 800; }
+      .card-title { font-size: 21px; font-weight: 800; }
+      .node-title { font-size: 16px; font-weight: 800; }
+      .role { font-size: 18px; font-weight: 800; }
+      .body { font-size: 15px; }
+      .small { font-size: 13px; }
+      .micro { font-size: 12px; }
+      .bold { font-weight: 700; }
+      .muted { fill: #627d98; }
+      .teal { fill: #087f8c; }
+      .purple { fill: #6637a3; }
+      .orange { fill: #e85d04; }
+      .green { fill: #238636; }
+      .white { fill: #fff; }
+      .card { fill: #fff; stroke: #17324d; stroke-width: 2; rx: 14; filter: url(#shadow); }
+      .soft { fill: #f7fafc; stroke: #bcccdc; stroke-width: 1.5; rx: 12; }
+      .teal-line { fill: none; stroke: #087f8c; stroke-width: 4; marker-end: url(#arrow-teal); }
+      .purple-line { fill: none; stroke: #6637a3; stroke-width: 4; marker-end: url(#arrow-purple); }
+      .purple-bus { fill: none; stroke: #6637a3; stroke-width: 3.5; }
+      .orange-line { fill: none; stroke: #e85d04; stroke-width: 3.5; marker-end: url(#arrow-orange); }
+      .admin-line { fill: none; stroke: #225ea8; stroke-width: 2.5; stroke-dasharray: 8 7; marker-end: url(#arrow-blue); }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1000" fill="url(#bg)"/>
+  <text x="800" y="58" text-anchor="middle" class="title">XACT Development HA Cluster</text>
+  <text x="800" y="87" text-anchor="middle" class="subtitle">Four VMware VMs • resilient application tier • MQTT broker failover • automatic PostgreSQL failover</text>
+
+  <!-- Clients -->
+  <rect x="50" y="112" width="280" height="112" class="card"/>
+  <text x="190" y="146" text-anchor="middle" class="card-title">Clients &amp; Operators</text>
+  <circle cx="98" cy="179" r="18" fill="#d9f1f3" stroke="#087f8c" stroke-width="2"/>
+  <path d="M89 179h18M98 170v18" stroke="#087f8c" stroke-width="2"/>
+  <text x="127" y="184" class="body">Browser / API clients</text>
+  <circle cx="98" cy="207" r="18" fill="#e8eef9" stroke="#225ea8" stroke-width="2"/>
+  <path d="M91 207h14M98 200v14" stroke="#225ea8" stroke-width="2"/>
+  <text x="127" y="212" class="body">Administrators</text>
+
+  <!-- Network boundary -->
+  <rect x="360" y="112" width="1190" height="562" fill="#ffffff" fill-opacity="0.56" stroke="#8aa4bd" stroke-width="2" stroke-dasharray="10 7" rx="20"/>
+  <rect x="737" y="99" width="436" height="28" rx="14" fill="#e7eef7"/>
+  <text x="955" y="120" text-anchor="middle" class="body bold">VMware lab network — 192.168.58.0/24</text>
+
+  <!-- Load balancer VM -->
+  <rect x="390" y="159" width="290" height="452" class="card"/>
+  <rect x="390" y="159" width="290" height="53" rx="14" fill="#123b5d"/>
+  <path d="M390 198h290v14H390z" fill="#123b5d"/>
+  <circle cx="406" cy="185" r="7" fill="#3bd671"/>
+  <text x="541" y="191" text-anchor="middle" class="card-title white">xact-lb — 192.168.58.10</text>
+
+  <rect x="414" y="231" width="242" height="164" rx="12" fill="#e8f7f8" stroke="#087f8c" stroke-width="2"/>
+  <text x="535" y="265" text-anchor="middle" class="card-title teal">HAProxy 3.2.9</text>
+  <text x="535" y="294" text-anchor="middle" class="body bold">Application traffic</text>
+  <text x="535" y="319" text-anchor="middle" class="body">HTTP :80 → :8080 round-robin</text>
+  <text x="535" y="343" text-anchor="middle" class="body">WebSocket :9222 least-connections</text>
+  <text x="535" y="367" text-anchor="middle" class="body bold orange">MQTT TLS :8883 → one broker</text>
+  <text x="535" y="388" text-anchor="middle" class="small muted">health checks • ordered failover • stats :8404</text>
+
+  <rect x="414" y="404" width="242" height="174" rx="12" fill="#f2ecfa" stroke="#6637a3" stroke-width="2"/>
+  <text x="535" y="438" text-anchor="middle" class="card-title purple">PgBouncer 1.25.1</text>
+  <text x="535" y="467" text-anchor="middle" class="body bold">Database endpoint :5432</text>
+  <text x="535" y="492" text-anchor="middle" class="body">Session-mode connection pooling</text>
+  <text x="535" y="516" text-anchor="middle" class="body">Routes writes to current primary</text>
+  <text x="535" y="548" text-anchor="middle" class="small muted">Stable endpoint used by every XACT node</text>
+  <text x="535" y="597" text-anchor="middle" class="small muted">Ubuntu 26.04 LTS</text>
+
+  <!-- DB nodes -->
+  <g id="xact1">
+    <rect x="730" y="159" width="245" height="340" class="card"/>
+    <rect x="730" y="159" width="245" height="52" rx="14" fill="#174f4f"/>
+    <path d="M730 197h245v14H730z" fill="#174f4f"/>
+    <circle cx="754" cy="185" r="7" fill="#3bd671"/>
+    <text x="862" y="191" text-anchor="middle" class="node-title white">xact1 — 192.168.58.139</text>
+    <rect x="751" y="226" width="203" height="40" rx="8" fill="#e7f6ea"/>
+    <text x="852" y="252" text-anchor="middle" class="role green">PRIMARY TODAY</text>
+    <text x="852" y="286" text-anchor="middle" class="body">Promotion priority 110</text>
+    <line x1="751" y1="304" x2="954" y2="304" stroke="#d0dce8"/>
+    <text x="852" y="334" text-anchor="middle" class="body bold teal">XACT app</text>
+    <text x="852" y="354" text-anchor="middle" class="small">HTTP :8080 • WS :9222 • MQTT TLS :8883</text>
+    <line x1="751" y1="376" x2="954" y2="376" stroke="#d0dce8"/>
+    <text x="852" y="407" text-anchor="middle" class="body bold purple">PostgreSQL 18.4</text>
+    <text x="852" y="432" text-anchor="middle" class="body">repmgr 5.5 • repmgrd</text>
+    <text x="852" y="458" text-anchor="middle" class="small muted">Ubuntu 26.04 LTS</text>
+    <text x="852" y="482" text-anchor="middle" class="small green">read-write database</text>
+  </g>
+
+  <g id="xact2">
+    <rect x="1000" y="159" width="245" height="340" class="card"/>
+    <rect x="1000" y="159" width="245" height="52" rx="14" fill="#244b70"/>
+    <path d="M1000 197h245v14h-245z" fill="#244b70"/>
+    <circle cx="1024" cy="185" r="7" fill="#3bd671"/>
+    <text x="1132" y="191" text-anchor="middle" class="node-title white">xact2 — 192.168.58.140</text>
+    <rect x="1021" y="226" width="203" height="40" rx="8" fill="#e8eef9"/>
+    <text x="1122" y="252" text-anchor="middle" class="role" fill="#225ea8">STANDBY</text>
+    <text x="1122" y="286" text-anchor="middle" class="body">Promotion priority 100</text>
+    <line x1="1021" y1="304" x2="1224" y2="304" stroke="#d0dce8"/>
+    <text x="1122" y="334" text-anchor="middle" class="body bold teal">XACT app</text>
+    <text x="1122" y="354" text-anchor="middle" class="small">HTTP :8080 • WS :9222 • MQTT TLS :8883</text>
+    <line x1="1021" y1="376" x2="1224" y2="376" stroke="#d0dce8"/>
+    <text x="1122" y="407" text-anchor="middle" class="body bold purple">PostgreSQL 18.4</text>
+    <text x="1122" y="432" text-anchor="middle" class="body">repmgr 5.5 • repmgrd</text>
+    <text x="1122" y="458" text-anchor="middle" class="small muted">Ubuntu 26.04 LTS</text>
+    <text x="1122" y="482" text-anchor="middle" class="small muted">hot standby</text>
+  </g>
+
+  <g id="xact3">
+    <rect x="1270" y="159" width="245" height="340" class="card"/>
+    <rect x="1270" y="159" width="245" height="52" rx="14" fill="#244b70"/>
+    <path d="M1270 197h245v14h-245z" fill="#244b70"/>
+    <circle cx="1294" cy="185" r="7" fill="#3bd671"/>
+    <text x="1402" y="191" text-anchor="middle" class="node-title white">xact3 — 192.168.58.141</text>
+    <rect x="1291" y="226" width="203" height="40" rx="8" fill="#e8eef9"/>
+    <text x="1392" y="252" text-anchor="middle" class="role" fill="#225ea8">STANDBY</text>
+    <text x="1392" y="286" text-anchor="middle" class="body">Promotion priority 90</text>
+    <line x1="1291" y1="304" x2="1494" y2="304" stroke="#d0dce8"/>
+    <text x="1392" y="334" text-anchor="middle" class="body bold teal">XACT app</text>
+    <text x="1392" y="354" text-anchor="middle" class="small">HTTP :8080 • WS :9222 • MQTT TLS :8883</text>
+    <line x1="1291" y1="376" x2="1494" y2="376" stroke="#d0dce8"/>
+    <text x="1392" y="407" text-anchor="middle" class="body bold purple">PostgreSQL 18.4</text>
+    <text x="1392" y="432" text-anchor="middle" class="body">repmgr 5.5 • repmgrd</text>
+    <text x="1392" y="458" text-anchor="middle" class="small muted">Ubuntu 26.04 LTS</text>
+    <text x="1392" y="482" text-anchor="middle" class="small muted">hot standby</text>
+  </g>
+
+  <!-- Application traffic -->
+  <path d="M330 158 H365 Q375 158 375 168 V278 H414" class="teal-line"/>
+  <rect x="337" y="233" width="70" height="26" rx="13" fill="#dff4f5"/>
+  <text x="372" y="251" text-anchor="middle" class="small bold teal">HTTP :80</text>
+  <path d="M656 306 H704 V318 H730" class="teal-line"/>
+  <path d="M704 318 V138 H1122 V159" class="teal-line"/>
+  <path d="M1122 138 H1392 V159" class="teal-line"/>
+  <text x="1030" y="131" text-anchor="middle" class="small bold teal">HAProxy distributes HTTP + WebSocket traffic</text>
+  <path d="M656 367 H704 V354 H730" class="orange-line"/>
+  <text x="683" y="346" text-anchor="middle" class="micro bold orange">preferred</text>
+
+  <!-- Admin path -->
+  <path d="M330 201 H345 V145 H754 V159" class="admin-line"/>
+  <path d="M754 145 H1024 V159" class="admin-line"/>
+  <path d="M1024 145 H1294 V159" class="admin-line"/>
+  <rect x="390" y="132" width="210" height="25" rx="12" fill="#e8eef9"/>
+  <text x="495" y="149" text-anchor="middle" class="small bold" fill="#225ea8">SSH over VMware vsock</text>
+
+  <!-- Database client route: all XACT apps feed one PgBouncer endpoint -->
+  <path d="M852 358 V531" class="purple-bus"/>
+  <path d="M1122 358 V531" class="purple-bus"/>
+  <path d="M1392 358 V531" class="purple-bus"/>
+  <path d="M1392 531 H682 Q656 531 656 505" class="purple-line"/>
+  <rect x="892" y="516" width="365" height="28" rx="14" fill="#f2ecfa"/>
+  <text x="1075" y="535" text-anchor="middle" class="small bold purple">all XACT nodes → 192.168.58.10:5432</text>
+  <path d="M656 470 H704 Q716 470 716 407 H730" class="purple-line"/>
+  <text x="684" y="460" class="micro bold purple">writer</text>
+
+  <!-- WAL replication -->
+  <path d="M975 420 H1000" class="purple-line"/>
+  <path d="M975 420 V574 H1392 V499" class="purple-line"/>
+  <rect x="1007" y="558" width="250" height="28" rx="14" fill="#f2ecfa"/>
+  <text x="1132" y="577" text-anchor="middle" class="small bold purple">asynchronous WAL streaming</text>
+
+  <!-- Normal operation callout -->
+  <rect x="730" y="601" width="785" height="58" rx="10" fill="#edf8f0" stroke="#80c98d"/>
+  <text x="1122" y="625" text-anchor="middle" class="body"><tspan class="bold green">Normal operation:</tspan> HAProxy serves any healthy app node; PgBouncer sends database sessions only to xact1.</text>
+  <text x="1122" y="648" text-anchor="middle" class="small"><tspan class="bold orange">MQTT TLS:</tspan> all clients use 192.168.58.10:8883; xact1 preferred; xact2/xact3 are ordered backups.</text>
+
+  <!-- Bottom panels -->
+  <rect x="50" y="705" width="925" height="248" class="card"/>
+  <text x="77" y="745" class="section">Automatic failover</text>
+  <text x="77" y="772" class="small muted">repmgrd runs on every database VM and coordinates promotion and follow actions.</text>
+
+  <g transform="translate(88,806)">
+    <circle cx="24" cy="20" r="20" fill="#e85d04"/><text x="24" y="27" text-anchor="middle" class="body bold white">1</text>
+    <rect x="0" y="52" width="176" height="71" class="soft"/>
+    <text x="88" y="80" text-anchor="middle" class="body bold">Detect failure</text>
+    <text x="88" y="104" text-anchor="middle" class="small">repmgrd loses primary</text>
+  </g>
+  <path d="M275 873 H321" class="orange-line"/>
+  <g transform="translate(332,806)">
+    <circle cx="24" cy="20" r="20" fill="#e85d04"/><text x="24" y="27" text-anchor="middle" class="body bold white">2</text>
+    <rect x="0" y="52" width="176" height="71" class="soft"/>
+    <text x="88" y="80" text-anchor="middle" class="body bold">Promote standby</text>
+    <text x="88" y="104" text-anchor="middle" class="small">xact2 preferred, then xact3</text>
+  </g>
+  <path d="M519 873 H565" class="orange-line"/>
+  <g transform="translate(576,806)">
+    <circle cx="24" cy="20" r="20" fill="#e85d04"/><text x="24" y="27" text-anchor="middle" class="body bold white">3</text>
+    <rect x="0" y="52" width="176" height="71" class="soft"/>
+    <text x="88" y="80" text-anchor="middle" class="body bold">Follow new primary</text>
+    <text x="88" y="104" text-anchor="middle" class="small">remaining standby rewires</text>
+  </g>
+  <path d="M763 873 H809" class="orange-line"/>
+  <g transform="translate(820,806)">
+    <circle cx="24" cy="20" r="20" fill="#e85d04"/><text x="24" y="27" text-anchor="middle" class="body bold white">4</text>
+    <rect x="0" y="52" width="126" height="71" class="soft"/>
+    <text x="63" y="80" text-anchor="middle" class="body bold">Update route</text>
+    <text x="63" y="104" text-anchor="middle" class="small">PgBouncer restarts</text>
+  </g>
+
+  <rect x="1000" y="705" width="550" height="248" class="card"/>
+  <text x="1027" y="745" class="section">Third-party software &amp; function</text>
+  <g class="body">
+    <circle cx="1039" cy="776" r="11" fill="#1b6fb8"/><text x="1039" y="781" text-anchor="middle" class="micro bold white">V</text>
+    <text x="1063" y="781"><tspan class="bold">VMware</tspan><tspan> — VM isolation and virtual networking</tspan></text>
+    <circle cx="1039" cy="803" r="11" fill="#e95420"/><text x="1039" y="808" text-anchor="middle" class="micro bold white">U</text>
+    <text x="1063" y="808"><tspan class="bold">Ubuntu</tspan><tspan> — guest operating system</tspan></text>
+    <circle cx="1039" cy="830" r="11" fill="#336791"/><text x="1039" y="835" text-anchor="middle" class="micro bold white">P</text>
+    <text x="1063" y="835"><tspan class="bold">PostgreSQL</tspan><tspan> — database and WAL replication</tspan></text>
+    <circle cx="1039" cy="857" r="11" fill="#225ea8"/><text x="1039" y="862" text-anchor="middle" class="micro bold white">R</text>
+    <text x="1063" y="862"><tspan class="bold">repmgr</tspan><tspan> — monitor, promote and follow</tspan></text>
+    <circle cx="1039" cy="884" r="11" fill="#6637a3"/><text x="1039" y="889" text-anchor="middle" class="micro bold white">P</text>
+    <text x="1063" y="889"><tspan class="bold">PgBouncer</tspan><tspan> — pool connections; stable DB endpoint</tspan></text>
+    <circle cx="1039" cy="911" r="11" fill="#087f8c"/><text x="1039" y="916" text-anchor="middle" class="micro bold white">H</text>
+    <text x="1063" y="916"><tspan class="bold">HAProxy</tspan><tspan> — balance traffic and check health</tspan></text>
+    <circle cx="1039" cy="938" r="11" fill="#e85d04"/><text x="1039" y="943" text-anchor="middle" class="micro bold white">C</text>
+    <text x="1063" y="943"><tspan class="bold">comqtt</tspan><tspan> — embedded MQTT broker with TLS</tspan></text>
+  </g>
+
+  <text x="800" y="983" text-anchor="middle" class="micro muted">Current development topology verified 2026-07-16 • Primary role is dynamic; IP addresses and priorities are fixed configuration</text>
+</svg>

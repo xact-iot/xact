@@ -65,7 +65,3 @@ benchmark/main
 build_and_setup.sh
 architecture/
 AirQuality/AirQuality
-
-ha/.vagrant/
-ha/.cache/
-ha/k3s
