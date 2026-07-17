@@ -558,7 +558,7 @@ func main() {
 	// Expose NATS browser credentials via the REST API so the frontend can
 	// connect with the correct token after authenticating.
 	natsWSPath := os.Getenv("NATS_WS_PATH")
-	if natsWSPath == "" {
+	if natsWSPath == "" && staticServeMode == "proxy" {
 		natsWSPath = "/xact/ws"
 	}
 	apiServer.SetNATSBrowserConfig(api.NATSBrowserConfig{

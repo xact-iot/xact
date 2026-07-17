@@ -327,7 +327,9 @@ NATS_INTERNAL_PASSWORD=${NATS_INTERNAL_SECRET}
 NATS_BROWSER_TOKEN=${NATS_BROWSER_SECRET}
 NATS_BROWSER_ALLOW_COMMANDS=no
 EXPOSE_NATS_INTERNAL_CONFIG=no
-NATS_WS_PATH=/xact/ws
+# Same-origin WebSocket path used by reverse-proxy deployments. Standalone
+# packages connect directly to NATS_WS_PORT and must leave this empty.
+NATS_WS_PATH=
 
 # Embedded MCP Endpoint
 MCP_ENABLED=no

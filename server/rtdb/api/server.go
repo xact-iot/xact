@@ -812,8 +812,14 @@ func (s *Server) handleNATSConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := s.natsBrowserConfig
 	s.natsCfgMu.RUnlock()
 
-	if cfg.NATSWSURL == "" && cfg.NATSWSPath == "" && s.config.StaticServeMode != "proxy" {
+	// A same-origin WebSocket path only works when a reverse proxy forwards it
+	// to the NATS WebSocket listener. In direct/static-server deployments the
+	// Go HTTP server does not own that route, so always advertise the listener
+	// URL. This also makes upgrades safe for standalone packages whose existing
+	// .env still contains the old proxy-only NATS_WS_PATH default.
+	if cfg.NATSWSURL == "" && s.config.StaticServeMode != "proxy" {
 		cfg.NATSWSURL = s.directNATSWebSocketURL(r)
+		cfg.NATSWSPath = ""
 	}
 
 	json.NewEncoder(w).Encode(cfg)

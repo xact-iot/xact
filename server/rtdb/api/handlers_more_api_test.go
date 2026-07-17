@@ -187,7 +187,7 @@ func TestPluginHandlersForMapLayersAndThemes(t *testing.T) {
 }
 
 func TestNATSBrowserConfigAndTimezone(t *testing.T) {
-	s := &Server{}
+	s := &Server{config: ServerConfig{StaticServeMode: "proxy"}}
 	s.SetNATSBrowserConfig(NATSBrowserConfig{Username: "u", Password: "p", NATSWSPath: "/ws"})
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/nats", nil)
@@ -222,6 +222,33 @@ func TestNATSBrowserConfigAndTimezone(t *testing.T) {
 	t.Setenv("TZ", "America/New_York")
 	if got := serverTimezone(); got != "America/New_York" {
 		t.Fatalf("serverTimezone = %q", got)
+	}
+}
+
+func TestNATSConfigDirectModeOverridesProxyPath(t *testing.T) {
+	t.Setenv("NATS_WS_PORT", "9222")
+	s := &Server{config: ServerConfig{StaticServeMode: "server"}}
+	s.SetNATSBrowserConfig(NATSBrowserConfig{
+		Username:   "u",
+		Password:   "p",
+		NATSWSPath: "/xact/ws",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/nats", nil)
+	req.Host = "windows-vm:8080"
+	rr := httptest.NewRecorder()
+	s.handleNATSConfig(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	var cfg NATSBrowserConfig
+	if err := json.Unmarshal(rr.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	if cfg.NATSWSURL != "ws://windows-vm:9222" {
+		t.Fatalf("NATSWSURL = %q", cfg.NATSWSURL)
+	}
+	if cfg.NATSWSPath != "" {
+		t.Fatalf("NATSWSPath = %q", cfg.NATSWSPath)
 	}
 }
 
