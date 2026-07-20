@@ -1,5 +1,5 @@
 name: xact_mobile
-description: "A new Flutter project."
+description: "Mobile operations client for the XACT server."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -34,6 +34,15 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+  http: ^1.6.0
+  flutter_secure_storage: ^10.3.1
+  shared_preferences: ^2.5.5
+  webview_flutter: ^4.14.1
+  path_provider: ^2.1.6
+  open_filex: ^4.7.0
+  package_info_plus: ^10.2.1
+  web_socket_channel: ^3.0.3
+  flutter_local_notifications: ^22.1.0
 
 dev_dependencies:
   flutter_test:

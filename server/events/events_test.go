@@ -104,10 +104,12 @@ func TestNotificationDispatchTargetsEnabledChannelsAndLogsResult(t *testing.T) {
 	resolver := &fakeResolver{recipients: []RecipientRecord{
 		{FirstName: "Ada", LastName: "Lovelace", Email: "ada@example.test", NotificationOptions: json.RawMessage(`{"emailEnabled":true}`)},
 		{Email: "bot@example.test", NotificationOptions: json.RawMessage(`{"telegramEnabled":true,"telegramId":"123"}`)},
+		{ID: 42, FirstName: "Mobile", LastName: "Operator", NotificationOptions: json.RawMessage(`{"mobileEnabled":true}`)},
 	}}
 	email := &recordingNotifier{name: "email"}
 	telegram := &recordingNotifier{name: "telegram"}
-	h := &NotificationHandler{writer: writer, resolver: resolver, notifiers: []Notifier{email, telegram}}
+	mobile := &recordingNotifier{name: "mobile"}
+	h := &NotificationHandler{writer: writer, resolver: resolver, notifiers: []Notifier{email, telegram, mobile}}
 
 	h.dispatch(EventEntry{Server: "srv", NotificationID: 9, Severity: string(Warn), Device: "pump", Message: "hot"})
 
@@ -119,6 +121,9 @@ func TestNotificationDispatchTargetsEnabledChannelsAndLogsResult(t *testing.T) {
 	}
 	if len(telegram.targets) != 1 || telegram.targets[0].TelegramID != "123" || telegram.targets[0].UserName != "bot@example.test" {
 		t.Fatalf("telegram targets = %#v", telegram.targets)
+	}
+	if len(mobile.targets) != 1 || mobile.targets[0].UserID != 42 || mobile.targets[0].Device != "pump" || mobile.targets[0].OrgName != "default" {
+		t.Fatalf("mobile targets = %#v", mobile.targets)
 	}
 	writer.flush()
 	if len(inserter.batches) != 1 || inserter.batches[0][0].Severity != string(Info) {

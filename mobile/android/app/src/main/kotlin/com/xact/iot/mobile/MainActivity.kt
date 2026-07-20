@@ -1,4 +1,4 @@
-package com.example.xact_mobile
+package com.xact.iot.mobile
 
 import io.flutter.embedding.android.FlutterActivity
 

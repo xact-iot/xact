@@ -429,6 +429,7 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 
 		// System
 		api.Get("/api/v1/system/nats-config", s.handleNATSConfigWithSchema())
+		api.Get("/api/v1/mobile/release", s.handleMobileReleaseWithSchema())
 		if s.config.ExposeNATSInternalConfig {
 			api.With(s.requireSystemAdmin()).
 				Get("/api/v1/system/nats-internal-config", s.handleNATSInternalConfigWithSchema())

@@ -43,11 +43,15 @@ type TelegramConfig struct {
 
 // NotificationTarget represents a user who should receive a notification.
 type NotificationTarget struct {
+	UserID     int
 	UserName   string
 	Email      string
 	TelegramID string
 	EmailOn    bool
 	TelegramOn bool
+	MobileOn   bool
+	Device     string
+	OrgName    string
 }
 
 // NotificationOptions is the JSON structure stored in users.notification_options.
@@ -55,6 +59,7 @@ type NotificationOptions struct {
 	EmailEnabled    bool   `json:"emailEnabled"`
 	TelegramEnabled bool   `json:"telegramEnabled"`
 	TelegramID      string `json:"telegramId"`
+	MobileEnabled   bool   `json:"mobileEnabled"`
 }
 
 // RecipientRecord is a minimal user record returned by the RecipientResolver.
@@ -106,7 +111,7 @@ func NewNotificationHandler(nc *natsgo.Conn, writer *EventWriter, resolver Recip
 	h := &NotificationHandler{
 		writer:    writer,
 		resolver:  resolver,
-		notifiers: notifiers,
+		notifiers: append(notifiers, &mobileSender{nc: nc}),
 	}
 
 	cc, err := consumer.Consume(h.handle)
@@ -135,6 +140,33 @@ func NewTelegramSenderFromConfig(cfg TelegramConfig) Notifier {
 // emailSender sends notifications via SMTP.
 type emailSender struct {
 	cfg EmailConfig
+}
+
+// mobileSender publishes a user-scoped notification to authenticated mobile
+// clients over the existing NATS WebSocket broadcast interface.
+type mobileSender struct {
+	nc *natsgo.Conn
+}
+
+func (m *mobileSender) Name() string { return "mobile" }
+
+func (m *mobileSender) Send(_ context.Context, target NotificationTarget, subject, body string) error {
+	if m.nc == nil || target.UserID == 0 {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]any{
+		"title":  subject,
+		"body":   body,
+		"device": target.Device,
+	})
+	if err != nil {
+		return err
+	}
+	org := strings.TrimSpace(target.OrgName)
+	if org == "" {
+		org = "default"
+	}
+	return m.nc.Publish(fmt.Sprintf("xact.internal.bcast.mobile.%s.%d", org, target.UserID), payload)
 }
 
 func (e *emailSender) Name() string { return "email" }
@@ -278,6 +310,12 @@ func (h *NotificationHandler) ReloadNotifiers(emailCfg EmailConfig, telegramCfg 
 	if telegramCfg.BotToken != "" {
 		newNotifiers = append(newNotifiers, NewTelegramSenderFromConfig(telegramCfg))
 	}
+	for _, notifier := range h.notifiers {
+		if notifier.Name() == "mobile" {
+			newNotifiers = append(newNotifiers, notifier)
+			break
+		}
+	}
 	h.notifiers = newNotifiers
 }
 
@@ -325,6 +363,8 @@ func (h *NotificationHandler) dispatch(entry EventEntry) {
 	var notifiedNames []string
 	for _, r := range recipients {
 		target := recordToTarget(r)
+		target.Device = entry.Device
+		target.OrgName = orgName
 
 		for _, n := range h.notifiers {
 			switch n.Name() {
@@ -338,6 +378,12 @@ func (h *NotificationHandler) dispatch(entry EventEntry) {
 				if target.TelegramOn && target.TelegramID != "" {
 					if err := n.Send(ctx, target, subject, body); err != nil {
 						log.Printf("events: handler: telegram to %s: %v", target.UserName, err)
+					}
+				}
+			case "mobile":
+				if target.MobileOn {
+					if err := n.Send(ctx, target, subject, body); err != nil {
+						log.Printf("events: handler: mobile to %s: %v", target.UserName, err)
 					}
 				}
 			}
@@ -361,6 +407,7 @@ func (h *NotificationHandler) dispatch(entry EventEntry) {
 
 func recordToTarget(r RecipientRecord) NotificationTarget {
 	t := NotificationTarget{
+		UserID:   r.ID,
 		UserName: strings.TrimSpace(r.FirstName + " " + r.LastName),
 		Email:    r.Email,
 	}
@@ -375,6 +422,7 @@ func recordToTarget(r RecipientRecord) NotificationTarget {
 	t.EmailOn = opts.EmailEnabled
 	t.TelegramOn = opts.TelegramEnabled
 	t.TelegramID = opts.TelegramID
+	t.MobileOn = opts.MobileEnabled
 	return t
 }
 
