@@ -200,6 +200,9 @@ describe('REST API wrappers', () => {
   it('covers organisation and API key wrappers', async () => {
     const fetchMock = stubFetch(mockResponse([{ name: 'default' }]));
     await expect(api.listOrganisations()).resolves.toEqual([{ name: 'default' }]);
+    fetchMock.mockResolvedValueOnce(mockResponse({ orgs: [{ name: 'default', displayName: 'Default' }] }));
+    await expect(api.listMyOrganisations()).resolves.toEqual([{ name: 'default', displayName: 'Default' }]);
+    expect(lastFetch(fetchMock)[0]).toBe('/xact/api/v1/auth/my-orgs');
     await expect(api.getOrganisation('Plant A')).resolves.toEqual([{ name: 'default' }]);
     expect(lastFetch(fetchMock)[0]).toBe('/xact/api/v1/organisations/Plant%20A');
 

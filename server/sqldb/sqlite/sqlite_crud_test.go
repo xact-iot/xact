@@ -49,6 +49,13 @@ func TestSQLiteUserAndOrganisationLifecycle(t *testing.T) {
 		if ui["profile"]["change"] != wantProfileChange {
 			t.Fatalf("%s profile.change = %v, want %v", rp.Role, ui["profile"]["change"], wantProfileChange)
 		}
+		if !ui["mobile-app"]["read"] {
+			t.Fatalf("%s mobile-app.read = false, want true", rp.Role)
+		}
+		wantMobileWrite := rp.Role == "SystemAdmin" || rp.Role == "Admin"
+		if ui["mobile-app"]["write"] != wantMobileWrite {
+			t.Fatalf("%s mobile-app.write = %v, want %v", rp.Role, ui["mobile-app"]["write"], wantMobileWrite)
+		}
 	}
 
 	area := &sqldb.OrgArea{North: 10, South: 1, East: 20, West: 2}
@@ -139,6 +146,37 @@ func TestSQLiteUserAndOrganisationLifecycle(t *testing.T) {
 	}
 	if org, err := db.GetOrganisation(ctx, "plant"); err != nil || org != nil {
 		t.Fatalf("deleted org = %#v err=%v", org, err)
+	}
+}
+
+func TestMobileAppPermissionDefaultsDoNotOverwriteExplicitChanges(t *testing.T) {
+	ctx := context.Background()
+	db := newSQLiteCRUDTestDB(t)
+	permissions, err := db.GetPermissions(ctx, "default", "Manager")
+	if err != nil || permissions == nil {
+		t.Fatalf("GetPermissions: %v, %#v", err, permissions)
+	}
+	var ui map[string]map[string]bool
+	if err := json.Unmarshal(permissions.UI, &ui); err != nil {
+		t.Fatal(err)
+	}
+	ui["mobile-app"] = map[string]bool{"read": false, "write": true}
+	permissions.UI, _ = json.Marshal(ui)
+	if err := db.UpdatePermissions(ctx, "default", "Manager", permissions); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	permissions, err = db.GetPermissions(ctx, "default", "Manager")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(permissions.UI, &ui); err != nil {
+		t.Fatal(err)
+	}
+	if ui["mobile-app"]["read"] || !ui["mobile-app"]["write"] {
+		t.Fatalf("explicit mobile app permissions were overwritten: %#v", ui["mobile-app"])
 	}
 }
 

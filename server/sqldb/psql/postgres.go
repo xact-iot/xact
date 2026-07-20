@@ -707,6 +707,8 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 
 		-- Restrict organisations.change for Admin to false (SystemAdmin-only default).
 		-- Guarded so it only fires when the value is still the original seeded 'true'.
+		-- Mobile app configuration is readable by every role and writable by
+		-- administrators by default. Existing explicit values are preserved.
 		UPDATE permissions
 		SET ui = jsonb_set(ui, '{organisations,change}', 'false')
 		WHERE role = 'Admin'
@@ -755,6 +757,14 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		SET ui = jsonb_set(ui, '{profile,change}', 'false'::jsonb, true)
 		WHERE role = 'User'
 		  AND (ui #>> '{profile,change}') = 'true';
+
+		UPDATE permissions
+		SET ui = jsonb_set(
+			jsonb_set(CASE WHEN ui ? 'mobile-app' THEN ui ELSE ui || '{"mobile-app":{}}'::jsonb END,
+				'{mobile-app,read}', COALESCE(ui #> '{mobile-app,read}', 'true'::jsonb), true),
+			'{mobile-app,write}', COALESCE(ui #> '{mobile-app,write}', to_jsonb(role IN ('SystemAdmin','Admin'))), true)
+		WHERE (ui #> '{mobile-app,read}') IS NULL
+		   OR (ui #> '{mobile-app,write}') IS NULL;
 
 		-- Also ensure the admin user (login_name = 'admin') is a SystemAdmin in every org.
 		-- Uses ON CONFLICT DO NOTHING so it is safe to run repeatedly.

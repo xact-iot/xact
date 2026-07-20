@@ -143,8 +143,50 @@ class XactApiClient {
     }
   }
 
-  Future<List<Device>> devices() async {
-    final body = await _jsonMap('GET', '/api/v1/nodes/', query: {'depth': -1});
+  Future<MobileAppConfig> mobileAppConfig() async {
+    try {
+      return MobileAppConfig.fromJson(
+        await _jsonMap('GET', '/api/v1/mobile/config'),
+      );
+    } on XactApiException catch (error) {
+      if (error.statusCode == 404 || error.statusCode == 403) {
+        return const MobileAppConfig();
+      }
+      rethrow;
+    }
+  }
+
+  Future<List<Device>> devices({List<String>? parentNodes}) async {
+    final configuredParents =
+        parentNodes ?? (await mobileAppConfig()).deviceParentNodes;
+    if (configuredParents.isEmpty) {
+      return _devicesBelow('');
+    }
+    final groups = await Future.wait(
+      configuredParents.map((parent) => _devicesBelow(parent)),
+    );
+    final found = <Device>[];
+    final paths = <String>{};
+    for (final group in groups) {
+      for (final device in group) {
+        if (paths.add(device.path)) found.add(device);
+      }
+    }
+    found.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return found;
+  }
+
+  Future<List<Device>> _devicesBelow(String parentPath) async {
+    final encoded = parentPath
+        .split('.')
+        .where((part) => part.isNotEmpty)
+        .map(Uri.encodeComponent)
+        .join('/');
+    final body = await _jsonMap(
+      'GET',
+      encoded.isEmpty ? '/api/v1/nodes/' : '/api/v1/nodes/$encoded',
+      query: {'depth': -1},
+    );
     final rootPath = '${body['path'] ?? ''}'
         .replaceAll('/', '.')
         .replaceAll(RegExp(r'^\.+|\.+$'), '');
@@ -161,7 +203,7 @@ class XactApiClient {
     final found = <Device>[];
     void walk(TreeItem node) {
       if (node.child('kpi') != null && node.child('meta') != null) {
-        found.add(Device(path: node.path, node: node));
+        found.add(Device(path: node.path, node: node, parentPath: parentPath));
         return;
       }
       for (final child in node.children.where((item) => !item.isLeaf)) {

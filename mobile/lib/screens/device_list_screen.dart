@@ -21,6 +21,8 @@ class DeviceListScreen extends StatefulWidget {
 class DeviceListScreenState extends State<DeviceListScreen> {
   final _search = TextEditingController();
   List<Device> _devices = const [];
+  MobileAppConfig _config = const MobileAppConfig();
+  String _selectedParent = '';
   bool _loading = true;
   String? _error;
 
@@ -44,8 +46,19 @@ class DeviceListScreenState extends State<DeviceListScreen> {
       _error = null;
     });
     try {
-      final devices = await widget.api.devices();
-      if (mounted) setState(() => _devices = devices);
+      final config = await widget.api.mobileAppConfig();
+      final devices = await widget.api.devices(
+        parentNodes: config.deviceParentNodes,
+      );
+      if (mounted) {
+        setState(() {
+          _config = config;
+          _selectedParent = config.deviceParentNodes.contains(_selectedParent)
+              ? _selectedParent
+              : (config.deviceParentNodes.firstOrNull ?? '');
+          _devices = devices;
+        });
+      }
     } catch (error) {
       if (mounted) setState(() => _error = '$error');
     } finally {
@@ -78,10 +91,12 @@ class DeviceListScreenState extends State<DeviceListScreen> {
     final visible = _devices
         .where(
           (device) =>
-              query.isEmpty ||
-              device.name.toLowerCase().contains(query) ||
-              device.location.toLowerCase().contains(query) ||
-              device.type.toLowerCase().contains(query),
+              (_selectedParent.isEmpty ||
+                  device.parentPath == _selectedParent) &&
+              (query.isEmpty ||
+                  device.name.toLowerCase().contains(query) ||
+                  device.location.toLowerCase().contains(query) ||
+                  device.type.toLowerCase().contains(query)),
         )
         .toList();
 
@@ -90,6 +105,28 @@ class DeviceListScreenState extends State<DeviceListScreen> {
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
+          if (_config.deviceParentNodes.isNotEmpty)
+            SliverToBoxAdapter(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                child: Row(
+                  children: _config.deviceParentNodes
+                      .map(
+                        (parent) => Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: ChoiceChip(
+                            label: Text(parent.split('.').last),
+                            selected: _selectedParent == parent,
+                            onSelected: (_) =>
+                                setState(() => _selectedParent = parent),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+            ),
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -134,6 +171,10 @@ class DeviceListScreenState extends State<DeviceListScreen> {
       ),
     );
   }
+}
+
+extension _FirstParent<T> on List<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }
 
 class _DeviceRow extends StatelessWidget {

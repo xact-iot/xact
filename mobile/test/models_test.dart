@@ -53,4 +53,13 @@ void main() {
     expect(device.name, 'Main pump');
     expect(device.kpis.single.value, 4.2);
   });
+
+  test('parses organisation mobile app configuration', () {
+    final config = MobileAppConfig.fromJson({
+      'deviceParentNodes': ['Pumps', 'Meters'],
+      'defaultDashboardName': 'Overview',
+    });
+    expect(config.deviceParentNodes, ['Pumps', 'Meters']);
+    expect(config.defaultDashboardName, 'Overview');
+  });
 }

@@ -234,8 +234,8 @@ func TestWidgetCatalogHandler(t *testing.T) {
 
 func TestWidgetCatalogDocumentsEveryBuiltInWidget(t *testing.T) {
 	catalog := widgetcatalog.BuiltIn()
-	if len(catalog.Widgets) != 26 {
-		t.Fatalf("widget count = %d, want 26", len(catalog.Widgets))
+	if len(catalog.Widgets) != 27 {
+		t.Fatalf("widget count = %d, want 27", len(catalog.Widgets))
 	}
 	for _, widget := range catalog.Widgets {
 		if widget.Type == "" || widget.Name == "" || widget.Category == "" || widget.Description == "" {

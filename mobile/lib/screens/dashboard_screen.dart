@@ -42,10 +42,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _load() async {
     try {
-      final dashboards = await widget.api.dashboards();
+      final responses = await Future.wait<dynamic>([
+        widget.api.dashboards(),
+        widget.api.mobileAppConfig(),
+      ]);
+      final dashboards = responses[0] as List<DashboardInfo>;
+      final config = responses[1] as MobileAppConfig;
       if (_selected == null ||
           !dashboards.any((item) => item.id == _selected)) {
-        _selected = dashboards.firstOrNull?.id;
+        final configured = config.defaultDashboardName.trim().toLowerCase();
+        _selected = configured.isEmpty
+            ? dashboards.firstOrNull?.id
+            : dashboards
+                      .where((item) => item.name.toLowerCase() == configured)
+                      .toList()
+                      .firstOrNull
+                      ?.id ??
+                  dashboards.firstOrNull?.id;
       }
       if (mounted) setState(() => _dashboards = dashboards);
       if (dashboards.isNotEmpty) _createWebView();
@@ -69,15 +82,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
           onPageFinished: (_) async {
             if (_authInjected) return;
             _authInjected = true;
-            final user = jsonEncode(widget.session.user.toJson());
             final token = jsonEncode(widget.session.token);
-            await controller.runJavaScript(
-              "localStorage.setItem('xact_auth_token', $token);"
-              "localStorage.setItem('xact_auth_user', ${jsonEncode(user)});",
-            );
-            await controller.loadRequest(
-              Uri.parse(widget.api.dashboardUrl(_selected)),
-            );
+            final user = jsonEncode(jsonEncode(widget.session.user.toJson()));
+            final target = jsonEncode(widget.api.dashboardUrl(_selected));
+            // Store the session and navigate in one JavaScript task so the
+            // web app cannot begin another load between those operations.
+            await controller.runJavaScript('''
+localStorage.setItem('xact_auth_token', $token);
+localStorage.setItem('xact_auth_user', $user);
+location.replace($target);
+''');
           },
         ),
       );

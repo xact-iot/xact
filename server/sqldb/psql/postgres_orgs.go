@@ -135,6 +135,17 @@ func (db *PostgresDB) seedOrgPermissions(ctx context.Context, orgID int) error {
 		)
 		WHERE org_id = $1
 	`, orgID)
+	if err != nil {
+		return err
+	}
+	_, err = db.pool.Exec(ctx, `
+		UPDATE permissions
+		SET ui = jsonb_set(
+			jsonb_set(CASE WHEN ui ? 'mobile-app' THEN ui ELSE ui || '{"mobile-app":{}}'::jsonb END,
+				'{mobile-app,read}', 'true'::jsonb, true),
+			'{mobile-app,write}', to_jsonb(role IN ('SystemAdmin','Admin')), true)
+		WHERE org_id = $1
+	`, orgID)
 	return err
 }
 

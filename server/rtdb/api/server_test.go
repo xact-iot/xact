@@ -30,6 +30,9 @@ type testDB struct {
 	organisations []sqldb.Organisation
 	authActive    bool
 	authVersion   int
+	configOrg     string
+	configName    string
+	configValue   json.RawMessage
 }
 
 func newTestDB(loginName, password string) *testDB {
@@ -103,9 +106,16 @@ func (d *testDB) GetPermissions(_ context.Context, _, _ string) (*sqldb.RolePerm
 func (d *testDB) UpdatePermissions(_ context.Context, _, _ string, _ *sqldb.RolePermissions) error {
 	return nil
 }
-func (d *testDB) SaveConfig(_ context.Context, _, _ string, _ json.RawMessage) error { return nil }
-func (d *testDB) LoadConfig(_ context.Context, _, _ string) (json.RawMessage, error) { return nil, nil }
-func (d *testDB) InsertEventEntries(_ context.Context, _ []events.EventEntry) error  { return nil }
+func (d *testDB) SaveConfig(_ context.Context, org, name string, value json.RawMessage) error {
+	d.configOrg, d.configName = org, name
+	d.configValue = append(d.configValue[:0], value...)
+	return nil
+}
+func (d *testDB) LoadConfig(_ context.Context, org, name string) (json.RawMessage, error) {
+	d.configOrg, d.configName = org, name
+	return d.configValue, nil
+}
+func (d *testDB) InsertEventEntries(_ context.Context, _ []events.EventEntry) error { return nil }
 func (d *testDB) QueryEvents(_ context.Context, _ sqldb.EventFilter) ([]events.EventEntry, error) {
 	return nil, nil
 }

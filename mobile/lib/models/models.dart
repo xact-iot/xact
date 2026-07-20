@@ -145,9 +145,10 @@ class TreeItem {
 }
 
 class Device {
-  Device({required this.path, required this.node});
+  Device({required this.path, required this.node, this.parentPath = ''});
   final String path;
   final TreeItem node;
+  final String parentPath;
 
   TreeItem? get meta => node.child('meta');
   TreeItem? get kpi => node.child('kpi');
@@ -169,6 +170,22 @@ class Device {
     if (value == null || '$value'.trim().isEmpty) return null;
     return '$value';
   }
+}
+
+class MobileAppConfig {
+  const MobileAppConfig({
+    this.deviceParentNodes = const [],
+    this.defaultDashboardName = '',
+  });
+
+  final List<String> deviceParentNodes;
+  final String defaultDashboardName;
+
+  factory MobileAppConfig.fromJson(Map<String, dynamic> json) =>
+      MobileAppConfig(
+        deviceParentNodes: _strings(json['deviceParentNodes']),
+        defaultDashboardName: '${json['defaultDashboardName'] ?? ''}',
+      );
 }
 
 class EventEntry {

@@ -50,6 +50,30 @@ export async function fetchNATSConfig(): Promise<NATSConfig> {
   return r.json();
 }
 
+export interface MobileAppConfig {
+  deviceParentNodes: string[];
+  defaultDashboardName: string;
+}
+
+export async function fetchMobileAppConfig(): Promise<MobileAppConfig> {
+  const response = await fetch(`${BASE_URL}/api/v1/mobile/config`, { headers: getHeaders() });
+  if (!response.ok) throw new Error(`Failed to load mobile app configuration: ${response.status}`);
+  return response.json();
+}
+
+export async function saveMobileAppConfig(config: MobileAppConfig): Promise<MobileAppConfig> {
+  const response = await fetch(`${BASE_URL}/api/v1/mobile/config`, {
+    method: 'PUT',
+    headers: getHeaders(),
+    body: JSON.stringify(config),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || `Failed to save mobile app configuration: ${response.status}`);
+  }
+  return response.json();
+}
+
 // Auth headers provider
 let getAuthHeadersFn: (() => HeadersInit) | null = null;
 
@@ -611,6 +635,18 @@ export interface Organisation {
   logo?: string;
   favicon?: string;
   area?: OrgArea;
+}
+
+export interface OrganisationSummary {
+  name: string;
+  displayName: string;
+}
+
+export async function listMyOrganisations(): Promise<OrganisationSummary[]> {
+  const response = await fetch(`${BASE_URL}/api/v1/auth/my-orgs`, { headers: getHeaders() });
+  if (!response.ok) throw new Error(`Failed to list accessible organisations: ${response.status}`);
+  const body = await response.json();
+  return Array.isArray(body?.orgs) ? body.orgs : [];
 }
 
 export async function listOrganisations(): Promise<Organisation[]> {

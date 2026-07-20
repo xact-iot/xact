@@ -46,6 +46,11 @@ registerPermissions('users', 'User Accounts', [
   { name: 'manage', description: 'Manage user accounts' },
 ], 'Controls access to the User Manager widget - roles with view can inspect user accounts; roles with manage can create, edit, and reset passwords for user accounts.');
 
+registerPermissions('mobile-app', 'Mobile App Configuration', [
+  { name: 'read', description: 'View mobile app configuration' },
+  { name: 'write', description: 'Change mobile app configuration' },
+], 'Controls organisation-specific mobile device tabs and the default dashboard.');
+
 registerWidgetTypes([
   {
     type: 'area-map-widget',
@@ -244,6 +249,17 @@ registerWidgetTypes([
     minW: 8,
     minH: 10,
     load: () => import('./permissions-widget'),
+  },
+  {
+    type: 'mobile-app-config-widget',
+    name: 'Mobile App Configuration',
+    icon: '\u{1F4F1}',
+    category: 'System',
+    defaultW: 12,
+    defaultH: 14,
+    minW: 8,
+    minH: 8,
+    load: () => import('./mobile-app-config-widget'),
   },
   {
     type: 'tags-manager-widget',

@@ -793,7 +793,18 @@ func (db *SQLiteDB) seedOrgPermissions(ctx context.Context, orgID int) error {
 			return fmt.Errorf("seeding permission for %s: %w", s.role, err)
 		}
 	}
-	return nil
+	if _, err := db.db.ExecContext(ctx, `
+		UPDATE permissions
+		SET ui = json_set(ui, '$.mobile-app.read', json('true'))
+		WHERE org_id = ? AND json_type(ui, '$.mobile-app.read') IS NULL`, orgID); err != nil {
+		return err
+	}
+	_, err := db.db.ExecContext(ctx, `
+		UPDATE permissions
+		SET ui = json_set(ui, '$.mobile-app.write',
+			json(CASE WHEN role IN ('SystemAdmin','Admin') THEN 'true' ELSE 'false' END))
+		WHERE org_id = ? AND json_type(ui, '$.mobile-app.write') IS NULL`, orgID)
+	return err
 }
 
 func (db *SQLiteDB) ensureViewPermissions(ctx context.Context) error {
@@ -889,6 +900,20 @@ func (db *SQLiteDB) ensureViewPermissions(ctx context.Context) error {
 		}
 		if _, ok := agentKeys["access"]; !ok {
 			agentKeys["access"] = isPersonalRole
+			changed = true
+		}
+		mobileApp, ok := ui["mobile-app"]
+		if !ok {
+			mobileApp = map[string]bool{}
+			ui["mobile-app"] = mobileApp
+			changed = true
+		}
+		if _, ok := mobileApp["read"]; !ok {
+			mobileApp["read"] = true
+			changed = true
+		}
+		if _, ok := mobileApp["write"]; !ok {
+			mobileApp["write"] = isAdminRole
 			changed = true
 		}
 		if !changed {
