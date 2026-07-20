@@ -40,8 +40,27 @@ authenticated XACT proxy.
 ## Notifications
 
 Opt-in is stored in the signed-in user's existing `notificationOptions` as
-`mobileEnabled`. The XACT notification dispatcher publishes matching profile
-events to the user's organisation-scoped NATS mobile subject. The app displays
-them through the native notification service and opens the related device when
-tapped. REST event polling remains enabled as a compatibility fallback for
-servers that predate the mobile channel.
+`mobileEnabled`. Foreground delivery continues to use the organisation-scoped
+NATS mobile subject, with REST polling as a compatibility fallback.
+
+For background Android push, register the Android application in the same
+Firebase project used by the server's FCM notification channel. The distributed
+APK contains no deployment-specific `google-services.json`: it loads the public
+Firebase options from the selected XACT server and initializes Firebase at
+runtime. The app registers and refreshes its project-bound FCM token in the
+signed-in user's notification options automatically. Push notifications open
+the related device when tapped.
+
+The Android package name registered in Firebase must be
+`com.xact.iot.mobile`. Obtain `google-services.json` from Firebase **Project
+settings > General > Your apps** and paste it into **Android
+google-services.json** under **Notifications > Channels > Android Push (FCM)**.
+Separately, generate a server service-account JSON key from **Project settings >
+Service accounts > Firebase Admin SDK** and paste it into **Service Account
+JSON**. The service-account document contains a private key and must never be
+returned to the app or committed to source control.
+
+The server exposes only the non-secret Android project ID, application ID, API
+key, and Messaging Sender ID. Native Android startup persists and restores these
+options so terminated-app notifications work. Switching to a server that uses a
+different Firebase project triggers one automatic app restart.

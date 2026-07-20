@@ -2,12 +2,18 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../services/session_controller.dart';
+import '../services/notification_service.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key, required this.controller});
+  const LoginScreen({
+    super.key,
+    required this.controller,
+    required this.notifications,
+  });
   final SessionController controller;
+  final NotificationService notifications;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -45,11 +51,24 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
     try {
+      var restartRequired = false;
+      try {
+        restartRequired = await widget.notifications.configureForServer(
+          _server.text,
+        );
+      } catch (error) {
+        // Firebase provisioning must not prevent normal server access. A
+        // corrected server configuration is picked up on the next login/start.
+        debugPrint('Could not provision Firebase for this server: $error');
+      }
       await widget.controller.login(
         _server.text,
         _username.text,
         _password.text,
       );
+      if (restartRequired) {
+        await widget.notifications.restartForFirebaseConfig();
+      }
     } on XactApiException catch (error) {
       if (mounted) setState(() => _error = error.message);
     } catch (_) {

@@ -29,7 +29,12 @@ class XactMobileApp extends StatelessWidget {
           return const Scaffold(body: LoadingView(label: 'Starting XACT'));
         }
         final session = controller.session;
-        if (session == null) return LoginScreen(controller: controller);
+        if (session == null) {
+          return LoginScreen(
+            controller: controller,
+            notifications: notifications,
+          );
+        }
         return HomeShell(
           key: ValueKey('${session.user.tenantId}:${session.token}'),
           controller: controller,

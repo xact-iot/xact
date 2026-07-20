@@ -43,15 +43,18 @@ type TelegramConfig struct {
 
 // NotificationTarget represents a user who should receive a notification.
 type NotificationTarget struct {
-	UserID     int
-	UserName   string
-	Email      string
-	TelegramID string
-	EmailOn    bool
-	TelegramOn bool
-	MobileOn   bool
-	Device     string
-	OrgName    string
+	UserID       int
+	UserName     string
+	Email        string
+	TelegramID   string
+	EmailOn      bool
+	TelegramOn   bool
+	MobileOn     bool
+	FCMOn        bool
+	FCMToken     string
+	FCMProjectID string
+	Device       string
+	OrgName      string
 }
 
 // NotificationOptions is the JSON structure stored in users.notification_options.
@@ -60,6 +63,9 @@ type NotificationOptions struct {
 	TelegramEnabled bool   `json:"telegramEnabled"`
 	TelegramID      string `json:"telegramId"`
 	MobileEnabled   bool   `json:"mobileEnabled"`
+	FCMEnabled      bool   `json:"fcmEnabled"`
+	FCMToken        string `json:"fcmToken"`
+	FCMProjectID    string `json:"fcmProjectId"`
 }
 
 // RecipientRecord is a minimal user record returned by the RecipientResolver.
@@ -302,7 +308,7 @@ func escapeMarkdown(s string) string {
 }
 
 // ReloadNotifiers rebuilds the notifiers slice from the given channel config.
-func (h *NotificationHandler) ReloadNotifiers(emailCfg EmailConfig, telegramCfg TelegramConfig) {
+func (h *NotificationHandler) ReloadNotifiers(emailCfg EmailConfig, telegramCfg TelegramConfig, additional ...Notifier) {
 	var newNotifiers []Notifier
 	if emailCfg.Host != "" {
 		newNotifiers = append(newNotifiers, NewEmailSenderFromConfig(emailCfg))
@@ -310,6 +316,7 @@ func (h *NotificationHandler) ReloadNotifiers(emailCfg EmailConfig, telegramCfg 
 	if telegramCfg.BotToken != "" {
 		newNotifiers = append(newNotifiers, NewTelegramSenderFromConfig(telegramCfg))
 	}
+	newNotifiers = append(newNotifiers, additional...)
 	for _, notifier := range h.notifiers {
 		if notifier.Name() == "mobile" {
 			newNotifiers = append(newNotifiers, notifier)
@@ -386,6 +393,12 @@ func (h *NotificationHandler) dispatch(entry EventEntry) {
 						log.Printf("events: handler: mobile to %s: %v", target.UserName, err)
 					}
 				}
+			case "fcm":
+				if target.FCMOn && target.FCMToken != "" {
+					if err := n.Send(ctx, target, subject, body); err != nil {
+						log.Printf("events: handler: FCM to %s: %v", target.UserName, err)
+					}
+				}
 			}
 		}
 		notifiedNames = append(notifiedNames, target.UserName)
@@ -423,6 +436,9 @@ func recordToTarget(r RecipientRecord) NotificationTarget {
 	t.TelegramOn = opts.TelegramEnabled
 	t.TelegramID = opts.TelegramID
 	t.MobileOn = opts.MobileEnabled
+	t.FCMOn = opts.FCMEnabled
+	t.FCMToken = opts.FCMToken
+	t.FCMProjectID = opts.FCMProjectID
 	return t
 }
 

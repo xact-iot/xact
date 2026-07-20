@@ -156,6 +156,35 @@ func (h *NotificationHandlers) HandleGetChannelsWithSchema() openapischema.Handl
 	return openapischema.WithSchema(h.HandleGetChannels, nil, notifications.ChannelConfig{}, "notifications")
 }
 
+func (h *NotificationHandlers) HandleGetFirebaseClientConfigWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleGetFirebaseClientConfig, nil, notifications.FirebaseClientConfig{}, "mobile")
+}
+
+// HandleGetFirebaseClientConfig exposes only non-secret Firebase Android
+// identifiers. It is public so a binary client can initialize Firebase before
+// authentication. The server-wide configuration is stored under the default org.
+func (h *NotificationHandlers) HandleGetFirebaseClientConfig(w http.ResponseWriter, r *http.Request) {
+	googleServicesJSON, err := notifications.LoadFirebaseAndroidConfig(r.Context(), h.DB)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if googleServicesJSON == "" {
+		cfg, loadErr := notifications.LoadChannelConfig(r.Context(), h.DB, "default")
+		if loadErr != nil {
+			http.Error(w, loadErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		googleServicesJSON = cfg.FCM.GoogleServicesJSON
+	}
+	clientCfg, err := notifications.ParseFirebaseClientConfig(googleServicesJSON)
+	if err != nil {
+		http.Error(w, `{"error":"invalid stored Firebase Android configuration"}`, http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(clientCfg)
+}
+
 // HandleGetChannels returns the notification channel configuration.
 func (h *NotificationHandlers) HandleGetChannels(w http.ResponseWriter, r *http.Request) {
 	org := h.GetOrg(r)
@@ -163,6 +192,9 @@ func (h *NotificationHandlers) HandleGetChannels(w http.ResponseWriter, r *http.
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if globalAndroidConfig, loadErr := notifications.LoadFirebaseAndroidConfig(r.Context(), h.DB); loadErr == nil && globalAndroidConfig != "" {
+		cfg.FCM.GoogleServicesJSON = globalAndroidConfig
 	}
 	json.NewEncoder(w).Encode(cfg)
 }
@@ -179,8 +211,16 @@ func (h *NotificationHandlers) HandleSaveChannels(w http.ResponseWriter, r *http
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
+	if err := cfg.FCM.Validate(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if err := notifications.SaveChannelConfig(r.Context(), h.DB, org, cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := notifications.SaveFirebaseAndroidConfig(r.Context(), h.DB, cfg.FCM.GoogleServicesJSON); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

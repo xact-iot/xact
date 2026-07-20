@@ -41,6 +41,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _load() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final responses = await Future.wait<dynamic>([
         widget.api.dashboards(),

@@ -25,13 +25,14 @@ func TestChannelConfigRoundTripAndDBResolver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load empty config: %v", err)
 	}
-	if empty.Email.Host != "" || empty.Telegram.BotToken != "" {
+	if empty.Email.Host != "" || empty.Telegram.BotToken != "" || empty.FCM.ServiceAccountJSON != "" {
 		t.Fatalf("empty config = %#v", empty)
 	}
 
 	cfg := ChannelConfig{
 		Email:    EmailConfig{Host: "smtp.example.test", Port: 2525, From: "from@example.test"},
 		Telegram: TelegramConfig{BotToken: "token"},
+		FCM:      FCMConfig{ServiceAccountJSON: `{"project_id":"project"}`},
 	}
 	if err := SaveChannelConfig(ctx, db, "default", cfg); err != nil {
 		t.Fatalf("SaveChannelConfig: %v", err)
@@ -40,8 +41,15 @@ func TestChannelConfigRoundTripAndDBResolver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadChannelConfig: %v", err)
 	}
-	if got.Email.Host != cfg.Email.Host || got.Telegram.BotToken != cfg.Telegram.BotToken {
+	if got.Email.Host != cfg.Email.Host || got.Telegram.BotToken != cfg.Telegram.BotToken || got.FCM.ServiceAccountJSON != cfg.FCM.ServiceAccountJSON {
 		t.Fatalf("config = %#v", got)
+	}
+	if err := SaveFirebaseAndroidConfig(ctx, db, `{"project_info":{"project_id":"project"}}`); err != nil {
+		t.Fatalf("SaveFirebaseAndroidConfig: %v", err)
+	}
+	androidConfig, err := LoadFirebaseAndroidConfig(ctx, db)
+	if err != nil || androidConfig != `{"project_info":{"project_id":"project"}}` {
+		t.Fatalf("LoadFirebaseAndroidConfig = %q, %v", androidConfig, err)
 	}
 
 	hash, _ := sqlite.HashPassword("pw")

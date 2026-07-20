@@ -320,6 +320,31 @@ html, body {
   grid-template-rows: 60px 1fr 40px;
 }
 
+/* Dashboard-only presentation used by the mobile app WebView. Authentication,
+   dashboard routing, widgets, and realtime data remain active; only the web
+   application chrome is removed. */
+html.xact-embedded-dashboard #app {
+  grid-template-areas: "content";
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+html.xact-embedded-dashboard #app > app-sidebar,
+html.xact-embedded-dashboard #app > app-header,
+html.xact-embedded-dashboard #app > app-footer {
+  display: none !important;
+}
+
+html.xact-embedded-dashboard #app > app-content {
+  grid-area: content;
+  min-width: 0;
+  min-height: 0;
+}
+
+html.xact-embedded-dashboard dashboard-container #pc-grid-scroll {
+  padding: 0.5rem;
+}
+
 @media (max-width: 768px) {
   #app {
     grid-template-columns: 60px 1fr;

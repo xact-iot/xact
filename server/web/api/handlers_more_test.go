@@ -90,17 +90,24 @@ func TestNotificationHandlersProfilesAndChannels(t *testing.T) {
 	doJSON(t, r, http.MethodGet, "/profiles/bad", nil, http.StatusBadRequest, nil)
 
 	var cfg notifications.ChannelConfig
+	googleServices := `{"project_info":{"project_number":"123456","project_id":"xact-server"},"client":[{"client_info":{"mobilesdk_app_id":"1:123456:android:abc","android_client_info":{"package_name":"com.xact.iot.mobile"}},"api_key":[{"current_key":"AIza-public"}]}]}`
 	doJSON(t, r, http.MethodPut, "/channels", map[string]any{
 		"email":    map[string]any{"host": "smtp.example.test", "port": 2525, "from": "from@example.test"},
 		"telegram": map[string]any{"botToken": "token"},
+		"fcm":      map[string]any{"serviceAccountJson": "", "googleServicesJson": googleServices},
 	}, http.StatusOK, &cfg)
-	if cfg.Email.Host != "smtp.example.test" || cfg.Telegram.BotToken != "token" || reloads != 1 {
+	if cfg.Email.Host != "smtp.example.test" || cfg.Telegram.BotToken != "token" || cfg.FCM.GoogleServicesJSON == "" || reloads != 1 {
 		t.Fatalf("channel cfg=%#v reloads=%d", cfg, reloads)
 	}
 	var gotCfg notifications.ChannelConfig
 	doJSON(t, r, http.MethodGet, "/channels", nil, http.StatusOK, &gotCfg)
 	if gotCfg.Email.Host != cfg.Email.Host {
 		t.Fatalf("got channel cfg = %#v", gotCfg)
+	}
+	var firebaseCfg notifications.FirebaseClientConfig
+	doJSON(t, http.HandlerFunc(h.HandleGetFirebaseClientConfig), http.MethodGet, "/firebase-config", nil, http.StatusOK, &firebaseCfg)
+	if !firebaseCfg.Configured || firebaseCfg.ProjectID != "xact-server" || firebaseCfg.APIKey != "AIza-public" {
+		t.Fatalf("firebase client config = %#v", firebaseCfg)
 	}
 	doJSON(t, r, http.MethodDelete, "/profiles/"+strconv.Itoa(created.ID), nil, http.StatusNoContent, nil)
 	_ = ctx

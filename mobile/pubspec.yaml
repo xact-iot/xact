@@ -43,6 +43,8 @@ dependencies:
   package_info_plus: ^10.2.1
   web_socket_channel: ^3.0.3
   flutter_local_notifications: ^22.1.0
+  firebase_core: ^4.12.1
+  firebase_messaging: ^16.4.3
 
 dev_dependencies:
   flutter_test:

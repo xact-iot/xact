@@ -343,6 +343,10 @@ func main() {
 			}))
 			console.Info("notifications", "", "Telegram sender configured")
 		}
+		if channelCfg.FCM.ServiceAccountJSON != "" {
+			notifiers = append(notifiers, notifications.NewFCMSender(channelCfg.FCM))
+			console.Info("notifications", "", "Firebase Cloud Messaging sender configured")
+		}
 
 		// Start NotificationHandler (subscribes to NATS, calls EventWriter + dispatches)
 		resolver := &notifications.DBResolver{DB: database}

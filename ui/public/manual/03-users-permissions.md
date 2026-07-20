@@ -42,7 +42,9 @@ Select a user from the table to edit their:
 - **Active status** - deactivate an account to prevent login without deleting it
 - **Organisation membership** - assign the user to organisations
 - **Roles** - change role assignments per organisation
-- **Notification preferences** - enable/disable email and Telegram notifications, set Telegram ID
+- **Notification preferences** - enable/disable email, Telegram, and Android push notifications; set Telegram ID or an FCM registration token
+
+For the supplied XACT Android app, users normally should not copy an FCM token manually. After the administrator stores both Firebase configuration documents on the server, the binary app loads the public Android options at runtime and registers or refreshes the token when the user enables **Server notifications**. See **Notifications → Android Push (FCM)** for the complete setup procedure.
 
 ### Resetting a Password
 

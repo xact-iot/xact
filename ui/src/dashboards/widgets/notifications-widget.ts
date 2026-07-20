@@ -14,7 +14,7 @@ import { enhancePasswordInputs } from '../../components/password-visibility';
 registerPermissions('notifications', 'Notifications', [
   { name: 'view', description: 'View notification profiles and channels' },
   { name: 'manage', description: 'Manage notification profiles and channels' },
-], 'Controls access to the Notifications widget - roles with view can inspect settings; roles with manage can configure email/telegram channels and notification profiles.');
+], 'Controls access to the Notifications widget - roles with view can inspect settings; roles with manage can configure email, Telegram, and Firebase Cloud Messaging channels and notification profiles.');
 
 registerWidgetType({
   type: 'notifications-widget',
@@ -43,6 +43,7 @@ export class NotificationsWidget extends BaseComponent {
   private channelConfig: ChannelConfig = {
     email: { host: '', port: 587, username: '', password: '', from: '', useTls: true },
     telegram: { botToken: '' },
+    fcm: { serviceAccountJson: '', googleServicesJson: '' },
   };
   private roles: Role[] = [];
   private users: UserRecord[] = [];
@@ -79,7 +80,11 @@ export class NotificationsWidget extends BaseComponent {
         this.canManage ? listUsers() : Promise.resolve([]),
       ]);
       this.profiles = profiles;
-      this.channelConfig = cfg;
+      this.channelConfig = {
+        email: cfg.email ?? { host: '', port: 587, username: '', password: '', from: '', useTls: true },
+        telegram: cfg.telegram ?? { botToken: '' },
+        fcm: cfg.fcm ?? { serviceAccountJson: '', googleServicesJson: '' },
+      };
       this.roles = roles;
       this.users = users;
       this.loading = false;
@@ -208,6 +213,7 @@ export class NotificationsWidget extends BaseComponent {
   private renderChannelsTab(): string {
     const e = this.channelConfig.email;
     const t = this.channelConfig.telegram;
+    const f = this.channelConfig.fcm;
     const disabled = this.canManage ? '' : 'disabled';
 
     return `
@@ -310,6 +316,40 @@ export class NotificationsWidget extends BaseComponent {
                    placeholder="123456:ABC-DEF..."
                    class="w-full px-2.5 py-1.5 text-sm rounded border outline-none font-mono"
                    style="background: var(--input-bg); border-color: var(--border-color); color: inherit;" ${disabled}>
+          </div>
+        </div>
+
+        <!-- Firebase Cloud Messaging Settings -->
+        <div>
+          <div class="flex items-center gap-2 mb-3 px-3 py-2 rounded border"
+               style="background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+                      border-color: color-mix(in srgb, var(--accent-color) 30%, transparent);
+                      color: var(--accent-color);">
+            <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M12 2a7 7 0 00-7 7v3l-2 4h18l-2-4V9a7 7 0 00-7-7zm-3 18h6"/>
+            </svg>
+            <span class="text-sm font-semibold tracking-wide">Android Push (FCM)</span>
+          </div>
+          <div class="space-y-2">
+            <div class="text-xs opacity-60 leading-relaxed">
+              Configure the private server sender credential and the public Android app registration from the same Firebase project.
+            </div>
+            <div>
+              <label class="block text-xs opacity-40 mb-1">Service Account JSON</label>
+              <textarea id="ch-fcm-service-account" rows="7"
+                        placeholder='{"type":"service_account","project_id":"..."}'
+                        class="w-full px-2.5 py-1.5 text-xs rounded border outline-none font-mono resize-y"
+                        style="background: var(--input-bg); border-color: var(--border-color); color: inherit;" ${disabled}>${this.esc(f.serviceAccountJson)}</textarea>
+            </div>
+            <div>
+              <label class="block text-xs opacity-40 mb-1">Android google-services.json</label>
+              <textarea id="ch-fcm-google-services" rows="7"
+                        placeholder='{"project_info":{"project_number":"...","project_id":"..."},"client":[...]}'
+                        class="w-full px-2.5 py-1.5 text-xs rounded border outline-none font-mono resize-y"
+                        style="background: var(--input-bg); border-color: var(--border-color); color: inherit;" ${disabled}>${this.esc(f.googleServicesJson)}</textarea>
+              <div class="text-xs opacity-50 mt-1">Downloaded after registering <code>com.xact.iot.mobile</code>. XACT exposes only its non-secret client identifiers to the app.</div>
+            </div>
           </div>
         </div>
 
@@ -559,6 +599,10 @@ export class NotificationsWidget extends BaseComponent {
       },
       telegram: {
         botToken: (this.querySelector('#ch-tg-token') as HTMLInputElement)?.value.trim() ?? '',
+      },
+      fcm: {
+        serviceAccountJson: (this.querySelector('#ch-fcm-service-account') as HTMLTextAreaElement)?.value.trim() ?? '',
+        googleServicesJson: (this.querySelector('#ch-fcm-google-services') as HTMLTextAreaElement)?.value.trim() ?? '',
       },
     };
 

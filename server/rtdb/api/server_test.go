@@ -16,6 +16,7 @@ import (
 	"github.com/xact-iot/xact/backups"
 	"github.com/xact-iot/xact/events"
 	"github.com/xact-iot/xact/mcp"
+	"github.com/xact-iot/xact/notifications"
 	"github.com/xact-iot/xact/rtdb/tree"
 	"github.com/xact-iot/xact/sqldb"
 	"github.com/xact-iot/xact/sqldb/psql"
@@ -959,6 +960,24 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 	if response["goVersion"] != runtime.Version() {
 		t.Errorf("expected goVersion %s, got %v", runtime.Version(), response["goVersion"])
+	}
+}
+
+func TestFirebaseClientConfigEndpointIsPublic(t *testing.T) {
+	treeOps := tree.NewTreeWithOperations(nil)
+	server := NewServer(ServerConfig{}, treeOps, nil, nil, "test-secret", newTestDB("admin", "password"), "")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/mobile/firebase-config", nil)
+	rr := httptest.NewRecorder()
+	server.Router().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+	var response notifications.FirebaseClientConfig
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Configured {
+		t.Fatalf("config = %#v", response)
 	}
 }
 

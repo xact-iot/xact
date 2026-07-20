@@ -13,6 +13,9 @@
       const savedWidgetDecoration = localStorage.getItem('xact-widget-decoration') || 'shadowed';
       document.documentElement.setAttribute('data-theme', savedTheme);
       document.documentElement.setAttribute('data-widget-decoration', savedWidgetDecoration);
+      if (new URLSearchParams(window.location.search).get('embedded') === 'dashboard') {
+        document.documentElement.classList.add('xact-embedded-dashboard');
+      }
     })();
   </script>
   <style>

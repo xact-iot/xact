@@ -332,6 +332,12 @@ export class UsersWidget extends BaseComponent {
                            ${disabled} style="accent-color: var(--accent-color);">
                     Telegram notifications
                   </label>
+                  <label class="flex items-center gap-1.5 text-xs cursor-pointer"
+                         style="opacity: ${(u as any)._notifFCMOn ? '1' : '0.5'};">
+                    <input type="checkbox" id="dlg-notif-fcm" ${(u as any)._notifFCMOn ? 'checked' : ''}
+                           ${disabled} style="accent-color: var(--accent-color);">
+                    Android push
+                  </label>
                 </div>
                 <div>
                   <label class="block text-xs opacity-40 mb-1">Telegram ID</label>
@@ -339,6 +345,13 @@ export class UsersWidget extends BaseComponent {
                          placeholder="Numeric chat ID"
                          class="w-full px-2.5 py-1.5 text-sm rounded border outline-none font-mono"
                          style="background: var(--input-bg); border-color: var(--border-color); color: inherit;" ${disabled}>
+                </div>
+                <div>
+                  <label class="block text-xs opacity-40 mb-1">FCM Registration Token</label>
+                  <textarea id="dlg-fcm-token" rows="3"
+                            placeholder="Android device registration token"
+                            class="w-full px-2.5 py-1.5 text-xs rounded border outline-none font-mono resize-y"
+                            style="background: var(--input-bg); border-color: var(--border-color); color: inherit;" ${disabled}>${this.esc((u as any)._fcmToken ?? '')}</textarea>
                 </div>
               </div>
             </div>
@@ -486,7 +499,7 @@ export class UsersWidget extends BaseComponent {
     if (!this.canManage) return;
     this.dialog = {
       open: true, mode: 'create',
-      user: { active: true, _notifEmailOn: true, _notifTelegramOn: false, _telegramId: '' } as any,
+      user: { active: true, _notifEmailOn: true, _notifTelegramOn: false, _telegramId: '', _notifFCMOn: false, _fcmToken: '', _fcmProjectId: '', _mobileEnabled: false } as any,
       roles: [],
       error: '', saving: false, resetResult: '', resetting: false,
     };
@@ -505,6 +518,10 @@ export class UsersWidget extends BaseComponent {
         _notifEmailOn: opts?.emailEnabled ?? false,
         _notifTelegramOn: opts?.telegramEnabled ?? false,
         _telegramId: opts?.telegramId ?? '',
+        _notifFCMOn: opts?.fcmEnabled ?? false,
+        _fcmToken: opts?.fcmToken ?? '',
+        _fcmProjectId: opts?.fcmProjectId ?? '',
+        _mobileEnabled: opts?.mobileEnabled ?? false,
       } as any,
       roles: [...new Set(roles)],
       error: '', saving: false, resetResult: '', resetting: false,
@@ -529,6 +546,10 @@ export class UsersWidget extends BaseComponent {
       emailEnabled: (this.querySelector('#dlg-notif-email') as HTMLInputElement)?.checked ?? false,
       telegramEnabled: (this.querySelector('#dlg-notif-telegram') as HTMLInputElement)?.checked ?? false,
       telegramId: (this.querySelector('#dlg-telegram-id') as HTMLInputElement)?.value.trim() ?? '',
+      fcmEnabled: (this.querySelector('#dlg-notif-fcm') as HTMLInputElement)?.checked ?? false,
+      fcmToken: (this.querySelector('#dlg-fcm-token') as HTMLTextAreaElement)?.value.trim() ?? '',
+      fcmProjectId: (this.dialog.user as any)._fcmProjectId ?? '',
+      mobileEnabled: (this.dialog.user as any)._mobileEnabled ?? false,
     };
 
     if (!email) {

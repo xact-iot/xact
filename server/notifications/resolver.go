@@ -12,10 +12,16 @@ import (
 type ChannelConfig struct {
 	Email    EmailConfig    `json:"email"`
 	Telegram TelegramConfig `json:"telegram"`
+	FCM      FCMConfig      `json:"fcm"`
 }
 
 // ConfigName is the system_config key used to store channel settings.
 const ConfigName = "notification-channels"
+
+// FirebaseAndroidConfigName stores the server-wide Android client project.
+// Unlike recipient/channel preferences, one running Android app process can
+// only use one default Firebase Messaging project for a server deployment.
+const FirebaseAndroidConfigName = "firebase-android-client"
 
 // DBResolver adapts sqldb.DB to the events.RecipientResolver interface.
 type DBResolver struct {
@@ -62,4 +68,24 @@ func SaveChannelConfig(ctx context.Context, db sqldb.DB, org string, cfg Channel
 		return err
 	}
 	return db.SaveConfig(ctx, org, ConfigName, data)
+}
+
+func LoadFirebaseAndroidConfig(ctx context.Context, db sqldb.DB) (string, error) {
+	data, err := db.LoadConfig(ctx, "default", FirebaseAndroidConfigName)
+	if err != nil || len(data) == 0 {
+		return "", err
+	}
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+func SaveFirebaseAndroidConfig(ctx context.Context, db sqldb.DB, value string) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return db.SaveConfig(ctx, "default", FirebaseAndroidConfigName, data)
 }

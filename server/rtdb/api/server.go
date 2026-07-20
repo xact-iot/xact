@@ -269,7 +269,11 @@ func NewServer(config ServerConfig, treeOps *tree.TreeWithOperations, treeSync *
 				telegramCfg := events.TelegramConfig{
 					BotToken: cfg.Telegram.BotToken,
 				}
-				s.notifHandler.ReloadNotifiers(emailCfg, telegramCfg)
+				var additional []events.Notifier
+				if cfg.FCM.ServiceAccountJSON != "" {
+					additional = append(additional, notifications.NewFCMSender(cfg.FCM))
+				}
+				s.notifHandler.ReloadNotifiers(emailCfg, telegramCfg, additional...)
 			}
 			return nil
 		})
@@ -344,6 +348,9 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 		api.Get("/openapi.json", s.handleOpenAPIWithSchema())
 		api.Get("/api/v1/openapi.json", s.handleOpenAPIWithSchema())
 		api.Post("/login", s.handleLoginWithSchema())
+		if s.notificationHandlers != nil {
+			api.Get("/api/v1/mobile/firebase-config", s.notificationHandlers.HandleGetFirebaseClientConfigWithSchema())
+		}
 		api.Get("/api/v1/bootstrap/admin", s.handleBootstrapAdminStatusWithSchema())
 		api.Post("/api/v1/bootstrap/admin/password", s.handleSetBootstrapAdminPasswordWithSchema())
 		// Plugin discovery and static file serving (widgets + map layers + themes)

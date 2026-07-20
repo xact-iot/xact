@@ -112,6 +112,14 @@ export class ProfileDialog extends BaseComponent {
                              style="accent-color: var(--accent-color);">
                       Telegram
                     </label>
+                    <label class="flex items-center gap-1.5 text-xs cursor-pointer"
+                           style="opacity: ${this.user?.notificationOptions?.fcmEnabled ? '1' : '0.5'};">
+                      <input type="checkbox" id="profile-notif-fcm"
+                             ${this.user?.notificationOptions?.fcmEnabled ? 'checked' : ''}
+                             ${disabledAttr}
+                             style="accent-color: var(--accent-color);">
+                      Android push
+                    </label>
                   </div>
                   <div>
                     <label class="block text-xs uppercase tracking-wider opacity-60 mb-1.5">Telegram ID</label>
@@ -120,6 +128,13 @@ export class ProfileDialog extends BaseComponent {
                            class="w-full px-3 py-2 text-sm border bg-transparent outline-none focus:ring-1 transition-all font-mono"
                            style="border-color: var(--border-color);"
                            placeholder="Numeric chat ID" ${disabledAttr} />
+                  </div>
+                  <div class="mt-2">
+                    <label class="block text-xs uppercase tracking-wider opacity-60 mb-1.5">FCM Registration Token</label>
+                    <textarea id="profile-fcm-token" rows="3"
+                              class="w-full px-3 py-2 text-xs border bg-transparent outline-none focus:ring-1 transition-all font-mono resize-y"
+                              style="border-color: var(--border-color);"
+                              placeholder="Android device registration token" ${disabledAttr}>${this._esc(this.user?.notificationOptions?.fcmToken || '')}</textarea>
                   </div>
                 </div>
 
@@ -219,6 +234,10 @@ export class ProfileDialog extends BaseComponent {
       emailEnabled: (this.querySelector('#profile-notif-email') as HTMLInputElement)?.checked ?? false,
       telegramEnabled: (this.querySelector('#profile-notif-telegram') as HTMLInputElement)?.checked ?? false,
       telegramId: (this.querySelector('#profile-telegram-id') as HTMLInputElement)?.value.trim() ?? '',
+      fcmEnabled: (this.querySelector('#profile-notif-fcm') as HTMLInputElement)?.checked ?? false,
+      fcmToken: (this.querySelector('#profile-fcm-token') as HTMLTextAreaElement)?.value.trim() ?? '',
+      fcmProjectId: this.user?.notificationOptions?.fcmProjectId ?? '',
+      mobileEnabled: this.user?.notificationOptions?.mobileEnabled ?? false,
     };
 
     this.profileSaving = true;

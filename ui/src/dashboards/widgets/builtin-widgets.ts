@@ -8,7 +8,7 @@ registerPermissions('events', 'System Events', [
 registerPermissions('notifications', 'Notifications', [
   { name: 'view', description: 'View notification profiles and channels' },
   { name: 'manage', description: 'Manage notification profiles and channels' },
-], 'Controls access to the Notifications widget - roles with view can inspect settings; roles with manage can configure email/telegram channels and notification profiles.');
+], 'Controls access to the Notifications widget - roles with view can inspect settings; roles with manage can configure email, Telegram, and Firebase Cloud Messaging channels and notification profiles.');
 
 registerPermissions('organisations', 'Organisation Manager', [
   { name: 'view', description: 'View organisations and their settings' },

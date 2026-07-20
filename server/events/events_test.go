@@ -105,11 +105,13 @@ func TestNotificationDispatchTargetsEnabledChannelsAndLogsResult(t *testing.T) {
 		{FirstName: "Ada", LastName: "Lovelace", Email: "ada@example.test", NotificationOptions: json.RawMessage(`{"emailEnabled":true}`)},
 		{Email: "bot@example.test", NotificationOptions: json.RawMessage(`{"telegramEnabled":true,"telegramId":"123"}`)},
 		{ID: 42, FirstName: "Mobile", LastName: "Operator", NotificationOptions: json.RawMessage(`{"mobileEnabled":true}`)},
+		{ID: 43, FirstName: "Android", LastName: "Operator", NotificationOptions: json.RawMessage(`{"fcmEnabled":true,"fcmToken":"device-token","fcmProjectId":"firebase-project"}`)},
 	}}
 	email := &recordingNotifier{name: "email"}
 	telegram := &recordingNotifier{name: "telegram"}
 	mobile := &recordingNotifier{name: "mobile"}
-	h := &NotificationHandler{writer: writer, resolver: resolver, notifiers: []Notifier{email, telegram, mobile}}
+	fcm := &recordingNotifier{name: "fcm"}
+	h := &NotificationHandler{writer: writer, resolver: resolver, notifiers: []Notifier{email, telegram, mobile, fcm}}
 
 	h.dispatch(EventEntry{Server: "srv", NotificationID: 9, Severity: string(Warn), Device: "pump", Message: "hot"})
 
@@ -124,6 +126,9 @@ func TestNotificationDispatchTargetsEnabledChannelsAndLogsResult(t *testing.T) {
 	}
 	if len(mobile.targets) != 1 || mobile.targets[0].UserID != 42 || mobile.targets[0].Device != "pump" || mobile.targets[0].OrgName != "default" {
 		t.Fatalf("mobile targets = %#v", mobile.targets)
+	}
+	if len(fcm.targets) != 1 || fcm.targets[0].UserID != 43 || fcm.targets[0].FCMToken != "device-token" || fcm.targets[0].FCMProjectID != "firebase-project" {
+		t.Fatalf("FCM targets = %#v", fcm.targets)
 	}
 	writer.flush()
 	if len(inserter.batches) != 1 || inserter.batches[0][0].Severity != string(Info) {
@@ -158,8 +163,8 @@ func TestNotifierFactoriesAndReload(t *testing.T) {
 		t.Fatal("notifier factory names mismatch")
 	}
 	h := &NotificationHandler{}
-	h.ReloadNotifiers(EmailConfig{Host: "smtp.example.test"}, TelegramConfig{BotToken: "token"})
-	if len(h.notifiers) != 2 {
+	h.ReloadNotifiers(EmailConfig{Host: "smtp.example.test"}, TelegramConfig{BotToken: "token"}, &recordingNotifier{name: "fcm"})
+	if len(h.notifiers) != 3 {
 		t.Fatalf("notifiers = %#v", h.notifiers)
 	}
 }

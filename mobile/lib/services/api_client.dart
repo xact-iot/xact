@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -13,6 +14,45 @@ class XactApiException implements Exception {
 
   @override
   String toString() => message;
+}
+
+class FirebaseClientConfig {
+  const FirebaseClientConfig({
+    required this.configured,
+    this.projectId = '',
+    this.appId = '',
+    this.apiKey = '',
+    this.messagingSenderId = '',
+  });
+
+  factory FirebaseClientConfig.fromJson(Map<String, dynamic> json) =>
+      FirebaseClientConfig(
+        configured: json['configured'] == true,
+        projectId: '${json['projectId'] ?? ''}',
+        appId: '${json['appId'] ?? ''}',
+        apiKey: '${json['apiKey'] ?? ''}',
+        messagingSenderId: '${json['messagingSenderId'] ?? ''}',
+      );
+
+  final bool configured;
+  final String projectId;
+  final String appId;
+  final String apiKey;
+  final String messagingSenderId;
+
+  bool get isComplete =>
+      configured &&
+      projectId.isNotEmpty &&
+      appId.isNotEmpty &&
+      apiKey.isNotEmpty &&
+      messagingSenderId.isNotEmpty;
+
+  Map<String, String> toJson() => {
+    'projectId': projectId,
+    'appId': appId,
+    'apiKey': apiKey,
+    'messagingSenderId': messagingSenderId,
+  };
 }
 
 class XactApiClient {
@@ -110,6 +150,53 @@ class XactApiClient {
     }
     configure(serverUrl: _serverUrl, token: session.token);
     return session;
+  }
+
+  Future<FirebaseClientConfig> firebaseConfigForServer(String serverUrl) async {
+    final normalized = normalizeServerUrl(serverUrl);
+    final parsed = Uri.parse(normalized);
+    final candidates = <String>[
+      normalized,
+      if (parsed.path == '/xact')
+        parsed.replace(path: '', query: null, fragment: null).toString(),
+    ];
+    XactApiException? lastError;
+    for (final candidate in candidates) {
+      final base = candidate.replaceAll(RegExp(r'/+$'), '');
+      try {
+        final response = await _client
+            .get(
+              Uri.parse('$base/api/v1/mobile/firebase-config'),
+              headers: const {'Accept': 'application/json'},
+            )
+            .timeout(const Duration(seconds: 12));
+        if (response.statusCode == 404) continue;
+        _ensureSuccess(response);
+        dynamic decoded;
+        try {
+          decoded = jsonDecode(response.body);
+        } catch (_) {
+          lastError = const XactApiException(
+            'The server returned an invalid Firebase configuration.',
+          );
+          continue;
+        }
+        if (decoded is! Map<String, dynamic>) {
+          lastError = const XactApiException(
+            'The server returned an invalid Firebase configuration.',
+          );
+          continue;
+        }
+        return FirebaseClientConfig.fromJson(decoded);
+      } on XactApiException catch (error) {
+        lastError = error;
+        if (error.statusCode != 404) rethrow;
+      } on SocketException catch (error) {
+        throw XactApiException('Cannot reach the XACT server: $error');
+      }
+    }
+    if (lastError != null && lastError.statusCode != 404) throw lastError;
+    return const FirebaseClientConfig(configured: false);
   }
 
   Future<AuthSession> switchOrganisation(
@@ -316,6 +403,22 @@ class XactApiClient {
         ? Map<String, dynamic>.from(profile['notificationOptions'] as Map)
         : <String, dynamic>{};
     options['mobileEnabled'] = enabled;
+    if (!enabled) options['fcmEnabled'] = false;
+    await _jsonMap(
+      'PUT',
+      '/api/v1/me/',
+      body: {'notificationOptions': options},
+    );
+  }
+
+  Future<void> setFcmRegistrationToken(String token, String projectId) async {
+    final profile = await myProfile();
+    final options = profile['notificationOptions'] is Map<String, dynamic>
+        ? Map<String, dynamic>.from(profile['notificationOptions'] as Map)
+        : <String, dynamic>{};
+    options['fcmEnabled'] = token.isNotEmpty;
+    options['fcmToken'] = token;
+    options['fcmProjectId'] = projectId;
     await _jsonMap(
       'PUT',
       '/api/v1/me/',
@@ -351,7 +454,7 @@ class XactApiClient {
     final suffix = dashboardId == null
         ? ''
         : '#${Uri.encodeComponent('$dashboardId')}';
-    return '$_serverUrl/$suffix';
+    return '$_serverUrl/?embedded=dashboard$suffix';
   }
 
   Future<Map<String, dynamic>> _jsonMap(
@@ -405,31 +508,48 @@ class XactApiClient {
     }
     final headers = Map<String, String>.from(_headers);
     if (!authenticated) headers.remove('Authorization');
-    try {
-      final target = uri(path, query);
-      final Future<http.Response> request = switch (method) {
-        'POST' => _client.post(
-          target,
-          headers: headers,
-          body: jsonEncode(body ?? {}),
-        ),
-        'PUT' => _client.put(
-          target,
-          headers: headers,
-          body: jsonEncode(body ?? {}),
-        ),
-        _ => _client.get(target, headers: headers),
-      };
-      final response = await request.timeout(const Duration(seconds: 25));
-      _ensureSuccess(response);
-      return response;
-    } on XactApiException {
-      rethrow;
-    } on SocketException {
-      throw const XactApiException('Could not reach the XACT server.');
-    } catch (error) {
-      throw XactApiException('Connection failed: $error');
+    final target = uri(path, query);
+    final attempts = method == 'GET' ? 2 : 1;
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      try {
+        final Future<http.Response> request = switch (method) {
+          'POST' => _client.post(
+            target,
+            headers: headers,
+            body: jsonEncode(body ?? {}),
+          ),
+          'PUT' => _client.put(
+            target,
+            headers: headers,
+            body: jsonEncode(body ?? {}),
+          ),
+          _ => _client.get(target, headers: headers),
+        };
+        final response = await request.timeout(const Duration(seconds: 25));
+        _ensureSuccess(response);
+        return response;
+      } on XactApiException {
+        rethrow;
+      } on SocketException {
+        if (attempt + 1 < attempts) {
+          await Future<void>.delayed(const Duration(milliseconds: 250));
+          continue;
+        }
+        throw const XactApiException('Could not reach the XACT server.');
+      } on TimeoutException {
+        if (attempt + 1 < attempts) continue;
+        throw const XactApiException('The XACT server did not respond.');
+      } on http.ClientException {
+        if (attempt + 1 < attempts) {
+          await Future<void>.delayed(const Duration(milliseconds: 250));
+          continue;
+        }
+        throw const XactApiException('Could not reach the XACT server.');
+      } catch (error) {
+        throw XactApiException('Connection failed: $error');
+      }
     }
+    throw const XactApiException('Could not reach the XACT server.');
   }
 
   void _ensureSuccess(http.Response response) {

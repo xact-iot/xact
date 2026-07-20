@@ -501,6 +501,10 @@ export interface NotificationOptions {
   emailEnabled: boolean;
   telegramEnabled: boolean;
   telegramId: string;
+  fcmEnabled: boolean;
+  fcmToken: string;
+  fcmProjectId: string;
+  mobileEnabled?: boolean;
 }
 
 export interface UserRecord {
@@ -1033,6 +1037,10 @@ export interface ChannelConfig {
   };
   telegram: {
     botToken: string;
+  };
+  fcm: {
+    serviceAccountJson: string;
+    googleServicesJson: string;
   };
 }
 
