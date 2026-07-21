@@ -194,6 +194,12 @@ func DeserializeTree(config *TreeConfig, treeOps *tree.TreeWithOperations) error
 			deviceTemplates[normalizeConfigPath(nc.Path)] = normalizeTemplateName(nc.TemplateName)
 		}
 	}
+	// Repair legacy instances after every node and template has been restored.
+	// Older snapshots retained templateName only on the device node, leaving the
+	// descendant leaves with a local default publish block and no template link.
+	for devicePath, templateName := range deviceTemplates {
+		treeOps.LinkDeviceTemplate(devicePath, templateName)
+	}
 
 	// Second pass: re-establish template pointers for template-linked leaves.
 	// All nodes and leaves are in the tree by now, so template lookup is safe.

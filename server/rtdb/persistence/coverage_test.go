@@ -71,6 +71,41 @@ func TestSerializeDeserializeDeviceNode(t *testing.T) {
 	}
 }
 
+func TestDeserializeRepairsLegacyDeviceTemplateLeaves(t *testing.T) {
+	config := &TreeConfig{Nodes: []NodeConfig{
+		{Path: ".default", Type: string(tree.NodeTypeOrganisation)},
+		{Path: ".default.Templates", Type: string(tree.NodeTypeStandard)},
+		{Path: ".default.Templates.AirQualityBackup", Type: string(tree.NodeTypeStandard)},
+		{Path: ".default.Templates.AirQualityBackup.air", Type: string(tree.NodeTypeStandard), Children: []LeafConfig{{
+			Name: "aqi", Type: "float", Description: "Composite air quality index",
+			Pipeline: []tree.ProcessBlockEnvelope{{Type: "publish"}},
+		}}},
+		{Path: ".default.LA_LongBeach.AirQuality.AQ-B-0001", Type: string(tree.NodeTypeDevice), TemplateName: "Templates.AirQualityBackup"},
+		{Path: ".default.LA_LongBeach.AirQuality.AQ-B-0001.air", Type: string(tree.NodeTypeStandard), Children: []LeafConfig{{
+			Name: "aqi", Type: "float", Description: "Composite air quality index",
+			Pipeline: []tree.ProcessBlockEnvelope{{Type: "publish"}},
+		}}},
+	}}
+	treeOps := tree.NewTreeWithOperations(nil)
+	if err := DeserializeTree(config, treeOps); err != nil {
+		t.Fatalf("DeserializeTree: %v", err)
+	}
+	leaf, err := treeOps.FindLeaf("default.LA_LongBeach.AirQuality.AQ-B-0001.air.aqi")
+	if err != nil {
+		t.Fatalf("FindLeaf: %v", err)
+	}
+	if leaf.GetConfig().TemplateName != "Templates.AirQualityBackup" {
+		t.Fatalf("templateName = %q", leaf.GetConfig().TemplateName)
+	}
+	tmplLeaf, err := treeOps.FindLeaf("default.Templates.AirQualityBackup.air.aqi")
+	if err != nil {
+		t.Fatalf("FindLeaf template: %v", err)
+	}
+	if leaf.GetTemplate() != tmplLeaf {
+		t.Fatal("legacy device leaf was not linked to the template leaf")
+	}
+}
+
 func TestSerializeDeserializeOrgNode(t *testing.T) {
 	treeOps := tree.NewTreeWithOperations(nil)
 	treeOps.CreateOrganisationNode("/MyOrg", "")

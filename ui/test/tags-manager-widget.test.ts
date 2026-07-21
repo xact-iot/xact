@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const apiMock = vi.hoisted(() => ({
   updateNode: vi.fn(async () => {}),
   loadNode: vi.fn(async () => ({ name: 'Device', description: 'Pump device', type: 'Device' })),
+  loadTag: vi.fn(async () => null),
   createNode: vi.fn(async () => {}),
   deleteNode: vi.fn(async () => {}),
   createTag: vi.fn(async () => {}),
@@ -401,6 +402,37 @@ describe('tags-manager-widget search', () => {
     await flushMicrotasks();
     expect(apiMock.debugTagPipeline).toHaveBeenCalledWith('default.Area.Device.temperature', { value: 2 });
     expect(widget.textContent).toContain('Final output');
+  });
+
+  it('loads and displays an inherited template pipeline from the tag API', async () => {
+    seedTree();
+    const path = 'default.LA_LongBeach.AirQuality.AQ-B-0001.air.aqi';
+    configByPath[path] = { type: 1 };
+    sharedByPath[path] = {};
+    apiMock.loadTag.mockResolvedValueOnce({
+      path,
+      config: { type: 1, templateName: 'Templates.AirQualityBackup' },
+      shared: {
+        description: 'Composite air quality index',
+        units: 'AQI',
+        pipelineInherited: true,
+        pipeline: [
+          { type: 'scale', parameters: { factor: 2 } },
+          { type: 'publish', parameters: {} },
+        ],
+      },
+    });
+
+    const widget = document.createElement('tags-manager-widget');
+    document.body.appendChild(widget);
+    await flushMicrotasks();
+    await widget['openEditTagModal'](path);
+
+    expect(apiMock.loadTag).toHaveBeenCalledWith(path);
+    expect(widget.querySelector('#tag-editor-modal')?.textContent).toContain('from template');
+    expect(widget.querySelectorAll('.pipeline-block')).toHaveLength(2);
+    expect(widget.querySelector('#pipeline-override')).not.toBeNull();
+    expect(widget.querySelector('#pipeline-add-block')).toBeNull();
   });
 
   it('edits live values, confirms deletes, and handles failures', async () => {

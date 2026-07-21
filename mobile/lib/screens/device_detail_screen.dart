@@ -67,7 +67,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     try {
       final results = await Future.wait<dynamic>([
         widget.api.device(_device.path),
-        widget.api.events(limit: 10, device: _device.name),
+        widget.api.events(limit: 10, device: _device.path),
       ]);
       if (mounted) {
         setState(() {
@@ -92,7 +92,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     try {
       final older = await widget.api.events(
         limit: _events.length + 10,
-        device: _device.name,
+        device: _device.path,
       );
       if (mounted) setState(() => _events = older);
     } finally {

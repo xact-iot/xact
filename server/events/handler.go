@@ -372,6 +372,9 @@ func (h *NotificationHandler) dispatch(entry EventEntry) {
 		target := recordToTarget(r)
 		target.Device = entry.Device
 		target.OrgName = orgName
+		delivered := false
+		fcmDelivered := false
+		var mobileNotifier Notifier
 
 		for _, n := range h.notifiers {
 			switch n.Name() {
@@ -379,29 +382,44 @@ func (h *NotificationHandler) dispatch(entry EventEntry) {
 				if target.EmailOn && target.Email != "" {
 					if err := n.Send(ctx, target, subject, body); err != nil {
 						log.Printf("events: handler: email to %s: %v", target.UserName, err)
+					} else {
+						delivered = true
 					}
 				}
 			case "telegram":
 				if target.TelegramOn && target.TelegramID != "" {
 					if err := n.Send(ctx, target, subject, body); err != nil {
 						log.Printf("events: handler: telegram to %s: %v", target.UserName, err)
+					} else {
+						delivered = true
 					}
 				}
 			case "mobile":
-				if target.MobileOn {
-					if err := n.Send(ctx, target, subject, body); err != nil {
-						log.Printf("events: handler: mobile to %s: %v", target.UserName, err)
-					}
-				}
+				// FCM and the live mobile channel terminate at the same app.
+				// Hold mobile as a fallback so one event creates one Android
+				// notification instead of two grouped duplicates.
+				mobileNotifier = n
 			case "fcm":
 				if target.FCMOn && target.FCMToken != "" {
 					if err := n.Send(ctx, target, subject, body); err != nil {
 						log.Printf("events: handler: FCM to %s: %v", target.UserName, err)
+					} else {
+						delivered = true
+						fcmDelivered = true
 					}
 				}
 			}
 		}
-		notifiedNames = append(notifiedNames, target.UserName)
+		if target.MobileOn && !fcmDelivered && mobileNotifier != nil {
+			if err := mobileNotifier.Send(ctx, target, subject, body); err != nil {
+				log.Printf("events: handler: mobile to %s: %v", target.UserName, err)
+			} else {
+				delivered = true
+			}
+		}
+		if delivered {
+			notifiedNames = append(notifiedNames, target.UserName)
+		}
 	}
 
 	// Log that notifications were sent.

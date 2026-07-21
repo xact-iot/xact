@@ -611,6 +611,35 @@ func TestPropagateTemplateTagCreatesLinkedDeviceTags(t *testing.T) {
 	}
 }
 
+func TestCreateDeviceNodeLinksExistingTemplateSubtree(t *testing.T) {
+	treeOps := NewTreeWithOperations(nil)
+	if err := treeOps.CreateOrganisationNode("default", ""); err != nil {
+		t.Fatalf("CreateOrganisationNode: %v", err)
+	}
+	if err := treeOps.CreateNode("default.Templates.AirQualityBackup.air", ""); err != nil {
+		t.Fatalf("CreateNode template: %v", err)
+	}
+	block := &stubBlock{blockType: "template-history"}
+	shared := TagShared{Description: "Composite air quality index", Pipeline: []ProcessBlock{block}}
+	if err := treeOps.CreateTag("default.Templates.AirQualityBackup.air.aqi", TypeFloat, TagConfig{Name: "aqi"}, shared); err != nil {
+		t.Fatalf("CreateTag template: %v", err)
+	}
+
+	if err := treeOps.CreateDeviceNode("default.LA_LongBeach.AirQuality.AQ-B-0001", "Templates.AirQualityBackup"); err != nil {
+		t.Fatalf("CreateDeviceNode: %v", err)
+	}
+	leaf, err := treeOps.FindLeaf("default.LA_LongBeach.AirQuality.AQ-B-0001.air.aqi")
+	if err != nil {
+		t.Fatalf("FindLeaf device AQI: %v", err)
+	}
+	if leaf.GetConfig().TemplateName != "Templates.AirQualityBackup" {
+		t.Fatalf("templateName = %q", leaf.GetConfig().TemplateName)
+	}
+	if got := leaf.GetPipeline(); len(got) != 1 || got[0].GetType() != "template-history" {
+		t.Fatalf("effective pipeline = %#v", got)
+	}
+}
+
 func TestPropagateTemplateDeleteRemovesLinkedDeviceTagsAndNodes(t *testing.T) {
 	treeOps := NewTreeWithOperations(nil)
 	if err := treeOps.CreateOrganisationNode("default", ""); err != nil {

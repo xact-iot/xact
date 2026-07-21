@@ -331,6 +331,9 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TemplateName != "" {
 		node.SetTemplateName(req.TemplateName)
+		if node.GetNodeType() == tree.NodeTypeDevice {
+			s.tree.LinkDeviceTemplate(path, req.TemplateName)
+		}
 	}
 
 	// Upgrade to Device Node if requested

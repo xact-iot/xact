@@ -172,10 +172,9 @@ func (t *TreeWithOperations) CreateDeviceNode(path string, templateRef string) e
 	}
 
 	t.Lock()
-	defer t.Unlock()
-
 	node, err := t.findNodeLocked(path)
 	if err != nil {
+		t.Unlock()
 		return err
 	}
 
@@ -187,6 +186,7 @@ func (t *TreeWithOperations) CreateDeviceNode(path string, templateRef string) e
 	if existing, ok := node.GetChild("meta"); !ok {
 		metaNode = NewNode("meta")
 		if err := node.AddChild(metaNode); err != nil {
+			t.Unlock()
 			return err
 		}
 		addedNodes = append(addedNodes, metaNode)
@@ -217,6 +217,7 @@ func (t *TreeWithOperations) CreateDeviceNode(path string, templateRef string) e
 		}
 		leaf, err := addPublishedLeaf(metaNode, td.tagType, td.name, TagConfig{Type: td.tagType, Name: td.name})
 		if err != nil {
+			t.Unlock()
 			return err
 		}
 		t.notifyBoth(path+".meta."+td.name, leaf)
@@ -233,17 +234,106 @@ func (t *TreeWithOperations) CreateDeviceNode(path string, templateRef string) e
 	if _, ok := node.GetChild("kpi"); !ok {
 		kpiNode := NewNode("kpi")
 		if err := node.AddChild(kpiNode); err != nil {
+			t.Unlock()
 			return err
 		}
 		addedNodes = append(addedNodes, kpiNode)
 	}
+	t.Unlock()
 
 	t.notifyBoth(path, node)
 	for _, n := range addedNodes {
 		t.notifyBoth(path+"."+n.Name, n)
 	}
+	if templateRef != "" {
+		t.LinkDeviceTemplate(path, templateRef)
+	}
 
 	return nil
+}
+
+// LinkDeviceTemplate links every matching leaf below a device to an existing
+// template subtree. Besides new devices, this repairs legacy instances whose
+// device node retained templateName but whose leaves lost their template refs.
+// Explicit local pipeline overrides on modern template-linked leaves are kept.
+func (t *TreeWithOperations) LinkDeviceTemplate(devicePath, templateRef string) []string {
+	devicePath = normalizeTemplatePath(devicePath)
+	templateRef = normalizeTemplateName(templateRef)
+	components := ResolvePath(devicePath)
+	if len(components) < 2 || templateRef == "" {
+		return nil
+	}
+	device, err := t.FindNode(devicePath)
+	if err != nil || device.GetNodeType() != NodeTypeDevice {
+		return nil
+	}
+	templatePath := components[0] + "." + templateRef
+	tmpl, err := t.FindNode(templatePath)
+	if err != nil {
+		return nil
+	}
+
+	linked := []string{}
+	var walk func(*Node, string)
+	walk = func(node *Node, suffix string) {
+		children := node.GetChildren()
+		names := make([]string, 0, len(children))
+		for name := range children {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			child := children[name]
+			childSuffix := name
+			if suffix != "" {
+				childSuffix = suffix + "." + name
+			}
+			if childNode, ok := child.(*Node); ok {
+				walk(childNode, childSuffix)
+				continue
+			}
+			tmplLeaf, ok := child.(Leaf)
+			if !ok {
+				continue
+			}
+			targetPath := devicePath + "." + childSuffix
+			existing, findErr := t.FindLeaf(targetPath)
+			if findErr == nil && !canLinkDeviceLeaf(existing, tmplLeaf, templateRef) {
+				continue
+			}
+			config := tmplLeaf.GetConfig()
+			config.Type = tmplLeaf.ValueType()
+			config.Name = tmplLeaf.GetName()
+			config.TemplateName = templateRef
+			if err := t.CreateTagWithTemplateLeaf(targetPath, tmplLeaf.ValueType(), config, tmplLeaf); err != nil {
+				continue
+			}
+			if findErr == nil {
+				if leaf, err := t.FindLeaf(targetPath); err == nil {
+					t.NotifyChange(targetPath, leaf)
+				}
+			}
+			linked = append(linked, targetPath)
+		}
+	}
+	walk(tmpl, "")
+	return linked
+}
+
+func canLinkDeviceLeaf(leaf, tmplLeaf Leaf, templateRef string) bool {
+	local := leaf.GetShared().Pipeline
+	if leaf.GetTemplate() == tmplLeaf && len(local) == 0 {
+		return true
+	}
+	if normalizeTemplateName(leaf.GetConfig().TemplateName) == templateRef {
+		return len(local) == 0
+	}
+	if leaf.GetConfig().TemplateName != "" {
+		return false
+	}
+	// Legacy template instances were persisted without a per-leaf templateName
+	// and came back with CreateTag's single default publish block.
+	return len(local) == 1 && local[0].GetType() == "publish"
 }
 
 // CreateOrganisationNode creates a new Organisation node at the given path,

@@ -339,10 +339,16 @@ class XactApiClient {
     String? device,
     int? afterId,
   }) async {
+    var eventDevice = device;
+    if (eventDevice != null &&
+        _tenantId.isNotEmpty &&
+        eventDevice.startsWith('$_tenantId.')) {
+      eventDevice = eventDevice.substring(_tenantId.length + 1);
+    }
     final body = await _jsonList(
       'GET',
       '/api/v1/logs',
-      query: {'limit': limit, 'device': device, 'after_id': afterId},
+      query: {'limit': limit, 'device': eventDevice, 'after_id': afterId},
     );
     return body
         .whereType<Map<String, dynamic>>()

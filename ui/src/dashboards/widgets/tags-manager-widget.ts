@@ -9,7 +9,7 @@ import { showAlert } from '../../components/app-dialog';
 import { TEMPLATES_ROOT } from '../../constants';
 import { formatUnixMillis } from '../../utils/time';
 import {
-  updateNode, loadNode, createNode, deleteNode,
+  updateNode, loadNode, loadTag, createNode, deleteNode,
   createTag, deleteTag, updateTag, updateTagValue, debugTagPipeline,
   loadBlockSchemas, listNotificationProfiles,
   type PipelineBlockEnvelope, type NodeType, type BlockSchema, type NotificationProfile,
@@ -1534,8 +1534,18 @@ export class TagsManagerWidget extends BaseComponent {
     this.tagValidationErrors.clear();
     try {
       const store = getMirrorStore();
-      const shared = store.getNodeShared(path) || {};
-      const config = store.getNodeConfig(path) || {};
+      let shared = store.getNodeShared(path) || {};
+      let config = store.getNodeConfig(path) || {};
+
+      // The mirror can contain a structural/KV snapshot that predates the full
+      // tag metadata hydration. Fetch the authoritative tag response before
+      // opening the editor so effective template pipelines are always shown.
+      try {
+        const tag = await loadTag(path);
+        shared = tag?.shared ?? shared;
+        config = tag?.config ?? config;
+      } catch { /* retain the cached metadata when the API is unavailable */ }
+
       const pipeline = shared.pipeline || [];
       this.editingTagData = {
         path,

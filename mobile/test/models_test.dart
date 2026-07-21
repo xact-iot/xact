@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -148,6 +149,32 @@ void main() {
 
     expect(await api.reports(), isEmpty);
     expect(calls, 2);
+    api.close();
+  });
+
+  test('queries events with the tenant-relative device path', () async {
+    late Uri requestedUrl;
+    final payload = base64Url.encode(utf8.encode('{"tenant_id":"default"}'));
+    final api =
+        XactApiClient(
+          client: MockClient((request) async {
+            requestedUrl = request.url;
+            return http.Response('[]', 200);
+          }),
+        )..configure(
+          serverUrl: 'https://xact.example.com/xact',
+          token: 'header.$payload.signature',
+        );
+
+    await api.events(
+      limit: 10,
+      device: 'default.LA_LongBeach.AirQuality.AQ-B-0001',
+    );
+
+    expect(
+      requestedUrl.queryParameters['device'],
+      'LA_LongBeach.AirQuality.AQ-B-0001',
+    );
     api.close();
   });
 }

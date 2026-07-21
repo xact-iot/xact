@@ -64,3 +64,6 @@ The server exposes only the non-secret Android project ID, application ID, API
 key, and Messaging Sender ID. Native Android startup persists and restores these
 options so terminated-app notifications work. Switching to a server that uses a
 different Firebase project triggers one automatic app restart.
+
+$ flutter emulators --launch xact_api_36
+$ flutter run -d emulator-5554

@@ -90,11 +90,15 @@ func (f *fakeResolver) GetNotificationRecipients(_ context.Context, org string, 
 type recordingNotifier struct {
 	name    string
 	targets []NotificationTarget
+	fail    bool
 }
 
 func (n *recordingNotifier) Name() string { return n.name }
 func (n *recordingNotifier) Send(_ context.Context, target NotificationTarget, _, _ string) error {
 	n.targets = append(n.targets, target)
+	if n.fail {
+		return context.DeadlineExceeded
+	}
 	return nil
 }
 
@@ -105,7 +109,8 @@ func TestNotificationDispatchTargetsEnabledChannelsAndLogsResult(t *testing.T) {
 		{FirstName: "Ada", LastName: "Lovelace", Email: "ada@example.test", NotificationOptions: json.RawMessage(`{"emailEnabled":true}`)},
 		{Email: "bot@example.test", NotificationOptions: json.RawMessage(`{"telegramEnabled":true,"telegramId":"123"}`)},
 		{ID: 42, FirstName: "Mobile", LastName: "Operator", NotificationOptions: json.RawMessage(`{"mobileEnabled":true}`)},
-		{ID: 43, FirstName: "Android", LastName: "Operator", NotificationOptions: json.RawMessage(`{"fcmEnabled":true,"fcmToken":"device-token","fcmProjectId":"firebase-project"}`)},
+		{ID: 43, FirstName: "Android", LastName: "Operator", NotificationOptions: json.RawMessage(`{"mobileEnabled":true,"fcmEnabled":true,"fcmToken":"device-token","fcmProjectId":"firebase-project"}`)},
+		{ID: 44, FirstName: "REST", LastName: "API", Email: "api@example.test", NotificationOptions: json.RawMessage(`{"emailEnabled":false,"telegramEnabled":false,"mobileEnabled":false,"fcmEnabled":false}`)},
 	}}
 	email := &recordingNotifier{name: "email"}
 	telegram := &recordingNotifier{name: "telegram"}
@@ -133,6 +138,32 @@ func TestNotificationDispatchTargetsEnabledChannelsAndLogsResult(t *testing.T) {
 	writer.flush()
 	if len(inserter.batches) != 1 || inserter.batches[0][0].Severity != string(Info) {
 		t.Fatalf("notification log batch = %#v", inserter.batches)
+	}
+	recipients, _ := inserter.batches[0][0].Params["recipients"].(string)
+	if strings.Contains(recipients, "REST API") {
+		t.Fatalf("disabled recipient included in notification audit: %q", recipients)
+	}
+}
+
+func TestNotificationDispatchFallsBackToMobileWhenFCMFails(t *testing.T) {
+	inserter := &recordingInserter{}
+	writer := NewEventWriter(inserter)
+	resolver := &fakeResolver{recipients: []RecipientRecord{{
+		ID: 43, FirstName: "Android", LastName: "Operator",
+		NotificationOptions: json.RawMessage(`{"mobileEnabled":true,"fcmEnabled":true,"fcmToken":"device-token"}`),
+	}}}
+	fcm := &recordingNotifier{name: "fcm", fail: true}
+	mobile := &recordingNotifier{name: "mobile"}
+	h := &NotificationHandler{writer: writer, resolver: resolver, notifiers: []Notifier{mobile, fcm}}
+
+	h.dispatch(EventEntry{NotificationID: 1, Severity: string(Warn), Device: "AQ-B-0001", Message: "AQI high"})
+
+	if len(fcm.targets) != 1 || len(mobile.targets) != 1 {
+		t.Fatalf("FCM/mobile fallback targets = %d/%d", len(fcm.targets), len(mobile.targets))
+	}
+	writer.flush()
+	if len(inserter.batches) != 1 || inserter.batches[0][0].Params["recipients"] != "Android Operator" {
+		t.Fatalf("fallback notification audit = %#v", inserter.batches)
 	}
 }
 
