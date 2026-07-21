@@ -5,7 +5,7 @@
 
 ![XACT Features](screenshots/xact-features.png)
 
-XACT is a industrial IoT platform designed for real-time monitoring, data acquisition, and process automation. XACT handles everything from hobby projects to lab deployments to installations with hundreds or even thousands of devices.
+XACT is an industrial IoT platform designed for real-time monitoring, data acquisition, and process automation. XACT handles everything from hobby projects to lab deployments to installations with hundreds or even thousands of devices. Its self-hosted Android mobile app gives operators secure access to devices, events, dashboards, reports, and push notifications away from the web console.
 
 ## Table of Contents
 
@@ -26,6 +26,8 @@ XACT is a industrial IoT platform designed for real-time monitoring, data acquis
   - [3.5. SVG diagrams](#35-svg-diagrams)
   - [3.6. UI Themes](#36-ui-themes)
   - [3.7. Online Help](#37-online-help)
+  - [3.8. XACT Mobile App](#38-xact-mobile-app)
+  - [3.9. MCP Server](#39-mcp-server)
 - [4. Data & Processing](#4-data--processing)
   - [4.1. Real-Time Hierarchical Database](#41-real-time-hierarchical-database)
   - [4.2. Templating System](#42-templating-system)
@@ -195,7 +197,10 @@ Adapt the interface to your preferences with selectable themes including light a
 ### 3.7. Online Help
 Online documentation ensures help is always available where you need it.
 
-### 3.8. MCP server
+### 3.8. XACT Mobile App
+XACT Mobile is a self-hosted Android companion app for in-house operators. It provides mobile access to permitted devices and live KPIs, recent events, dashboards, PDF reports, organisation switching, and Firebase Cloud Messaging notifications. The Android APK is included in deployment packages and can be downloaded securely from the XACT web interface without publishing the app through the Google Play Store.
+
+### 3.9. MCP Server
 Use your favorite AI Agent to configure and monitor the XACT server. Prompt to manage the tags or tag calculations or to generate custom reports.
 
 ---
@@ -222,7 +227,7 @@ Long-term storage with efficient compression enables trend analysis across month
 ## 5. Alerting & Reports
 
 ### 5.1. Events & Notifications
-Real-time alerting across multiple channels. Configure threshold-based alarms, state transitions, and complex event conditions. Currently notifications are sent via email and/or Telegram.
+Real-time alerting across multiple channels. Configure threshold-based alarms, state transitions, and complex event conditions. Notifications can be delivered through email, Telegram, and Firebase Cloud Messaging to the XACT Android app.
 
 ### 5.2. PDF Reports
 Generate professional PDF reports on-demand or on schedule. Include real-time data, historical trends, charts, and analysis. Automate delivery via email distribution lists.
