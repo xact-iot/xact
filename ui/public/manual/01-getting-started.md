@@ -75,6 +75,7 @@ Click your **username** in the top-right corner of the header, then select **Log
 
 ## Next Steps
 
+- Install and use the Android client in [XACT Mobile App](#xact-mobile-app).
 - Prepare production deployments in [Preparing for Production](#preparing-production).
 - Learn how organisations work in [Organisations](#organisations).
 - Understand roles and permissions in [Users & Permissions](#users-permissions).

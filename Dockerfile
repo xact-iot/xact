@@ -8,7 +8,7 @@ ARG XACT_ARTIFACT_DIR=server/deploy/intermediate/docker-image
 RUN apk add --no-cache ca-certificates su-exec tzdata \
     && addgroup -S xact \
     && adduser -S -G xact -h /opt/xact xact \
-    && mkdir -p /opt/xact/bin /opt/xact/web /opt/xact/plugins /var/lib/xact/nats-store /var/log/xact \
+    && mkdir -p /opt/xact/bin /opt/xact/web /opt/xact/mobile /opt/xact/plugins /var/lib/xact/nats-store /var/log/xact \
     && chown -R xact:xact /opt/xact /var/lib/xact /var/log/xact
 
 WORKDIR /opt/xact
@@ -16,6 +16,7 @@ WORKDIR /opt/xact
 COPY --chown=xact:xact ${XACT_ARTIFACT_DIR}/xact /opt/xact/bin/xact
 COPY --chown=xact:xact ${XACT_ARTIFACT_DIR}/restore /opt/xact/bin/restore
 COPY --chown=xact:xact ${XACT_ARTIFACT_DIR}/web /opt/xact/web
+COPY --chown=xact:xact ${XACT_ARTIFACT_DIR}/mobile /opt/xact/mobile
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod 755 /usr/local/bin/docker-entrypoint.sh
 

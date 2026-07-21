@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SERVER_DIR="$PROJECT_ROOT/server"
 UI_DIR="$PROJECT_ROOT/ui"
+MOBILE_DIR="$PROJECT_ROOT/mobile"
 DEPLOY_DIR="$SERVER_DIR/deploy"
 
 if [ -f "$SERVER_DIR/startup/VERSION.txt" ]; then
@@ -13,6 +14,11 @@ if [ -f "$SERVER_DIR/startup/VERSION.txt" ]; then
 fi
 if [ -z "$VERSION" ]; then
     VERSION="dev"
+fi
+MOBILE_APP_VERSION=$(awk '/^version:/ {print $2; exit}' "$MOBILE_DIR/pubspec.yaml")
+MOBILE_APP_VERSION="${MOBILE_APP_VERSION%%+*}"
+if [ -z "$MOBILE_APP_VERSION" ]; then
+    MOBILE_APP_VERSION="$VERSION"
 fi
 
 RED='\033[0;31m'
@@ -162,6 +168,12 @@ echo -e "${YELLOW}Creating deploy directory structure...${NC}"
 mkdir -p "$DEPLOY_DIR"/{linux,windows,darwin}
 mkdir -p "$DEPLOY_DIR/intermediate/server"
 mkdir -p "$DEPLOY_DIR/intermediate/ui"
+mkdir -p "$DEPLOY_DIR/intermediate/mobile"
+
+if ! command -v npm >/dev/null 2>&1; then
+    echo -e "${RED}npm command not found; Node.js and npm are required to build the UI${NC}"
+    exit 1
+fi
 
 echo -e "${YELLOW}Building UI...${NC}"
 cd "$UI_DIR"
@@ -170,6 +182,19 @@ npm run build --silent 2>/dev/null || npm run build
 cp -r dist "$DEPLOY_DIR/intermediate/ui/web_assets"
 
 echo -e "${GREEN}UI built successfully${NC}"
+
+if ! command -v flutter >/dev/null 2>&1; then
+    echo -e "${RED}flutter command not found; Flutter is required to build the mobile APK${NC}"
+    exit 1
+fi
+
+echo -e "${YELLOW}Building Android mobile app...${NC}"
+cd "$MOBILE_DIR"
+flutter pub get
+flutter build apk --release
+cp build/app/outputs/flutter-apk/app-release.apk \
+    "$DEPLOY_DIR/intermediate/mobile/xact-mobile.apk"
+echo -e "${GREEN}Mobile app built successfully (version $MOBILE_APP_VERSION)${NC}"
 
 build_platform() {
     local OS="$1"
@@ -247,7 +272,7 @@ create_package() {
     echo -e "${YELLOW}Creating $OS-$ARCH package...${NC}"
 
     rm -rf "$PLATFORM_DIR"
-    mkdir -p "$PLATFORM_DIR"/{plugins,data,certs,logs,web}
+    mkdir -p "$PLATFORM_DIR"/{plugins,data,certs,logs,web,mobile}
 
     local MQTT_SECRET
     local JWT_SECRET_VALUE
@@ -266,6 +291,7 @@ create_package() {
     chmod +x "$PLATFORM_DIR/restore${SUFFIX}"
 
     cp -r "$DEPLOY_DIR/intermediate/ui/web_assets/"* "$PLATFORM_DIR/web/"
+    cp "$DEPLOY_DIR/intermediate/mobile/xact-mobile.apk" "$PLATFORM_DIR/mobile/xact-mobile.apk"
 
     # Ship defaults as an example file so redeploying over an existing install
     # does not overwrite operator-managed secrets in .env.
@@ -339,6 +365,11 @@ MCP_TOOL_TIMEOUT_SECONDS=30
 MCP_MAX_PAYLOAD_BYTES=1048576
 MCP_DOCS_ROOT=
 MCP_EXAMPLES_ROOT=
+
+# Self-hosted Android mobile release
+MOBILE_APP_VERSION=$MOBILE_APP_VERSION
+MOBILE_APK_PATH=./mobile/xact-mobile.apk
+MOBILE_RELEASE_NOTES=XACT Mobile $MOBILE_APP_VERSION
 
 # Events / Audit
 # 0 disables application-side event purging. Use a positive value only when retention policy allows deletion.
@@ -460,7 +491,7 @@ build_docker_image() {
         echo -e "${RED}Docker image requires a Linux target, got $OS/$ARCH${NC}"
         return 1
     fi
-    if [ ! -x "$PLATFORM_DIR/xact" ] || [ ! -x "$PLATFORM_DIR/restore" ] || [ ! -d "$PLATFORM_DIR/web" ]; then
+    if [ ! -x "$PLATFORM_DIR/xact" ] || [ ! -x "$PLATFORM_DIR/restore" ] || [ ! -d "$PLATFORM_DIR/web" ] || [ ! -f "$PLATFORM_DIR/mobile/xact-mobile.apk" ]; then
         echo -e "${RED}Docker artifacts missing in $PLATFORM_DIR${NC}"
         return 1
     fi
@@ -475,6 +506,7 @@ build_docker_image() {
     cp "$PLATFORM_DIR/xact" "$IMAGE_ROOT/xact"
     cp "$PLATFORM_DIR/restore" "$IMAGE_ROOT/restore"
     cp -r "$PLATFORM_DIR/web" "$IMAGE_ROOT/web"
+    cp -r "$PLATFORM_DIR/mobile" "$IMAGE_ROOT/mobile"
 
     echo -e "${YELLOW}Building Docker image $DOCKER_IMAGE for $OS/$ARCH...${NC}"
     local ATTEMPT=1
@@ -537,6 +569,7 @@ create_docker_deploy_package() {
     ' "$ENV_SRC" > "$PACKAGE_ROOT/.env.example"
     cp "$COMPOSE_SRC" "$PACKAGE_ROOT/docker-compose.yml"
     cp "$RESTORE_SRC" "$PACKAGE_ROOT/restore"
+    cp -r "$DEPLOY_DIR/linux/xact-linux-$ARCH/mobile" "$PACKAGE_ROOT/mobile"
     chmod +x "$PACKAGE_ROOT/restore"
     mkdir -p \
         "$PACKAGE_ROOT/plugins/authentication" \
@@ -550,6 +583,7 @@ create_docker_deploy_package() {
         .env.example \
         docker-compose.yml \
         restore \
+        mobile \
         plugins \
         postgres-data
     DOCKER_DEPLOY_ARCHIVE="$ARCHIVE"
@@ -606,6 +640,7 @@ else
     echo "  - xact (server executable)"
     echo "  - restore (restore utility)"
     echo "  - web/ (user-configurable web assets)"
+    echo "  - mobile/xact-mobile.apk (self-hosted Android application)"
     echo "  - plugins/ (plugin directory)"
     echo "  - data/ (database and NATS store)"
     echo "  - certs/ (HTTPS certificates)"

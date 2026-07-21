@@ -437,6 +437,7 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 		// System
 		api.Get("/api/v1/system/nats-config", s.handleNATSConfigWithSchema())
 		api.Get("/api/v1/mobile/release", s.handleMobileReleaseWithSchema())
+		api.Get("/api/v1/mobile/apk", s.handleMobileAPKWithSchema())
 		api.With(s.requireUIPermission("mobile-app", "read")).
 			Get("/api/v1/mobile/config", s.handleMobileAppConfigWithSchema())
 		api.With(s.requireUIPermission("mobile-app", "write")).

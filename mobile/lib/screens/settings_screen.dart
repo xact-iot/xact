@@ -145,13 +145,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
       return;
     }
-    final apk = await widget.controller.api.downloadApk(release);
-    final result = await OpenFilex.open(
-      apk.path,
-      type: 'application/vnd.android.package-archive',
-    );
-    if (result.type != ResultType.done && mounted) {
-      showMessage(context, result.message);
+    try {
+      final apk = await widget.controller.api.downloadApk(release);
+      final result = await OpenFilex.open(
+        apk.path,
+        type: 'application/vnd.android.package-archive',
+      );
+      if (result.type != ResultType.done && mounted) {
+        showMessage(context, result.message);
+      }
+    } catch (error) {
+      if (mounted) showMessage(context, 'Update download failed: $error');
     }
   }
 

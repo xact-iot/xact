@@ -53,10 +53,21 @@ services:
       ENABLE_UNSAFE_SCHEDULER_TASKS: ${ENABLE_UNSAFE_SCHEDULER_TASKS:-no}
       NATS_BROWSER_ALLOW_COMMANDS: ${NATS_BROWSER_ALLOW_COMMANDS:-no}
       XACT_BOOTSTRAP_ADMIN_PASSWORD: ${XACT_BOOTSTRAP_ADMIN_PASSWORD:-}
+      MCP_ENABLED: ${MCP_ENABLED:-no}
+      MCP_ROUTE: ${MCP_ROUTE:-/api/v1/mcp}
+      MCP_WRITE_TOOLS_ENABLED: ${MCP_WRITE_TOOLS_ENABLED:-no}
+      MCP_TOOL_TIMEOUT_SECONDS: ${MCP_TOOL_TIMEOUT_SECONDS:-30}
+      MCP_MAX_PAYLOAD_BYTES: ${MCP_MAX_PAYLOAD_BYTES:-1048576}
+      MCP_DOCS_ROOT: ${MCP_DOCS_ROOT:-}
+      MCP_EXAMPLES_ROOT: ${MCP_EXAMPLES_ROOT:-}
+      MOBILE_APP_VERSION: ${MOBILE_APP_VERSION:-}
+      MOBILE_APK_PATH: ${MOBILE_APK_PATH:-/opt/xact/mobile/xact-mobile.apk}
+      MOBILE_RELEASE_NOTES: ${MOBILE_RELEASE_NOTES:-}
     volumes:
       - xact-nats:/var/lib/xact/nats-store
       - xact-logs:/var/log/xact
       - ${XACT_PLUGIN_DIR:-./plugins}:/opt/xact/plugins
+      - ./mobile:/opt/xact/mobile:ro
     expose:
       - "9222"
 

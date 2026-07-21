@@ -2,6 +2,7 @@
   "title": "XACT User Manual",
   "chapters": [
     { "id": "getting-started",   "file": "01-getting-started.md",   "title": "Getting Started" },
+    { "id": "xact-mobile-app",   "file": "01-xact-mobile-app.md",   "title": "XACT Mobile App" },
     { "id": "preparing-production", "file": "02-preparing-for-production.md", "title": "Preparing for Production" },
     { "id": "organisations",     "file": "02-organisations.md",     "title": "Organisations" },
     { "id": "users-permissions", "file": "03-users-permissions.md", "title": "Users & Permissions" },

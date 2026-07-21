@@ -93,6 +93,26 @@ describe('REST API wrappers', () => {
     });
   });
 
+  it('downloads the Android APK with authentication', async () => {
+    const apk = new Blob(['apk'], { type: 'application/vnd.android.package-archive' });
+    const fetchMock = stubFetch(mockResponse({}, { blob: apk }));
+    setAuthHeadersProvider(() => ({ Authorization: 'Bearer token' }));
+    const createObjectURL = vi.fn(() => 'blob:xact-mobile');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    await api.downloadMobileAPK();
+
+    expect(fetchMock).toHaveBeenLastCalledWith('/xact/api/v1/mobile/apk', {
+      headers: { Authorization: 'Bearer token' },
+    });
+    expect(click).toHaveBeenCalledOnce();
+    expect(createObjectURL).toHaveBeenCalledWith(apk);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:xact-mobile');
+    click.mockRestore();
+  });
+
   it('builds node and tag paths relative to the current organisation', async () => {
     localStorage.setItem('xact_auth_user', JSON.stringify({ tenant_id: 'default' }));
     const fetchMock = stubFetch(mockResponse({ name: 'node' }));

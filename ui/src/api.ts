@@ -74,6 +74,24 @@ export async function saveMobileAppConfig(config: MobileAppConfig): Promise<Mobi
   return response.json();
 }
 
+export async function downloadMobileAPK(): Promise<void> {
+  const response = await fetch(`${BASE_URL}/api/v1/mobile/apk`, { headers: getHeaders() });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || `Failed to download Android app: ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  const objectURL = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectURL;
+  link.download = 'xact-mobile.apk';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectURL);
+}
+
 // Auth headers provider
 let getAuthHeadersFn: (() => HeadersInit) | null = null;
 

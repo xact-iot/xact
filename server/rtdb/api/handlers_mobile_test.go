@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -53,5 +55,43 @@ func TestUpdateAndLoadMobileAppConfig(t *testing.T) {
 	server.handleMobileAppConfig(recorder, mobileRequest(http.MethodGet, "/api/v1/mobile/config", nil, "Operator"))
 	if recorder.Code != http.StatusOK || !bytes.Contains(recorder.Body.Bytes(), []byte(`"defaultDashboardName":"Overview"`)) {
 		t.Fatalf("GET status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestMobileReleaseUsesAuthenticatedLocalAPKRoute(t *testing.T) {
+	t.Setenv("MOBILE_APP_VERSION", "1.0.1")
+	t.Setenv("MOBILE_APK_URL", "")
+	t.Setenv("MOBILE_APK_PATH", "../mobile/build/app-debug.apk")
+	recorder := httptest.NewRecorder()
+
+	new(Server).handleMobileRelease(recorder, mobileRequest(http.MethodGet, "/api/v1/mobile/release", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var release mobileReleaseResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &release); err != nil {
+		t.Fatal(err)
+	}
+	if release.DownloadURL != "/api/v1/mobile/apk" {
+		t.Fatalf("download URL = %q", release.DownloadURL)
+	}
+}
+
+func TestMobileAPKDownload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "xact-mobile.apk")
+	if err := os.WriteFile(path, []byte("test-apk"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MOBILE_APK_PATH", path)
+	recorder := httptest.NewRecorder()
+
+	new(Server).handleMobileAPK(recorder, mobileRequest(http.MethodGet, "/api/v1/mobile/apk", nil))
+
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "test-apk" {
+		t.Fatalf("status = %d, body = %q", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "application/vnd.android.package-archive" {
+		t.Fatalf("content type = %q", got)
 	}
 }

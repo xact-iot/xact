@@ -77,7 +77,7 @@ export class AppHeader extends BaseComponent {
             </svg>
             ${this.dashboardMode !== 'view' ? `<span class="absolute top-0.5 right-0.5 w-2 h-2 rounded-full" style="background-color: var(--accent-color);"></span>` : ''}
           </button>
-          <div id="menu-dropdown" class="${this.menuOpen ? '' : 'hidden'} absolute right-0 top-full mt-1 w-48 rounded-lg border shadow-lg py-1"
+          <div id="menu-dropdown" class="${this.menuOpen ? '' : 'hidden'} absolute right-0 top-full mt-1 w-56 rounded-lg border shadow-lg py-1"
                style="background-color: var(--header-bg); border-color: var(--border-color);">
             ${this.renderDashboardMenuHTML()}
           </div>
@@ -315,13 +315,15 @@ export class AppHeader extends BaseComponent {
     );
   }
 
-  private renderDashboardMenuHTML(): string {
-    if (!this.isOnDashboard) {
-      return `<div class="px-4 py-2 text-xs opacity-40">No dashboard active</div>`;
-    }
+  private isAndroidClient(): boolean {
+    return /Android/i.test(navigator.userAgent);
+  }
 
+  private renderDashboardMenuHTML(): string {
     const items: string[] = [];
-    if (this.canInspectDashboard) {
+    if (!this.isOnDashboard) {
+      items.push(`<div class="px-4 py-2 text-xs opacity-40">No dashboard active</div>`);
+    } else if (this.canInspectDashboard) {
       items.push(`
         <button class="menu-action-item w-full text-left px-4 py-2 text-sm hover:opacity-80 transition-colors flex items-center gap-2"
                 data-action="toggle-inspect">
@@ -331,7 +333,7 @@ export class AppHeader extends BaseComponent {
         </button>
       `);
     }
-    if (this.canEditDashboard) {
+    if (this.isOnDashboard && this.canEditDashboard) {
       items.push(`
         <button class="menu-action-item w-full text-left px-4 py-2 text-sm hover:opacity-80 transition-colors flex items-center gap-2"
                 data-action="toggle-edit">
@@ -341,10 +343,24 @@ export class AppHeader extends BaseComponent {
         </button>
       `);
     }
+    if (this.isOnDashboard && !this.canInspectDashboard && !this.canEditDashboard) {
+      items.push(`<div class="px-4 py-2 text-xs opacity-40">View only</div>`);
+    }
 
-    return items.length
-      ? items.join('')
-      : `<div class="px-4 py-2 text-xs opacity-40">View only</div>`;
+    if (this.isAndroidClient()) {
+      items.push(`
+        <div class="menu-separator border-t my-1" style="border-color: var(--border-color);"></div>
+        <button class="menu-action-item w-full text-left px-4 py-2 text-sm hover:opacity-80 transition-colors flex items-center gap-2"
+                data-action="download-android-app">
+          <svg class="w-4 h-4 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v12m0 0l-4-4m4 4l4-4M5 19h14"/>
+          </svg>
+          Download Android App
+        </button>
+      `);
+    }
+
+    return items.join('');
   }
 }
 

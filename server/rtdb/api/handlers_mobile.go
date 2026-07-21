@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -24,13 +25,34 @@ func (s *Server) handleMobileReleaseWithSchema() openAPIHandler {
 	return handlerWithSchema(s.handleMobileRelease, nil, mobileReleaseResponse{}, "mobile")
 }
 
+func (s *Server) handleMobileAPKWithSchema() openAPIHandler {
+	return openAPIHandler{
+		Handler: s.handleMobileAPK,
+		Responses: map[string]any{
+			"200": map[string]any{
+				"description": "Android application package",
+				"content": map[string]any{
+					"application/vnd.android.package-archive": map[string]any{
+						"schema": map[string]any{"type": "string", "format": "binary"},
+					},
+				},
+			},
+		},
+		Tags: []string{"mobile"},
+	}
+}
+
 // handleMobileRelease returns the configured self-hosted Android release.
 // Authentication is applied by the protected route group. Deployments opt in
-// with MOBILE_APP_VERSION and MOBILE_APK_URL; an absent configuration is a 404
-// so older and non-mobile installations remain compatible.
+// with MOBILE_APP_VERSION and either MOBILE_APK_URL or MOBILE_APK_PATH; an
+// absent configuration is a 404 so older and non-mobile installations remain
+// compatible.
 func (s *Server) handleMobileRelease(w http.ResponseWriter, _ *http.Request) {
 	version := strings.TrimSpace(os.Getenv("MOBILE_APP_VERSION"))
 	downloadURL := strings.TrimSpace(os.Getenv("MOBILE_APK_URL"))
+	if downloadURL == "" && strings.TrimSpace(os.Getenv("MOBILE_APK_PATH")) != "" {
+		downloadURL = "/api/v1/mobile/apk"
+	}
 	if version == "" || downloadURL == "" {
 		http.Error(w, `{"error":"mobile release not configured"}`, http.StatusNotFound)
 		return
@@ -40,6 +62,35 @@ func (s *Server) handleMobileRelease(w http.ResponseWriter, _ *http.Request) {
 		DownloadURL: downloadURL,
 		Notes:       strings.TrimSpace(os.Getenv("MOBILE_RELEASE_NOTES")),
 	})
+}
+
+// handleMobileAPK serves a release file from the local deployment. Keeping the
+// route in the authenticated API group means it has the same access policy as
+// the release manifest.
+func (s *Server) handleMobileAPK(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimSpace(os.Getenv("MOBILE_APK_PATH"))
+	if path == "" {
+		http.Error(w, `{"error":"mobile APK not configured"}`, http.StatusNotFound)
+		return
+	}
+	file, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, `{"error":"mobile APK not found"}`, http.StatusNotFound)
+			return
+		}
+		http.Error(w, `{"error":"mobile APK unavailable"}`, http.StatusInternalServerError)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		http.Error(w, `{"error":"mobile APK unavailable"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+	w.Header().Set("Content-Disposition", `attachment; filename="xact-mobile.apk"`)
+	http.ServeContent(w, r, "xact-mobile.apk", info.ModTime(), file)
 }
 
 func (s *Server) handleMobileAppConfigWithSchema() openAPIHandler {

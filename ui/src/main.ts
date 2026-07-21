@@ -23,7 +23,7 @@ import './components/app-header';
 import './components/app-footer';
 import './components/app-content';
 import './components/preferences-dialog';
-import './components/app-dialog';
+import { showAlert } from './components/app-dialog';
 
 // Import dashboards (they auto-register)
 import './dashboards/dashboard-config-editor';
@@ -46,7 +46,7 @@ import { getMirrorStore } from './store/store';
 import { getUiStore } from './store/ui-store';
 
 // Import API wrapper
-import { ApiError, setAuthHeadersProvider, listDashboards, getDashboard, createDashboard, updateDashboard, deleteDashboard, fetchHealth, fetchNATSConfig } from './api';
+import { ApiError, setAuthHeadersProvider, listDashboards, getDashboard, createDashboard, updateDashboard, deleteDashboard, fetchHealth, fetchNATSConfig, downloadMobileAPK } from './api';
 import type { DashboardMeta } from './api';
 
 // Import permissions
@@ -670,6 +670,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       content?.toggleEditMode();
     } else if (action === 'toggle-inspect') {
       content?.toggleInspectMode();
+    } else if (action === 'download-android-app') {
+      void downloadMobileAPK().catch(error => showAlert(
+        error instanceof Error ? error.message : String(error),
+        { title: 'Android app download failed' },
+      ));
     }
   }) as EventListener);
 
