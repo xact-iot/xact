@@ -85,6 +85,19 @@ class XactApiClient {
     return uri.toString().replaceAll(RegExp(r'/+$'), '');
   }
 
+  static bool isValidServerUrl(String input) {
+    if (input.trim().isEmpty || RegExp(r'\s').hasMatch(input.trim())) {
+      return false;
+    }
+    try {
+      final uri = Uri.parse(normalizeServerUrl(input));
+      return (uri.scheme == 'http' || uri.scheme == 'https') &&
+          uri.host.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Uri uri(String path, [Map<String, dynamic>? query]) {
     final clean = path.startsWith('/') ? path : '/$path';
     final base = Uri.parse('$_serverUrl$clean');

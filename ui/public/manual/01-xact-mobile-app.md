@@ -54,7 +54,7 @@ The bottom navigation bar provides five areas:
 - **Events** — review recent events and filter them by severity. Tap an event associated with a device to open that device.
 - **Dashboards** — open dashboards permitted for the account. The administrator can choose the dashboard initially shown by the app.
 - **Reports** — view the available PDF report templates and tap a report to download and open it.
-- **Settings** — view the signed-in user and server, switch organisation when permitted, enable notifications, check for app updates, or sign out.
+- **Settings** — view the signed-in user, change the server, switch organisation when permitted, enable notifications, check for app updates, or sign out. Changing the server saves the new address and signs you out so you can authenticate with an account on that server.
 
 Live device values and notifications update while the app is connected. The app only displays data and actions allowed by the signed-in user's XACT permissions.
 

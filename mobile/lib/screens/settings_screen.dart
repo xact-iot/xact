@@ -4,6 +4,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../models/models.dart';
+import '../services/api_client.dart';
 import '../services/notification_service.dart';
 import '../services/session_controller.dart';
 import '../theme.dart';
@@ -89,6 +90,80 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     } finally {
       if (mounted) setState(() => _notificationBusy = false);
+    }
+  }
+
+  Future<void> _changeServer() async {
+    final formKey = GlobalKey<FormState>();
+    var server = widget.controller.session!.serverUrl;
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Change XACT server'),
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Changing servers signs you out. Sign in again with an '
+                'account on the new server.',
+              ),
+              const SizedBox(height: 18),
+              TextFormField(
+                initialValue: server,
+                autofocus: true,
+                keyboardType: TextInputType.url,
+                autocorrect: false,
+                textInputAction: TextInputAction.done,
+                onChanged: (value) => server = value,
+                decoration: const InputDecoration(
+                  labelText: 'XACT server',
+                  hintText: 'https://xact.example.com/xact',
+                  prefixIcon: Icon(Icons.dns_outlined),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Enter the server URL';
+                  }
+                  if (!XactApiClient.isValidServerUrl(value)) {
+                    return 'Enter a valid HTTP or HTTPS URL';
+                  }
+                  return null;
+                },
+                onFieldSubmitted: (_) {
+                  if (formKey.currentState!.validate()) {
+                    Navigator.pop(context, server);
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (formKey.currentState!.validate()) {
+                Navigator.pop(context, server);
+              }
+            },
+            child: const Text('Save and sign out'),
+          ),
+        ],
+      ),
+    );
+    if (selected == null || !mounted) return;
+    final normalized = XactApiClient.normalizeServerUrl(selected);
+    if (normalized == widget.controller.session?.serverUrl) return;
+    try {
+      await widget.controller.changeServer(normalized);
+    } catch (error) {
+      if (mounted) showMessage(context, 'Could not change server: $error');
     }
   }
 
@@ -310,11 +385,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 color: Colors.white.withValues(alpha: .06),
               ),
               ListTile(
+                onTap: _changeServer,
                 leading: const Icon(Icons.dns_outlined, color: xactBlue),
                 title: const Text('XACT Server'),
                 subtitle: Text(
                   '${_health?['appVersion'] ?? session.serverUrl}',
                 ),
+                trailing: const Icon(Icons.edit_outlined),
               ),
               Divider(
                 height: 1,

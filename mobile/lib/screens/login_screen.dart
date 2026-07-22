@@ -140,14 +140,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           if (value == null || value.trim().isEmpty) {
                             return 'Enter the server URL';
                           }
-                          try {
-                            final uri = Uri.parse(
-                              XactApiClient.normalizeServerUrl(value),
-                            );
-                            if (!uri.hasScheme || uri.host.isEmpty) {
-                              return 'Enter a valid server URL';
-                            }
-                          } catch (_) {
+                          if (!XactApiClient.isValidServerUrl(value)) {
                             return 'Enter a valid server URL';
                           }
                           return null;

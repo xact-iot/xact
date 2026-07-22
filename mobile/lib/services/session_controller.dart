@@ -101,8 +101,23 @@ class SessionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> logout() async {
+  Future<void> changeServer(String server) async {
+    final normalized = XactApiClient.normalizeServerUrl(server);
+    await _storage.write(key: _serverKey, value: normalized);
+    await (await SharedPreferences.getInstance()).setString(
+      _serverKey,
+      normalized,
+    );
     _session = null;
+    api.configure(serverUrl: normalized);
+    await _storage.delete(key: _sessionKey);
+    notifyListeners();
+  }
+
+  Future<void> logout() async {
+    final server = _session?.serverUrl ?? api.serverUrl;
+    _session = null;
+    api.configure(serverUrl: server);
     await _storage.delete(key: _sessionKey);
     notifyListeners();
   }
@@ -110,6 +125,10 @@ class SessionController extends ChangeNotifier {
   Future<void> _persist(AuthSession value) async {
     await _storage.write(key: _sessionKey, value: jsonEncode(value.toJson()));
     await _storage.write(key: _serverKey, value: value.serverUrl);
+    await (await SharedPreferences.getInstance()).setString(
+      _serverKey,
+      value.serverUrl,
+    );
   }
 
   @override
