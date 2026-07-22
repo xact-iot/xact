@@ -95,25 +95,28 @@ func TestTimerStop(t *testing.T) {
 	tw.Start()
 	defer tw.Stop()
 
-	var executed atomic.Bool
+	executed := make(chan struct{})
 	tw.AfterFunc(time.Millisecond*20, func() {
-		executed.Store(true)
+		close(executed)
 	})
 
-	time.Sleep(time.Millisecond * 30)
-	if !executed.Load() {
-		t.Error("Timer should have executed")
+	select {
+	case <-executed:
+	case <-time.After(time.Second):
+		t.Fatal("Timer should have executed")
 	}
 
-	executed.Store(false)
+	var stoppedTimerExecuted atomic.Bool
 	timer2 := tw.AfterFunc(time.Millisecond*50, func() {
-		executed.Store(true)
+		stoppedTimerExecuted.Store(true)
 	})
 
 	timer2.Stop()
 
-	time.Sleep(time.Millisecond * 60)
-	if executed.Load() {
+	// Wait well beyond the timer's scheduled slot so a callback from a broken
+	// Stop implementation has time to run, even on a loaded CI runner.
+	time.Sleep(time.Millisecond * 250)
+	if stoppedTimerExecuted.Load() {
 		t.Error("Stopped timer should not execute")
 	}
 }
