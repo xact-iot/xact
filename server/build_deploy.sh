@@ -158,6 +158,10 @@ fi
 echo -e "${BLUE}XACT Deployment Builder${NC}"
 echo "=========================="
 
+echo -e "${YELLOW}Running unit tests...${NC}"
+"$PROJECT_ROOT/run-unit-tests.sh"
+echo -e "${GREEN}All unit tests passed${NC}"
+
 finish() {
     echo -e "${YELLOW}Cleaning up intermediate files...${NC}"
     rm -rf "$DEPLOY_DIR/intermediate"

@@ -1,6 +1,7 @@
 import { BaseComponent } from './base-component';
 import { showAlert } from './app-dialog';
 import { fetchHealth, type HealthInfo } from '../api';
+import { getMirrorStore, type NatsConnectionState } from '../store/store';
 import packageInfo from '../../package.json';
 import typescriptInfo from 'typescript/package.json';
 
@@ -13,6 +14,9 @@ export class AppFooter extends BaseComponent {
   private connectionState: ConnectionState = 'checking';
   private healthCheckTimer: number | null = null;
   private appVersion: string = '';
+  private serverOnline: boolean | null = null;
+  private natsConnectionState: NatsConnectionState = 'unknown';
+  private unsubscribeNatsConnectionState: (() => void) | null = null;
 
   protected render(): void {
     this.className = 'flex items-center justify-center px-2 sm:px-6 text-xs border-t gap-1 sm:gap-2 whitespace-nowrap overflow-hidden transition-all duration-300';
@@ -32,6 +36,10 @@ export class AppFooter extends BaseComponent {
 
   protected attachEventListeners(): void {
     this.querySelector('#about-link')?.addEventListener('click', this.handleAboutClick);
+    this.unsubscribeNatsConnectionState = getMirrorStore().subscribeNatsConnectionState((state) => {
+      this.natsConnectionState = state;
+      this.updateCombinedConnectionStatus();
+    });
     void this.checkHealth();
     this.healthCheckTimer = window.setInterval(
       () => void this.checkHealth(),
@@ -45,6 +53,8 @@ export class AppFooter extends BaseComponent {
       window.clearInterval(this.healthCheckTimer);
       this.healthCheckTimer = null;
     }
+    this.unsubscribeNatsConnectionState?.();
+    this.unsubscribeNatsConnectionState = null;
   }
 
   private handleAboutClick = (e: Event): void => {
@@ -53,7 +63,7 @@ export class AppFooter extends BaseComponent {
   };
 
   setConnectionStatus(status: string, isOnline: boolean): void {
-    this.statusText = isOnline ? status : 'Server disconnected';
+    this.statusText = status;
     this.connectionState = isOnline ? 'online' : 'offline';
     this.applyConnectionAppearance();
     const dot = this.querySelector('#status-dot');
@@ -62,6 +72,21 @@ export class AppFooter extends BaseComponent {
     if (dot) dot.className = this.getStatusDotClass();
     if (text) text.textContent = this.statusText;
     if (statusGroup) statusGroup.className = this.getConnectionStatusClass();
+  }
+
+  private updateCombinedConnectionStatus(): void {
+    if (this.serverOnline === false) {
+      this.setConnectionStatus('Server disconnected', false);
+      return;
+    }
+    if (this.natsConnectionState === 'disconnected') {
+      this.setConnectionStatus('Realtime disconnected', false);
+      return;
+    }
+    if (this.serverOnline === null) {
+      return;
+    }
+    this.setConnectionStatus('Connected', true);
   }
 
   private setAppVersion(version: string | undefined): void {
@@ -123,9 +148,11 @@ export class AppFooter extends BaseComponent {
       const status = health.status?.toLowerCase();
       const isOnline = status === 'healthy' || status === 'ok';
       this.setAppVersion(health.appVersion);
-      this.setConnectionStatus(isOnline ? 'Connected' : 'Disconnected', isOnline);
+      this.serverOnline = isOnline;
+      this.updateCombinedConnectionStatus();
     } catch {
-      this.setConnectionStatus('Disconnected', false);
+      this.serverOnline = false;
+      this.updateCombinedConnectionStatus();
     }
   }
 

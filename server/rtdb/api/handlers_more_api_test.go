@@ -225,14 +225,35 @@ func TestNATSBrowserConfigAndTimezone(t *testing.T) {
 	}
 }
 
-func TestNATSConfigDirectModeOverridesProxyPath(t *testing.T) {
-	t.Setenv("NATS_WS_PORT", "9222")
+func TestNATSConfigDirectModeUsesExplicitProxyPath(t *testing.T) {
 	s := &Server{config: ServerConfig{StaticServeMode: "server"}}
 	s.SetNATSBrowserConfig(NATSBrowserConfig{
 		Username:   "u",
 		Password:   "p",
 		NATSWSPath: "/xact/ws",
 	})
+	req := httptest.NewRequest(http.MethodGet, "/nats", nil)
+	rr := httptest.NewRecorder()
+	s.handleNATSConfig(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	var cfg NATSBrowserConfig
+	if err := json.Unmarshal(rr.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	if cfg.NATSWSURL != "" {
+		t.Fatalf("explicit path was overridden by URL %q", cfg.NATSWSURL)
+	}
+	if cfg.NATSWSPath != "/xact/ws" {
+		t.Fatalf("NATSWSPath = %q, want /xact/ws", cfg.NATSWSPath)
+	}
+}
+
+func TestNATSConfigDirectModeInfersURLWithoutExplicitConfig(t *testing.T) {
+	t.Setenv("NATS_WS_PORT", "9222")
+	s := &Server{config: ServerConfig{StaticServeMode: "server"}}
+	s.SetNATSBrowserConfig(NATSBrowserConfig{Username: "u", Password: "p"})
 	req := httptest.NewRequest(http.MethodGet, "/nats", nil)
 	req.Host = "windows-vm:8080"
 	rr := httptest.NewRecorder()

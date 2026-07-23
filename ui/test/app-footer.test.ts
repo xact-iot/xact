@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import '../src/components/app-footer';
+import { getMirrorStore } from '../src/store/store';
 
 describe('app-footer health status', () => {
   afterEach(() => {
@@ -43,6 +44,22 @@ describe('app-footer health status', () => {
     expect(footer.style.boxShadow).toContain('rgba(249, 115, 22, 0.45)');
     expect(footer.querySelector('#status-dot')?.className).toContain('bg-red-700');
     expect(footer.querySelector('#status-dot')?.className).toContain('animate-pulse');
+  });
+
+  it('shows a realtime error when HTTP health succeeds but NATS fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ status: 'healthy' }),
+    } as Response)));
+
+    const footer = document.createElement('app-footer');
+    document.body.appendChild(footer);
+    await getMirrorStore().storeDisconnectNats();
+
+    await vi.waitFor(() => {
+      expect(footer.querySelector('#status-text')?.textContent).toBe('Realtime disconnected');
+    });
+    expect(footer.dataset.connectionState).toBe('offline');
   });
 
   it('opens an about modal with app, Go, and TypeScript versions', async () => {

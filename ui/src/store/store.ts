@@ -182,6 +182,8 @@ class Node {
 
 // Callback type for tree structure changes
 type TreeChangeCallback = (path: string, eventData: any) => void;
+export type NatsConnectionState = 'unknown' | 'connecting' | 'connected' | 'disconnected';
+type NatsConnectionStateCallback = (state: NatsConnectionState) => void;
 
 export class MirrorStore {
     private nc: nats.NatsConnection | null = null;
@@ -196,6 +198,8 @@ export class MirrorStore {
     private treeSubscriptions: Map<string, Set<TreeChangeCallback>> = new Map();
     private treeSubscriptionsActive: boolean = false;
     private orgName: string = '';
+    private natsConnectionState: NatsConnectionState = 'unknown';
+    private natsConnectionStateSubscribers: Set<NatsConnectionStateCallback> = new Set();
 
 
     constructor() {
@@ -204,6 +208,7 @@ export class MirrorStore {
 
     // Connect to NAT and get the subtree below a root node.
     public async storeConnectNats(url: string, kvBucket: string, username?: string, password?: string): Promise<void> {
+        this.setNatsConnectionState('connecting');
         try {
             // Determine the current org from the JWT. Fall back to 'default' if
             // auth is not yet available (should not normally happen).
@@ -214,6 +219,8 @@ export class MirrorStore {
                 opts.pass = password;
             }
             this.nc = await nats.wsconnect(opts);
+            this.setNatsConnectionState('connected');
+            this.monitorNatsConnection(this.nc);
             const kvm = new Kvm(this.nc);
             this.kv = await kvm.create(kvBucket);
             for (const path of this.desiredTagValuePaths) {
@@ -221,8 +228,53 @@ export class MirrorStore {
                 this.hydrateTagValuePath(path);
             }
         } catch (err) {
+            this.setNatsConnectionState('disconnected');
             console.error("Error connecting:", err);
         }
+    }
+
+    public subscribeNatsConnectionState(callback: NatsConnectionStateCallback): () => void {
+        this.natsConnectionStateSubscribers.add(callback);
+        callback(this.natsConnectionState);
+        return () => this.natsConnectionStateSubscribers.delete(callback);
+    }
+
+    private setNatsConnectionState(state: NatsConnectionState): void {
+        if (this.natsConnectionState === state) return;
+        this.natsConnectionState = state;
+        for (const callback of this.natsConnectionStateSubscribers) {
+            callback(state);
+        }
+    }
+
+    private monitorNatsConnection(connection: nats.NatsConnection): void {
+        (async () => {
+            for await (const status of connection.status()) {
+                if (this.nc !== connection) return;
+                if (status.type === 'reconnect') {
+                    this.setNatsConnectionState('connected');
+                } else if (
+                    status.type === 'disconnect'
+                    || status.type === 'reconnecting'
+                    || status.type === 'staleConnection'
+                    || status.type === 'forceReconnect'
+                    || status.type === 'close'
+                ) {
+                    this.setNatsConnectionState('disconnected');
+                }
+            }
+        })().catch((err) => {
+            if (this.nc === connection) {
+                this.setNatsConnectionState('disconnected');
+                console.error('Error monitoring NATS connection:', err);
+            }
+        });
+
+        connection.closed().then(() => {
+            if (this.nc === connection) {
+                this.setNatsConnectionState('disconnected');
+            }
+        });
     }
 
     public async storeDisconnectNats(): Promise<void> {
@@ -246,6 +298,7 @@ export class MirrorStore {
         }
         this.nc = null;
         this.kv = null;
+        this.setNatsConnectionState('disconnected');
     }
 
     public async request(subject: string, payload: unknown, timeoutMs: number): Promise<any> {

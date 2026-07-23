@@ -109,11 +109,13 @@ function createSubscription() {
 
 function createNatsConnection() {
   const subscriptions: Record<string, ReturnType<typeof createSubscription>> = {};
+  const statuses = createAsyncIterator<any>();
   const nc = {
     subscriptions,
+    statuses,
     close: vi.fn(async () => undefined),
-    closed: vi.fn(() => Promise.resolve(null)),
-    status: vi.fn(() => createAsyncIterator<any>()),
+    closed: vi.fn(() => new Promise<null>(() => undefined)),
+    status: vi.fn(() => statuses),
     request: vi.fn(),
     subscribe: vi.fn((subject: string) => {
       const sub = createSubscription();
@@ -205,6 +207,26 @@ describe('MirrorStore connection and NATS helpers', () => {
 
     expect(store.getOrg()).toBe('default');
     expect(console.error).toHaveBeenCalledWith('Error connecting:', error);
+  });
+
+  it('reports initial failures and later NATS disconnect and reconnect events', async () => {
+    const states: string[] = [];
+    const unsubscribe = store.subscribeNatsConnectionState(state => states.push(state));
+
+    natsMock.wsconnect.mockRejectedValueOnce(new Error('no socket'));
+    await store.storeConnectNats('ws://broken', 'mirror');
+    expect(states).toEqual(['unknown', 'connecting', 'disconnected']);
+
+    await store.storeConnectNats('ws://nats.example', 'mirror');
+    nc.statuses.push({ type: 'disconnect', server: 'nats.example' });
+    nc.statuses.push({ type: 'reconnect', server: 'nats.example' });
+    await flushAsyncWork();
+
+    expect(states).toEqual([
+      'unknown', 'connecting', 'disconnected',
+      'connecting', 'connected', 'disconnected', 'connected',
+    ]);
+    unsubscribe();
   });
 
   it('requests JSON payloads through NATS and handles empty responses', async () => {
