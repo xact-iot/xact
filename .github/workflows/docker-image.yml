@@ -39,6 +39,10 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm ci
+
       - name: Set up Java
         uses: actions/setup-java@v5
         with:

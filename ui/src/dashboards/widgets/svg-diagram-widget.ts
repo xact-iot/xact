@@ -53,6 +53,7 @@ export interface DiagramElement {
   y2?: number;
   points?: DiagramPoint[];
   text?: string;
+  autoSize?: boolean;
   icon?: string;
   fill: string;
   stroke: string;
@@ -1240,8 +1241,7 @@ class SvgDiagramWidget extends BaseComponent {
       const el = this.config.elements.find(item => item.id === this.dragState?.id);
       if (!el) return;
       if (this.dragState.mode === 'resize') {
-        el.w = snapInt(Math.max(8, this.dragState.original.w + dx));
-        el.h = snapInt(Math.max(8, this.dragState.original.h + dy));
+        resizeDiagramElement(el, this.dragState.original, dx, dy);
       } else if (this.dragState.mode === 'line-start') {
         el.x = snapInt(this.dragState.original.x + dx);
         el.y = snapInt(this.dragState.original.y + dy);
@@ -1485,6 +1485,9 @@ class SvgDiagramWidget extends BaseComponent {
   private updateSelectedGeometry(prop: string, value: number): void {
     const item = this.selectedKind === 'element' ? this.selectedElement() : this.selectedWidget();
     if (!item || !Number.isFinite(value)) return;
+    if (this.selectedKind === 'element' && (item as DiagramElement).type === 'text' && ['w', 'h'].includes(prop)) {
+      (item as DiagramElement).autoSize = false;
+    }
     if (this.selectedKind === 'element' && (item as DiagramElement).type === 'shape' && ['x', 'y', 'w', 'h'].includes(prop)) {
       this.updateShapeGeometry(item as DiagramElement, prop, snapInt(value));
       this.renderEditor();
@@ -1913,6 +1916,7 @@ function normalizeElement(input: Partial<DiagramElement> & Record<string, any>):
     y2: input.y2 === undefined ? undefined : intNumber(input.y2, intNumber(input.y, 40)),
     points: type === 'shape' ? normalizePoints(input.points, intNumber(input.x, 40), intNumber(input.y, 40)) : undefined,
     text: String(input.text ?? 'Text'),
+    autoSize: type === 'text' ? (input.autoSize === undefined ? true : Boolean(input.autoSize)) : undefined,
     icon: String(input.icon || 'mdi:factory'),
     fill: String(input.fill || (type === 'line' || type === 'shape' ? 'transparent' : '#38bdf8')),
     stroke: String(input.stroke || '#94a3b8'),
@@ -2048,6 +2052,14 @@ function textElementBounds(el: DiagramElement): { x: number; y: number; w: numbe
   const text = el.text || 'Text';
   const fontSize = positiveNumber(el.fontSize, 28);
   const strokePad = Math.max(2, positiveNumber(el.strokeWidth, 0));
+  if (el.autoSize === false) {
+    return {
+      x: el.x - strokePad,
+      y: el.y - strokePad,
+      w: Math.max(1, el.w),
+      h: Math.max(1, el.h),
+    };
+  }
   const width = Math.max(fontSize * 0.65, text.length * fontSize * 0.62);
   return {
     x: el.x - strokePad,
@@ -2089,6 +2101,13 @@ function moveElementFromOriginal(el: DiagramElement, original: DiagramElement, d
     el.points = shapePoints(original).map(pt => ({ x: snapInt(pt.x + dx), y: snapInt(pt.y + dy) }));
     updateShapeBounds(el);
   }
+}
+
+export function resizeDiagramElement(el: DiagramElement, original: DiagramElement, dx: number, dy: number): void {
+  const originalBounds = elementBounds(original);
+  if (el.type === 'text') el.autoSize = false;
+  el.w = snapInt(Math.max(8, originalBounds.w + dx));
+  el.h = snapInt(Math.max(8, originalBounds.h + dy));
 }
 
 function cloneElementWithOffset(el: DiagramElement, dx: number, dy: number): DiagramElement {

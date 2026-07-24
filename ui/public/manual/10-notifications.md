@@ -216,6 +216,12 @@ Each user controls which channels they receive notifications on:
 
 Users can set these preferences in their **Profile** (accessible from the header user menu). Administrators can also set preferences via the **Users** widget.
 
+### Finding Your Telegram ID
+
+1. In Telegram, search for an account-information bot such as **@userinfobot** or **@RawDataBot**.
+2. Open the bot and tap **Start**.
+3. Find your numeric Telegram ID in the account details returned by the bot, then enter it in the **Telegram ID** field in your XACT profile.
+
 A user will only receive notifications through channels they have enabled. If a user has email disabled, they will not receive email notifications even if they match a profile's role criteria.
 
 ## Permissions

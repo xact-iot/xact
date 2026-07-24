@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { applyDiagramStyleTarget, matchesRule, normalizeSvgDiagramConfig, parseSvgTemplate, resolveDiagramBinding } from '../src/dashboards/widgets/svg-diagram-widget';
+import { applyDiagramStyleTarget, matchesRule, normalizeSvgDiagramConfig, parseSvgTemplate, resizeDiagramElement, resolveDiagramBinding } from '../src/dashboards/widgets/svg-diagram-widget';
 
 const TEST_OVERLAY_WIDGET = 'sdw-test-overlay-widget';
 const TEST_SCHEMA_WIDGET = 'sdw-schema-overlay-widget';
@@ -186,6 +186,28 @@ describe('svg diagram widget helpers', () => {
     expect(markup).toContain('y="98"');
     expect(markup).toContain('width="39"');
     expect(markup).not.toContain('width="240"');
+  });
+
+  it('moves the text selection corner when its resize handle is dragged', () => {
+    const widget = document.createElement('svg-diagram-widget') as any;
+    widget.config = normalizeSvgDiagramConfig({
+      width: 1200,
+      height: 700,
+      elements: [{ id: 'label', type: 'text', x: 100, y: 100, w: 120, h: 80, text: 'Text', fontSize: 28 }],
+      widgets: [],
+    });
+    widget.selectedKind = 'element';
+    widget.selectedId = 'label';
+    widget.selectedIds = new Set(['label']);
+
+    const resized = widget.config.elements[0];
+    resizeDiagramElement(resized, structuredClone(resized), 50, 30);
+
+    expect(resized.autoSize).toBe(false);
+    expect(resized.w).toBe(124);
+    expect(resized.h).toBe(68);
+    expect(widget.renderElement(resized, true)).toContain('width="124"');
+    expect(widget.renderElement(resized, true)).toContain('height="68"');
   });
 
   it('renders the editor stage without a fixed horizontal minimum', () => {
