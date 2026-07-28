@@ -11,6 +11,7 @@ import { BaseComponent } from '../../components/base-component';
 import { registerWidgetType } from './widget-registry';
 import { registerPermissions } from '../../permissions/registry';
 import { can } from '../../permissions/permissions';
+import { getUiStore } from '../../store/ui-store';
 import { getTreeBrowserDialog } from '../../components/tree-browser-dialog';
 import {
   listScheduledTasks, createScheduledTask, updateScheduledTask,
@@ -75,6 +76,11 @@ export function describeCron(expr: string): string {
   }
 }
 
+export function serverTimezoneLabel(timezone: string): string {
+  const value = timezone.trim();
+  return value ? `Server timezone: ${value}` : 'Server timezone unavailable';
+}
+
 const TASK_TYPE_LABELS: Record<string, string> = {
   report: '📄 Report',
   backup: '💾 Backup',
@@ -82,6 +88,8 @@ const TASK_TYPE_LABELS: Record<string, string> = {
   yaegi:  '⚙ Script',
   command: '▣ Command',
 };
+
+const LIVE_REFRESH_INTERVAL_MS = 2000;
 
 // ── Widget ───────────────────────────────────────────────────────────────────
 
@@ -111,6 +119,8 @@ export class SchedulerWidget extends BaseComponent {
     history: {}, runningId: null, overlay: null, templates: [], profiles: [],
   };
   private _handlers: Array<[EventTarget, string, EventListener]> = [];
+  private _liveRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  private _liveRefreshInFlight = false;
   private permitted = false;
   private canManage = false;
 
@@ -133,6 +143,8 @@ export class SchedulerWidget extends BaseComponent {
         .sw-status { display: inline-flex; align-items: center; gap: 4px; }
         .sw-status-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
         .sw-status-message { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.62rem; color: color-mix(in srgb, var(--content-text) 58%, transparent); }
+        .sw-schedule { display: inline-flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
+        .sw-timezone { font-size: 0.6rem; color: color-mix(in srgb, var(--content-text) 52%, transparent); white-space: nowrap; }
         .sw-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
         .sw-dot-ok { background: var(--status-good-color); }
         .sw-dot-error { background: var(--status-bad-color); }
@@ -212,14 +224,15 @@ export class SchedulerWidget extends BaseComponent {
     const isExpanded = this.state.expandedId === t.id;
     const history = this.state.history[t.id] || [];
     const statusDot = this.statusDot(t.lastRunStatus);
-    const isRunning = this.state.runningId === t.id;
+    const isRunning = this.state.runningId === t.id || t.lastRunStatus === 'running';
     const disabledLabel = !t.enabled ? ' <span style="opacity:0.4;font-size:0.6rem">(disabled)</span>' : '';
+    const timezoneLabel = serverTimezoneLabel(getUiStore().get('serverTimezone'));
 
     return `
       <tr data-id="${t.id}">
         <td><strong>${_esc(t.name)}</strong>${disabledLabel}</td>
         <td>${TASK_TYPE_LABELS[t.taskType] ?? t.taskType}</td>
-        <td>${describeCron(t.schedule)}</td>
+        <td><span class="sw-schedule">${describeCron(t.schedule)} <span class="sw-timezone">${_esc(timezoneLabel)}</span></span></td>
         <td>
           <span class="sw-status-cell">
             <span class="sw-status">
@@ -245,7 +258,7 @@ export class SchedulerWidget extends BaseComponent {
           : history.map(e => `
             <div class="sw-history-entry">
               <span>${new Date(e.firedAt).toLocaleString()}</span>
-              <span class="sw-status"><span class="sw-dot ${e.status === 'ok' ? 'sw-dot-ok' : 'sw-dot-error'}"></span>${e.status}</span>
+              <span class="sw-status"><span class="sw-dot ${this.statusDot(e.status)}"></span>${e.status}</span>
               <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:${e.outputPath ? 'monospace' : 'inherit'}" title="${_esc(e.message || e.outputPath)}">${_esc(e.message || e.outputPath || '-')}</span>
             </div>`).join('')}
       </div></td></tr>` : ''}
@@ -264,6 +277,7 @@ export class SchedulerWidget extends BaseComponent {
     const t = ov.task;
     const p = ov.preset;
     const cronExpr = presetToCron(p);
+    const timezoneLabel = serverTimezoneLabel(getUiStore().get('serverTimezone'));
     const disabled = this.canManage ? '' : 'disabled';
 
     const freqOpts: Frequency[] = ['hourly', 'daily', 'weekly', 'monthly'];
@@ -421,7 +435,7 @@ export class SchedulerWidget extends BaseComponent {
                 <select class="sw-select" id="sw-minute" ${disabled}>${mins}</select>
               </div>
             </div>`}
-            <div class="sw-cron-preview">Cron: <code>${_esc(cronExpr)}</code> - ${describeCron(cronExpr)}</div>
+            <div class="sw-cron-preview">Cron: <code>${_esc(cronExpr)}</code> - ${describeCron(cronExpr)} · ${_esc(timezoneLabel)}</div>
 
             <div class="sw-section-label">Output</div>
             <div class="sw-field">
@@ -470,6 +484,7 @@ export class SchedulerWidget extends BaseComponent {
   }
 
   disconnectedCallback(): void {
+    this.stopLiveRefresh();
     this.detachEventListeners();
   }
 
@@ -483,6 +498,7 @@ export class SchedulerWidget extends BaseComponent {
       return;
     }
     await this.load();
+    this.startLiveRefresh();
   }
 
   private async load(): Promise<void> {
@@ -502,6 +518,48 @@ export class SchedulerWidget extends BaseComponent {
     }
     this.state.loading = false;
     this.rerender();
+  }
+
+  private startLiveRefresh(): void {
+    if (this._liveRefreshTimer !== null || !this.permitted) return;
+    this._liveRefreshTimer = setInterval(() => {
+      void this.refreshLiveState();
+    }, LIVE_REFRESH_INTERVAL_MS);
+  }
+
+  private stopLiveRefresh(): void {
+    if (this._liveRefreshTimer !== null) {
+      clearInterval(this._liveRefreshTimer);
+      this._liveRefreshTimer = null;
+    }
+  }
+
+  private async refreshLiveState(): Promise<void> {
+    if (this._liveRefreshInFlight || !this.isConnected || document.hidden) return;
+    this._liveRefreshInFlight = true;
+    const expandedId = this.state.expandedId;
+    try {
+      const [tasks, history] = await Promise.all([
+        listScheduledTasks(),
+        expandedId ? getScheduleRunLog(expandedId) : Promise.resolve(null),
+      ]);
+      const tasksChanged = JSON.stringify(tasks) !== JSON.stringify(this.state.tasks);
+      const historyChanged = expandedId !== null
+        && JSON.stringify(history) !== JSON.stringify(this.state.history[expandedId] || []);
+
+      if (tasksChanged) this.state.tasks = tasks;
+      if (expandedId !== null && history !== null) this.state.history[expandedId] = history;
+
+      // An editor may have opened while the requests were in flight. Keep its
+      // DOM intact so live refresh cannot discard unsaved form input.
+      if ((tasksChanged || historyChanged) && !this.state.overlay && this.isConnected) {
+        this.rerender();
+      }
+    } catch {
+      // A transient refresh failure should leave the last good state visible.
+    } finally {
+      this._liveRefreshInFlight = false;
+    }
   }
 
   // ── Event handling ─────────────────────────────────────────────────────────
@@ -578,8 +636,9 @@ export class SchedulerWidget extends BaseComponent {
     const p = this.state.overlay?.preset;
     if (!p) return;
     const expr = presetToCron(p);
+    const timezoneLabel = serverTimezoneLabel(getUiStore().get('serverTimezone'));
     const preview = this.querySelector('.sw-cron-preview');
-    if (preview) preview.innerHTML = `Cron: <code>${_esc(expr)}</code> - ${describeCron(expr)}`;
+    if (preview) preview.innerHTML = `Cron: <code>${_esc(expr)}</code> - ${describeCron(expr)} · ${_esc(timezoneLabel)}`;
   }
 
   private openCommandDevicePicker(): void {

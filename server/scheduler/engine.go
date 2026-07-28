@@ -87,6 +87,11 @@ func (e *Engine) LoadForOrg(ctx context.Context, org string) error {
 			log.Printf("scheduler: skipping task %q (%s): %v", t.Name, t.ID, err)
 		}
 	}
+	// LoadForOrg is the startup path used by the server. Registering entries is
+	// not enough: cron does not evaluate or fire them until its runner starts.
+	// Start is safe to call more than once, which also keeps this method usable
+	// when additional organisations are loaded later.
+	e.cr.Start()
 	return nil
 }
 

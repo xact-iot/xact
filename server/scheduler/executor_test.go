@@ -163,6 +163,7 @@ func TestEngineLifecycleWithSQLiteTasks(t *testing.T) {
 	if err := e.LoadForOrg(ctx, "default"); err != nil {
 		t.Fatalf("LoadForOrg: %v", err)
 	}
+	defer e.Stop()
 	if len(e.jobs) != 0 {
 		t.Fatalf("disabled task registered jobs = %#v", e.jobs)
 	}
@@ -183,6 +184,14 @@ func TestEngineLifecycleWithSQLiteTasks(t *testing.T) {
 	}
 	if len(e.jobs) != 1 {
 		t.Fatalf("registered jobs = %#v", e.jobs)
+	}
+	entryID := e.jobs[task.ID]
+	deadline := time.Now().Add(time.Second)
+	for e.cr.Entry(entryID).Next.IsZero() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if e.cr.Entry(entryID).Next.IsZero() {
+		t.Fatal("LoadForOrg registered the task but did not start the cron runner")
 	}
 	e.Remove(task.ID)
 	if len(e.jobs) != 0 {
@@ -246,6 +255,7 @@ func TestLoadForOrgMarksInterruptedRuns(t *testing.T) {
 	if err := e.LoadForOrg(ctx, "default"); err != nil {
 		t.Fatalf("LoadForOrg: %v", err)
 	}
+	defer e.Stop()
 
 	got, err := dbi.GetScheduledTask(ctx, "default", task.ID)
 	if err != nil {
