@@ -124,7 +124,12 @@ func TestSubscribeIngestRecordsSuccessAndFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SubscribeIngest: %v", err)
 	}
-	defer sub.Unsubscribe()
+	stopped := false
+	defer func() {
+		if !stopped {
+			_ = sub.Unsubscribe()
+		}
+	}()
 	if err := server.nc.Flush(); err != nil {
 		t.Fatalf("flush subscribe: %v", err)
 	}
@@ -152,6 +157,14 @@ func TestSubscribeIngestRecordsSuccessAndFailure(t *testing.T) {
 			t.Fatal("timeout waiting for handler")
 		}
 	}
+	// The handler signals before it returns, while RecordFinish runs after the
+	// return. On slower or emulated architectures the test goroutine can wake
+	// and read the metrics in that gap. Stopping the subscription waits for all
+	// active workers, providing a deterministic completion barrier.
+	if err := sub.Unsubscribe(); err != nil {
+		t.Fatalf("stop ingest subscription: %v", err)
+	}
+	stopped = true
 
 	snap := SharedIngestMetrics().Snapshot()
 	if snap.TotalStarted != 2 {
