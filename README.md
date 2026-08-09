@@ -5,7 +5,7 @@
 
 ![XACT Features](screenshots/xact-features.png)
 
-XACT is an industrial IoT platform designed for real-time monitoring, data acquisition, and process automation. XACT handles everything from hobby projects to lab deployments to installations with hundreds or even thousands of devices. Its self-hosted Android mobile app gives operators secure access to devices, events, dashboards, reports, and push notifications away from the web console.
+XACT is an industrial IoT platform designed for real-time monitoring, data acquisition, and process automation. XACT handles everything from hobby projects to lab deployments to installations with hundreds or even thousands of devices. Its self-hosted Android mobile app gives operators secure access to devices, events, dashboards, reports, and push notifications away from the web dashboards.
 
 > **Note:**  While XACT has many features, installation is as easy as unzipping the release file and executing the run script. Thereafter simply use the sub-set of features applicable to your project.
 
@@ -48,7 +48,7 @@ XACT is an industrial IoT platform designed for real-time monitoring, data acqui
 - [7. Deployment Options](#7-deployment-options)
   - [7.1. Small - Evaluation, Lab, Demo](#71-small---evaluation-lab-demo)
   - [7.2. Medium - Production Workloads](#72-medium---production-workloads)
-  - [7.3. Large - Enterprise Scale (coming soon)](#73-large---enterprise-scale-coming-soon)
+  - [7.3. Large - Redundant Server Cluster (coming soon)](#73-large---redundant-server-cluster-coming-soon))
 - [8. Roadmap](#8-roadmap)
 - [9. Learn More](#9-learn-more)
 
@@ -57,7 +57,7 @@ XACT is an industrial IoT platform designed for real-time monitoring, data acqui
 ## 1. Preview
 
 - **Screen shots:** [View screenshots](screenshots/README.md)
-- **Demo Website:** [XACT demo](https://xact.dedyn.io)
+- **Demo Website:** [XACT demo](https://xact.twilightparadox.com)
 
 
 ## 2. Installation
@@ -269,10 +269,8 @@ Interactive control widgets enable operator actions directly from dashboards. Co
 - Scalable storage with superior query performance
 - Docker Compose deployment with Caddy and TimescaleDB is available in `deploy/docker/`
 
-### 7.3. Large - Enterprise Scale (coming soon)
+### 7.3. Large - Redundant server cluster (coming soon)
 - Clustered servers for high availability
-- Horizontal scaling architecture
-- Multi-node container orchestration
 
 ---
 
