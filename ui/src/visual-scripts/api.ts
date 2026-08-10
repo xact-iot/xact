@@ -1,0 +1,18 @@
+import { apiRequest } from '../api';
+import type { GraphDocument, NodeDefinition, RuntimeStatus, ValidationResult, VisualScript, VisualScriptRevision, VisualScriptRun } from './types';
+
+const root = '/api/v1/visual-scripts';
+export const listScripts = () => apiRequest<VisualScript[]>(`${root}/`);
+export const createScript = (name: string, description = '') => apiRequest<VisualScript>(`${root}/`, { method: 'POST', body: JSON.stringify({ name, description }) });
+export const getScript = (id: string) => apiRequest<VisualScript>(`${root}/${encodeURIComponent(id)}`);
+export const updateScript = (id: string, data: Partial<Pick<VisualScript, 'name'|'description'>>) => apiRequest<VisualScript>(`${root}/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) });
+export const deleteScript = (id: string) => apiRequest<void>(`${root}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export const getRevision = (id: string, revision: number) => apiRequest<VisualScriptRevision>(`${root}/${encodeURIComponent(id)}/revisions/${revision}`);
+export const saveRevision = (id: string, baseRevision: number, graph: GraphDocument) => apiRequest<VisualScriptRevision>(`${root}/${encodeURIComponent(id)}/revisions`, { method: 'POST', body: JSON.stringify({ baseRevision, graph }) });
+export const validateGraph = (id: string, graph: GraphDocument) => apiRequest<ValidationResult>(`${root}/${encodeURIComponent(id)}/validate`, { method: 'POST', body: JSON.stringify({ graph }) });
+export const deployRevision = (id: string, revision: number) => apiRequest<RuntimeStatus>(`${root}/${encodeURIComponent(id)}/deploy`, { method: 'POST', body: JSON.stringify({ revision }) });
+export const lifecycle = (id: string, action: 'start'|'pause'|'resume'|'stop'|'undeploy') => apiRequest<RuntimeStatus>(`${root}/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
+export const runManual = (id: string, value: any, fields: Record<string, any> = {}) => apiRequest<VisualScriptRun>(`${root}/${encodeURIComponent(id)}/run`, { method: 'POST', body: JSON.stringify({ value, fields }) });
+export const getStatus = (id: string) => apiRequest<RuntimeStatus>(`${root}/${encodeURIComponent(id)}/status`);
+export const getRuns = (id: string) => apiRequest<VisualScriptRun[]>(`${root}/${encodeURIComponent(id)}/runs`);
+export const getCatalog = () => apiRequest<NodeDefinition[]>('/api/v1/visual-script-nodes/catalog');

@@ -96,6 +96,7 @@ type Server struct {
 	notificationHandlers *api.NotificationHandlers
 	tagCalcHandlers      *api.TagCalcHandlers
 	scheduleHandlers     *api.ScheduleHandlers
+	visualScriptHandlers *api.VisualScriptHandlers
 	ingestHandler        *rest.Handler
 	ingestProcessor      *ingest.Processor
 	notifHandler         *events.NotificationHandler
@@ -303,7 +304,7 @@ func (s *Server) setupRoutes() {
 	if len(s.config.AllowedOrigins) > 0 {
 		s.router.Use(cors.Handler(cors.Options{
 			AllowedOrigins:   s.config.AllowedOrigins,
-			AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+			AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 			AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Requested-With", "X-API-Key"},
 			ExposedHeaders:   []string{"Link"},
 			AllowCredentials: true,
@@ -665,6 +666,33 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 			})
 		}
 
+		if s.visualScriptHandlers != nil {
+			api.With(s.requireAnyUIPermission("visual-scripts", "view", "edit")).
+				Get("/api/v1/visual-script-nodes/catalog", s.visualScriptHandlers.HandleCatalogWithSchema())
+			api.Route("/api/v1/visual-scripts", func(api apiRoutes) {
+				api.With(s.requireAnyUIPermission("visual-scripts", "view", "edit")).Get("/", s.visualScriptHandlers.HandleListWithSchema())
+				api.With(s.requireUIPermission("visual-scripts", "edit")).Post("/", s.visualScriptHandlers.HandleCreateWithSchema())
+				api.With(s.requireAnyUIPermission("visual-scripts", "view", "edit")).Get("/{id}", s.visualScriptHandlers.HandleGetWithSchema())
+				api.With(s.requireUIPermission("visual-scripts", "edit")).Patch("/{id}", s.visualScriptHandlers.HandleUpdateWithSchema())
+				api.With(s.requireUIPermission("visual-scripts", "edit")).Delete("/{id}", s.visualScriptHandlers.HandleDeleteWithSchema())
+				api.With(s.requireAnyUIPermission("visual-scripts", "view", "edit")).Get("/{id}/revisions", s.visualScriptHandlers.HandleListRevisionsWithSchema())
+				api.With(s.requireUIPermission("visual-scripts", "edit")).Post("/{id}/revisions", s.visualScriptHandlers.HandleCreateRevisionWithSchema())
+				api.With(s.requireAnyUIPermission("visual-scripts", "view", "edit")).Get("/{id}/revisions/{revision}", s.visualScriptHandlers.HandleGetRevisionWithSchema())
+				api.With(s.requireUIPermission("visual-scripts", "edit")).Post("/{id}/validate", s.visualScriptHandlers.HandleValidateWithSchema())
+				api.With(s.requireUIPermission("visual-scripts", "edit")).Post("/{id}/deploy", s.visualScriptHandlers.HandleDeployWithSchema())
+				api.With(s.requireUIPermission("visual-scripts", "edit")).Post("/{id}/undeploy", s.visualScriptHandlers.HandleUndeployWithSchema())
+				api.With(s.requireUIPermission("visual-scripts", "edit")).Post("/{id}/start", s.visualScriptHandlers.Lifecycle("start"))
+				api.With(s.requireUIPermission("visual-scripts", "edit")).Post("/{id}/pause", s.visualScriptHandlers.Lifecycle("paused"))
+				api.With(s.requireUIPermission("visual-scripts", "edit")).Post("/{id}/resume", s.visualScriptHandlers.Lifecycle("resume"))
+				api.With(s.requireUIPermission("visual-scripts", "edit")).Post("/{id}/stop", s.visualScriptHandlers.Lifecycle("stopped"))
+				api.With(s.requireUIPermission("visual-scripts", "edit")).Post("/{id}/run", s.visualScriptHandlers.HandleRunWithSchema())
+				api.With(s.requireAnyUIPermission("visual-scripts", "view", "edit")).Get("/{id}/status", s.visualScriptHandlers.HandleStatusWithSchema())
+				api.With(s.requireAnyUIPermission("visual-scripts", "view", "edit")).Get("/{id}/runs", s.visualScriptHandlers.HandleRunsWithSchema())
+				api.With(s.requireAnyUIPermission("visual-scripts", "view", "edit")).Get("/{id}/runs/{runId}", s.visualScriptHandlers.HandleRunDetailWithSchema())
+				api.With(s.requireUIPermission("visual-scripts", "edit")).Get("/{id}/runs/{runId}/trace", s.visualScriptHandlers.HandleTraceWithSchema())
+			})
+		}
+
 		// Organisation management (requires database)
 		if s.orgHandlers != nil {
 			api.Route("/api/v1/organisations", func(api apiRoutes) {
@@ -770,6 +798,23 @@ func (s *Server) SetTagCalcHandlers(h *api.TagCalcHandlers) {
 // Must be called before the server starts accepting requests.
 func (s *Server) SetScheduleHandlers(h *api.ScheduleHandlers) {
 	s.scheduleHandlers = h
+	s.setupRoutes()
+}
+
+func (s *Server) SetVisualScriptHandlers(h *api.VisualScriptHandlers) {
+	h.Audit = func(r *http.Request, action string, params map[string]any) {
+		claims, _ := GetClaimsFromContext(r.Context())
+		userID := 0
+		org := "default"
+		if claims != nil {
+			userID, _ = strconv.Atoi(claims.UserID)
+			if claims.TenantID != "" {
+				org = claims.TenantID
+			}
+		}
+		s.auditSecurityEvent(r.Context(), org, userID, events.Info, "visual-scripts", action, params)
+	}
+	s.visualScriptHandlers = h
 	s.setupRoutes()
 }
 

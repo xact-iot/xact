@@ -77,8 +77,8 @@ func TestMigrateSeedsStarterDashboards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListDashboards: %v", err)
 	}
-	if len(dashboards) != 9 {
-		t.Fatalf("starter dashboard count = %d, want 9: %#v", len(dashboards), dashboards)
+	if len(dashboards) != 10 {
+		t.Fatalf("starter dashboard count = %d, want 10: %#v", len(dashboards), dashboards)
 	}
 
 	welcome := findDashboardMeta(t, dashboards, sqldb.StarterWelcomeName)
@@ -98,6 +98,8 @@ func TestMigrateSeedsStarterDashboards(t *testing.T) {
 		t.Fatalf("System Metrics parent = %v, want nil", *systemMetrics.ParentID)
 	}
 	assertDashboardWidgetType(t, db, systemMetrics.ID, "text-widget")
+	automation := findDashboardMeta(t, dashboards, sqldb.StarterAutomationName)
+	assertDashboardWidgetType(t, db, automation.ID, "visual-script-widget")
 
 	settings := findDashboardMeta(t, dashboards, sqldb.StarterSettingsCategory)
 	if !settings.IsCategory {
@@ -161,8 +163,8 @@ func TestCreateOrganisationSkipsSystemMetricsStarterDashboard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListDashboards: %v", err)
 	}
-	if len(dashboards) != 8 {
-		t.Fatalf("starter dashboard count = %d, want 8: %#v", len(dashboards), dashboards)
+	if len(dashboards) != 9 {
+		t.Fatalf("starter dashboard count = %d, want 9: %#v", len(dashboards), dashboards)
 	}
 	if hasDashboardNamed(dashboards, sqldb.StarterSystemMetricsName) {
 		t.Fatalf("non-default org should not have %q dashboard: %#v", sqldb.StarterSystemMetricsName, dashboards)

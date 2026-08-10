@@ -103,6 +103,21 @@ function getHeaders(): HeadersInit {
   return getAuthHeadersFn ? getAuthHeadersFn() : {};
 }
 
+export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(getHeaders());
+  new Headers(init.headers || {}).forEach((value, key) => headers.set(key, value));
+  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  const response = await fetch(`${BASE_URL}${path}`, { ...init, headers });
+  if (!response.ok) {
+    const raw = await response.text().catch(() => '');
+    let message = raw || `Request failed: ${response.status}`;
+    try { message = JSON.parse(raw).error || message; } catch { /* plain text */ }
+    throw new ApiError(message, response.status);
+  }
+  if (response.status === 204) return undefined as T;
+  return response.json() as Promise<T>;
+}
+
 // Convert dotted or slash paths to org-relative slash paths for REST API URLs.
 function toSlashPath(path: string): string {
   const apiPath = toOrgRelativePath(path);

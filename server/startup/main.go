@@ -37,6 +37,7 @@ import (
 	"github.com/xact-iot/xact/sqldb/psql"
 	"github.com/xact-iot/xact/sqldb/sqlite"
 	"github.com/xact-iot/xact/tagcalcs"
+	"github.com/xact-iot/xact/visualscripts"
 	webapi "github.com/xact-iot/xact/web/api"
 )
 
@@ -500,6 +501,19 @@ func main() {
 		}
 		apiServer.SetScheduleHandlers(webapi.NewScheduleHandlers(database, schedEngine, getOrg))
 		defer schedEngine.Stop()
+
+		if visualStore, ok := database.(visualscripts.Store); ok {
+			visualEngine := visualscripts.New(visualStore)
+			getUser := func(r *http.Request) int {
+				claims, ok := api.GetClaimsFromContext(r.Context())
+				if !ok {
+					return 0
+				}
+				id, _ := strconv.Atoi(claims.UserID)
+				return id
+			}
+			apiServer.SetVisualScriptHandlers(webapi.NewVisualScriptHandlers(visualStore, visualEngine, getOrg, getUser))
+		}
 	}
 
 	// Start API server

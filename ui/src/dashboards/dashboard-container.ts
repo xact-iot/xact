@@ -141,7 +141,20 @@ export class DashboardContainer extends BaseComponent {
   }
 
   hasUnsavedChanges(): boolean {
-    return this.dirty;
+    return this.dirty || this.hasDirtyComplexWidget();
+  }
+
+  private hasDirtyComplexWidget(): boolean {
+    return Array.from(this.querySelectorAll('.widget-body > *')).some((widget: any) =>
+      typeof widget.hasUnsavedChanges === 'function' && widget.hasUnsavedChanges()
+    );
+  }
+
+  private async requestComplexWidgetsClose(): Promise<boolean> {
+    for (const widget of Array.from(this.querySelectorAll('.widget-body > *')) as any[]) {
+      if (typeof widget.requestClose === 'function' && !await widget.requestClose()) return false;
+    }
+    return true;
   }
 
   protected render(): void {
@@ -507,6 +520,12 @@ export class DashboardContainer extends BaseComponent {
     }
   };
 
+  private handleVisualScriptFocus = (e: CustomEvent): void => {
+    const active = e.detail?.active === true;
+    this.grid?.enableMove(active ? false : this.isInteractiveMode());
+    this.grid?.enableResize(active ? false : this.isInteractiveMode());
+  };
+
   private handlePropertiesUpdated = (e: CustomEvent): void => {
     if (!this.isInteractiveMode()) return;
     const { widgetId, config } = e.detail;
@@ -784,6 +803,8 @@ export class DashboardContainer extends BaseComponent {
     if (mode === 'inspect' && !this.canInspectDashboard) return;
     if (this.mode === mode) return;
 
+    if (!await this.requestComplexWidgetsClose()) return;
+
     if (this.mode === 'edit' && mode !== 'edit' && this.dirty) {
       const choice = await showChoice('Save changes before leaving edit mode?', {
         title: 'Unsaved changes',
@@ -900,10 +921,11 @@ export class DashboardContainer extends BaseComponent {
     }
 
     this.addEventListener('widget-config-save', this.handleWidgetConfigSave as EventListener);
+    this.addEventListener('visual-script-focus-changed', this.handleVisualScriptFocus as EventListener);
 
     // Warn on browser navigation with unsaved changes
     this.beforeUnloadHandler = (e: BeforeUnloadEvent) => {
-      if (this.dirty) {
+      if (this.hasUnsavedChanges()) {
         e.preventDefault();
       }
     };
@@ -925,6 +947,7 @@ export class DashboardContainer extends BaseComponent {
     }
 
     this.removeEventListener('widget-config-save', this.handleWidgetConfigSave as EventListener);
+    this.removeEventListener('visual-script-focus-changed', this.handleVisualScriptFocus as EventListener);
 
     if (this.beforeUnloadHandler) {
       window.removeEventListener('beforeunload', this.beforeUnloadHandler);
