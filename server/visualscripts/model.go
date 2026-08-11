@@ -77,6 +77,10 @@ type Script struct {
 	DesiredState   string    `json:"desiredState"`
 	LatestRevision int       `json:"latestRevision"`
 	ActiveRevision *int      `json:"activeRevision,omitempty"`
+	BackupRevision *int      `json:"-"`
+	HasBackup      bool      `json:"hasBackup"`
+	Simulation     bool      `json:"simulation"`
+	Activate       bool      `json:"activate"`
 	CreatedBy      int       `json:"createdBy,omitempty"`
 	UpdatedBy      int       `json:"updatedBy,omitempty"`
 	CreatedAt      time.Time `json:"createdAt"`
@@ -145,6 +149,8 @@ type NodeDefinition struct {
 	RequiredCaps   []string              `json:"requiredCapabilities,omitempty"`
 	Available      bool                  `json:"available"`
 	UnavailableWhy string                `json:"unavailableReason,omitempty"`
+	OutputNode     bool                  `json:"outputNode,omitempty"`
+	SimulationSafe bool                  `json:"simulationSafe,omitempty"`
 }
 
 type Run struct {
@@ -193,6 +199,7 @@ type RuntimeStatus struct {
 
 type Store interface {
 	ListVisualScripts(context.Context, string) ([]Script, error)
+	ListActivatedVisualScripts(context.Context) ([]Script, error)
 	GetVisualScript(context.Context, string, string) (*Script, error)
 	CreateVisualScript(context.Context, string, *Script) error
 	UpdateVisualScript(context.Context, string, string, string, string, int) error
@@ -202,6 +209,8 @@ type Store interface {
 	CreateVisualScriptRevision(context.Context, string, string, int, *Revision) error
 	SetVisualScriptActiveRevision(context.Context, string, string, *int) error
 	SetVisualScriptDesiredState(context.Context, string, string, string) error
+	SetVisualScriptOptions(context.Context, string, string, bool, bool, int) error
+	SetVisualScriptBackupRevision(context.Context, string, string, *int, int) error
 	AppendVisualScriptRun(context.Context, *Run) error
 	CompleteVisualScriptRun(context.Context, *Run) error
 	ListVisualScriptRuns(context.Context, string, string, int) ([]Run, error)
@@ -216,6 +225,8 @@ type CreateScriptRequest struct {
 type UpdateScriptRequest struct {
 	Name        *string `json:"name,omitempty"`
 	Description *string `json:"description,omitempty"`
+	Simulation  *bool   `json:"simulation,omitempty"`
+	Activate    *bool   `json:"activate,omitempty"`
 }
 
 type SaveRevisionRequest struct {

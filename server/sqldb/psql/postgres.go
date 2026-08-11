@@ -1349,6 +1349,9 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			desired_state   TEXT NOT NULL DEFAULT 'stopped',
 			latest_revision INTEGER NOT NULL DEFAULT 0,
 			active_revision INTEGER,
+			backup_revision INTEGER,
+			simulation      BOOLEAN NOT NULL DEFAULT FALSE,
+			activate        BOOLEAN NOT NULL DEFAULT FALSE,
 			created_by      INTEGER NOT NULL DEFAULT 0,
 			updated_by      INTEGER NOT NULL DEFAULT 0,
 			created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1356,6 +1359,9 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			UNIQUE(org_name, name),
 			CHECK (desired_state IN ('stopped', 'running', 'paused'))
 		);
+		ALTER TABLE visual_scripts ADD COLUMN IF NOT EXISTS backup_revision INTEGER;
+		ALTER TABLE visual_scripts ADD COLUMN IF NOT EXISTS simulation BOOLEAN NOT NULL DEFAULT FALSE;
+		ALTER TABLE visual_scripts ADD COLUMN IF NOT EXISTS activate BOOLEAN NOT NULL DEFAULT FALSE;
 		CREATE INDEX IF NOT EXISTS idx_visual_scripts_org ON visual_scripts(org_name, updated_at DESC);
 		CREATE TABLE IF NOT EXISTS visual_script_revisions (
 			script_id         UUID NOT NULL REFERENCES visual_scripts(id) ON DELETE CASCADE,

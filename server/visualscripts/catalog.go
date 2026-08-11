@@ -22,6 +22,18 @@ func (r *Registry) Definition(nodeType string) (NodeDefinition, bool) {
 func (r *Registry) Catalog() []NodeDefinition {
 	items := make([]NodeDefinition, 0, len(r.definitions))
 	for _, definition := range r.definitions {
+		// Catalog collection fields are arrays in the API contract. Go's JSON
+		// encoder otherwise emits nil slices as null, which makes parameterless
+		// nodes such as the Manual trigger awkward for clients to consume.
+		if definition.Inputs == nil {
+			definition.Inputs = []PortDefinition{}
+		}
+		if definition.Outputs == nil {
+			definition.Outputs = []PortDefinition{}
+		}
+		if definition.Parameters == nil {
+			definition.Parameters = []ParameterDefinition{}
+		}
 		items = append(items, definition)
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -58,7 +70,7 @@ func coreDefinitions() []NodeDefinition {
 		{Type: "core.set-context", TypeVersion: 1, Name: "Set Context", Description: "Writes ephemeral node or script context", Category: "Context", Icon: "⇤", Inputs: in, Outputs: out, Parameters: contextParameters(true), Available: true},
 		{Type: "core.delete-context", TypeVersion: 1, Name: "Delete Context", Description: "Deletes ephemeral context", Category: "Context", Icon: "⌫", Inputs: in, Outputs: out, Parameters: contextParameters(false), Available: true},
 		{Type: "core.increment-context", TypeVersion: 1, Name: "Increment Context", Description: "Atomically increments numeric context", Category: "Context", Icon: "+1", Inputs: in, Outputs: out, Parameters: append(contextParameters(false), number("amount", "Amount", 1)), Available: true},
-		{Type: "core.debug", TypeVersion: 1, Name: "Debug", Description: "Adds a bounded, redacted trace event", Category: "Actions", Icon: "◎", Inputs: in, Outputs: out, Parameters: []ParameterDefinition{{Name: "label", Label: "Label", Type: "string"}}, Available: true},
+		{Type: "core.debug", TypeVersion: 1, Name: "Debug", Description: "Adds the current message to the run trace", Category: "Actions", Icon: "◎", Inputs: in, Outputs: out, Parameters: []ParameterDefinition{{Name: "label", Label: "Label", Type: "string"}}, Available: true, OutputNode: true, SimulationSafe: true},
 	}
 }
 

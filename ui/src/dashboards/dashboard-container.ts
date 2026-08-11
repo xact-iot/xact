@@ -97,6 +97,7 @@ export class DashboardContainer extends BaseComponent {
   private beforeUnloadHandler: ((e: BeforeUnloadEvent) => void) | null = null;
   private dropdownHideTimer: ReturnType<typeof setTimeout> | null = null;
   private saving = false;
+  private visualScriptFocused = false;
 
   private isInteractiveMode(): boolean {
     return this.mode !== 'view';
@@ -522,6 +523,10 @@ export class DashboardContainer extends BaseComponent {
 
   private handleVisualScriptFocus = (e: CustomEvent): void => {
     const active = e.detail?.active === true;
+    this.visualScriptFocused = active;
+    if (active) this.closeAllDropdowns();
+    const toolbar = this.querySelector<HTMLElement>('#pc-toolbar');
+    if (toolbar) toolbar.style.display = active ? 'none' : '';
     this.grid?.enableMove(active ? false : this.isInteractiveMode());
     this.grid?.enableResize(active ? false : this.isInteractiveMode());
   };
@@ -622,6 +627,7 @@ export class DashboardContainer extends BaseComponent {
     );
     toolbar.querySelector('#pc-export')?.addEventListener('click', this.handleExport);
     toolbar.querySelector('#pc-import')?.addEventListener('click', this.handleImport);
+    toolbar.style.display = this.visualScriptFocused ? 'none' : '';
 
     this.updateSaveButton();
     this.setupToolbarDrag();

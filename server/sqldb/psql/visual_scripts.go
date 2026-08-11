@@ -13,14 +13,15 @@ type pgScanner interface{ Scan(...any) error }
 
 func scanPGScript(row pgScanner) (*visualscripts.Script, error) {
 	var item visualscripts.Script
-	if err := row.Scan(&item.ID, &item.OrgName, &item.Name, &item.Description, &item.DesiredState, &item.LatestRevision, &item.ActiveRevision, &item.CreatedBy, &item.UpdatedBy, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	if err := row.Scan(&item.ID, &item.OrgName, &item.Name, &item.Description, &item.DesiredState, &item.LatestRevision, &item.ActiveRevision, &item.BackupRevision, &item.Simulation, &item.Activate, &item.CreatedBy, &item.UpdatedBy, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return nil, err
 	}
+	item.HasBackup = item.BackupRevision != nil
 	item.OutOfDate = item.LatestRevision > 0 && (item.ActiveRevision == nil || item.LatestRevision > *item.ActiveRevision)
 	return &item, nil
 }
 
-const pgScriptSelect = `SELECT id::text, org_name, name, description, desired_state, latest_revision, active_revision, created_by, updated_by, created_at, updated_at FROM visual_scripts`
+const pgScriptSelect = `SELECT id::text, org_name, name, description, desired_state, latest_revision, active_revision, backup_revision, simulation, activate, created_by, updated_by, created_at, updated_at FROM visual_scripts`
 
 func (db *PostgresDB) ListVisualScripts(ctx context.Context, org string) ([]visualscripts.Script, error) {
 	rows, err := db.pool.Query(ctx, pgScriptSelect+` WHERE org_name = $1 ORDER BY name`, org)
@@ -44,6 +45,22 @@ func (db *PostgresDB) GetVisualScript(ctx context.Context, org, id string) (*vis
 		return nil, nil
 	}
 	return item, err
+}
+func (db *PostgresDB) ListActivatedVisualScripts(ctx context.Context) ([]visualscripts.Script, error) {
+	rows, err := db.pool.Query(ctx, pgScriptSelect+` WHERE activate = TRUE ORDER BY org_name, name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []visualscripts.Script{}
+	for rows.Next() {
+		item, err := scanPGScript(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
 }
 func (db *PostgresDB) CreateVisualScript(ctx context.Context, org string, item *visualscripts.Script) error {
 	item.ID = newUUID()
@@ -156,6 +173,28 @@ func (db *PostgresDB) SetVisualScriptActiveRevision(ctx context.Context, org, sc
 }
 func (db *PostgresDB) SetVisualScriptDesiredState(ctx context.Context, org, scriptID, state string) error {
 	tag, err := db.pool.Exec(ctx, `UPDATE visual_scripts SET desired_state=$1, updated_at=NOW() WHERE org_name=$2 AND id=$3`, state, org, scriptID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return visualscripts.ErrNotFound
+	}
+	return nil
+}
+
+func (db *PostgresDB) SetVisualScriptOptions(ctx context.Context, org, scriptID string, simulation, activate bool, actor int) error {
+	tag, err := db.pool.Exec(ctx, `UPDATE visual_scripts SET simulation=$1,activate=$2,updated_by=$3,updated_at=NOW() WHERE org_name=$4 AND id=$5`, simulation, activate, actor, org, scriptID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return visualscripts.ErrNotFound
+	}
+	return nil
+}
+
+func (db *PostgresDB) SetVisualScriptBackupRevision(ctx context.Context, org, scriptID string, revision *int, actor int) error {
+	tag, err := db.pool.Exec(ctx, `UPDATE visual_scripts SET backup_revision=$1,updated_by=$2,updated_at=NOW() WHERE org_name=$3 AND id=$4`, revision, actor, org, scriptID)
 	if err != nil {
 		return err
 	}

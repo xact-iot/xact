@@ -378,6 +378,9 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 			desired_state   TEXT NOT NULL DEFAULT 'stopped',
 			latest_revision INTEGER NOT NULL DEFAULT 0,
 			active_revision INTEGER,
+			backup_revision INTEGER,
+			simulation      INTEGER NOT NULL DEFAULT 0,
+			activate        INTEGER NOT NULL DEFAULT 0,
 			created_by      INTEGER NOT NULL DEFAULT 0,
 			updated_by      INTEGER NOT NULL DEFAULT 0,
 			created_at      TEXT NOT NULL,
@@ -385,6 +388,9 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 			UNIQUE(org_name, name)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_visual_scripts_org ON visual_scripts(org_name, updated_at DESC)`,
+		`ALTER TABLE visual_scripts ADD COLUMN backup_revision INTEGER`,
+		`ALTER TABLE visual_scripts ADD COLUMN simulation INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE visual_scripts ADD COLUMN activate INTEGER NOT NULL DEFAULT 0`,
 		`CREATE TABLE IF NOT EXISTS visual_script_revisions (
 			script_id         TEXT NOT NULL REFERENCES visual_scripts(id) ON DELETE CASCADE,
 			org_name          TEXT NOT NULL REFERENCES organisations(name) ON DELETE CASCADE,

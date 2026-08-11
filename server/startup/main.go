@@ -504,6 +504,9 @@ func main() {
 
 		if visualStore, ok := database.(visualscripts.Store); ok {
 			visualEngine := visualscripts.New(visualStore)
+			for _, err := range visualEngine.StartActivated(context.Background()) {
+				log.Printf("Warning: visual script activation failed: %v", err)
+			}
 			getUser := func(r *http.Request) int {
 				claims, ok := api.GetClaimsFromContext(r.Context())
 				if !ok {

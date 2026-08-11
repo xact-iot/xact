@@ -119,11 +119,21 @@ func (h *VisualScriptHandlers) HandleUpdate(w http.ResponseWriter, r *http.Reque
 	if request.Description != nil {
 		current.Description = strings.TrimSpace(*request.Description)
 	}
+	if request.Simulation != nil {
+		current.Simulation = *request.Simulation
+	}
+	if request.Activate != nil {
+		current.Activate = *request.Activate
+	}
 	if current.Name == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
 	if err = h.Store.UpdateVisualScript(r.Context(), org, id, current.Name, current.Description, h.GetUser(r)); err != nil {
+		writeVisualError(w, err)
+		return
+	}
+	if err = h.Store.SetVisualScriptOptions(r.Context(), org, id, current.Simulation, current.Activate, h.GetUser(r)); err != nil {
 		writeVisualError(w, err)
 		return
 	}
@@ -245,10 +255,17 @@ func (h *VisualScriptHandlers) HandleUndeploy(w http.ResponseWriter, r *http.Req
 
 func (h *VisualScriptHandlers) Lifecycle(action string) openapischema.Handler {
 	return openapischema.WithSchema(func(w http.ResponseWriter, r *http.Request) {
-		state := action
-		if action == "resume" || action == "start" {
-			state = "running"
+		if action == "start" || action == "resume" {
+			status, err := h.Engine.StartCurrent(r.Context(), h.GetOrg(r), chi.URLParam(r, "id"))
+			if err != nil {
+				writeVisualError(w, err)
+				return
+			}
+			h.audit(r, action, map[string]any{"scriptId": status.ScriptID})
+			writeJSON(w, http.StatusOK, status)
+			return
 		}
+		state := action
 		status, err := h.Engine.SetDesiredState(r.Context(), h.GetOrg(r), chi.URLParam(r, "id"), state)
 		if err != nil {
 			writeVisualError(w, err)
@@ -257,6 +274,72 @@ func (h *VisualScriptHandlers) Lifecycle(action string) openapischema.Handler {
 		h.audit(r, action, map[string]any{"scriptId": status.ScriptID})
 		writeJSON(w, http.StatusOK, status)
 	}, nil, visualscripts.RuntimeStatus{}, "visual-scripts")
+}
+
+func (h *VisualScriptHandlers) HandleBackupWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleBackup, nil, visualscripts.Script{}, "visual-scripts")
+}
+func (h *VisualScriptHandlers) HandleBackup(w http.ResponseWriter, r *http.Request) {
+	org, id := h.GetOrg(r), chi.URLParam(r, "id")
+	script, err := h.Store.GetVisualScript(r.Context(), org, id)
+	if err != nil || script == nil {
+		if err == nil {
+			err = visualscripts.ErrNotFound
+		}
+		writeVisualError(w, err)
+		return
+	}
+	if script.LatestRevision < 1 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "save the script before creating a backup"})
+		return
+	}
+	revision := script.LatestRevision
+	if err = h.Store.SetVisualScriptBackupRevision(r.Context(), org, id, &revision, h.GetUser(r)); err != nil {
+		writeVisualError(w, err)
+		return
+	}
+	h.audit(r, "backup", map[string]any{"scriptId": id})
+	h.HandleGet(w, r)
+}
+
+func (h *VisualScriptHandlers) HandleRestoreWithSchema() openapischema.Handler {
+	return openapischema.WithSchema(h.HandleRestore, nil, visualscripts.Revision{}, "visual-scripts")
+}
+func (h *VisualScriptHandlers) HandleRestore(w http.ResponseWriter, r *http.Request) {
+	org, id := h.GetOrg(r), chi.URLParam(r, "id")
+	script, err := h.Store.GetVisualScript(r.Context(), org, id)
+	if err != nil || script == nil {
+		if err == nil {
+			err = visualscripts.ErrNotFound
+		}
+		writeVisualError(w, err)
+		return
+	}
+	if script.BackupRevision == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no backup exists"})
+		return
+	}
+	backup, err := h.Store.GetVisualScriptRevision(r.Context(), org, id, *script.BackupRevision)
+	if err != nil || backup == nil {
+		if err == nil {
+			err = visualscripts.ErrNotFound
+		}
+		writeVisualError(w, err)
+		return
+	}
+	validation := h.Engine.Validate(backup.Graph)
+	status := "valid"
+	if !validation.Valid {
+		status = "invalid"
+	}
+	item := visualscripts.Revision{SchemaVersion: validation.Graph.SchemaVersion, Graph: validation.Graph, GraphHash: validation.GraphHash, ValidationStatus: status, Diagnostics: validation.Diagnostics, CreatedBy: h.GetUser(r)}
+	if err = h.Store.CreateVisualScriptRevision(r.Context(), org, id, script.LatestRevision, &item); err != nil {
+		writeVisualError(w, err)
+		return
+	}
+	_, _ = h.Engine.SetDesiredState(r.Context(), org, id, "stopped")
+	h.audit(r, "restore", map[string]any{"scriptId": id})
+	writeJSON(w, http.StatusOK, item)
 }
 func (h *VisualScriptHandlers) HandleStatusWithSchema() openapischema.Handler {
 	return openapischema.WithSchema(h.HandleStatus, nil, visualscripts.RuntimeStatus{}, "visual-scripts")

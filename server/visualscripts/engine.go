@@ -15,9 +15,10 @@ import (
 )
 
 type compiledPlan struct {
-	graph    GraphDocument
-	nodes    map[string]GraphNode
-	outgoing map[string]map[string][]GraphEdge
+	graph      GraphDocument
+	nodes      map[string]GraphNode
+	outgoing   map[string]map[string][]GraphEdge
+	simulation bool
 }
 
 type Engine struct {
@@ -52,7 +53,14 @@ func (e *Engine) Deploy(ctx context.Context, org, scriptID string, revision int)
 	if !validation.Valid {
 		return nil, fmt.Errorf("revision %d is invalid", revision)
 	}
-	plan := compile(validation.Graph)
+	script, err := e.store.GetVisualScript(ctx, org, scriptID)
+	if err != nil {
+		return nil, err
+	}
+	if script == nil {
+		return nil, ErrNotFound
+	}
+	plan := compile(validation.Graph, script.Simulation)
 	if err := e.store.SetVisualScriptActiveRevision(ctx, org, scriptID, &revision); err != nil {
 		return nil, err
 	}
@@ -63,6 +71,39 @@ func (e *Engine) Deploy(ctx context.Context, org, scriptID string, revision int)
 	e.mu.Unlock()
 	status, err := e.Status(ctx, org, scriptID)
 	return &status, err
+}
+
+// StartCurrent validates and compiles the single current script before it can run.
+// Revisions remain an internal optimistic-write mechanism and are not a user-facing state.
+func (e *Engine) StartCurrent(ctx context.Context, org, scriptID string) (*RuntimeStatus, error) {
+	script, err := e.store.GetVisualScript(ctx, org, scriptID)
+	if err != nil {
+		return nil, err
+	}
+	if script == nil {
+		return nil, ErrNotFound
+	}
+	if script.LatestRevision < 1 {
+		return nil, errors.New("save the script before starting it")
+	}
+	if _, err = e.Deploy(ctx, org, scriptID, script.LatestRevision); err != nil {
+		return nil, err
+	}
+	return e.SetDesiredState(ctx, org, scriptID, "running")
+}
+
+func (e *Engine) StartActivated(ctx context.Context) []error {
+	scripts, err := e.store.ListActivatedVisualScripts(ctx)
+	if err != nil {
+		return []error{err}
+	}
+	errorsFound := []error{}
+	for _, script := range scripts {
+		if _, err := e.StartCurrent(ctx, script.OrgName, script.ID); err != nil {
+			errorsFound = append(errorsFound, fmt.Errorf("starting activated script %s/%s: %w", script.OrgName, script.Name, err))
+		}
+	}
+	return errorsFound
 }
 
 func (e *Engine) Undeploy(ctx context.Context, org, scriptID string) (*RuntimeStatus, error) {
@@ -124,7 +165,7 @@ func (e *Engine) Status(ctx context.Context, org, scriptID string) (RuntimeStatu
 	status.ActiveRevision = script.ActiveRevision
 	status.LatestRevision = script.LatestRevision
 	if script.ActiveRevision == nil {
-		status.RuntimeState = "draft"
+		status.RuntimeState = "idle"
 	} else {
 		status.RuntimeState = script.DesiredState
 	}
@@ -220,15 +261,25 @@ func (e *Engine) plan(ctx context.Context, org, scriptID string, revision int) (
 	if !validation.Valid {
 		return nil, errors.New("active revision is invalid")
 	}
-	plan = compile(validation.Graph)
+	script, err := e.store.GetVisualScript(ctx, org, scriptID)
+	if err != nil || script == nil {
+		if err == nil {
+			err = ErrNotFound
+		}
+		return nil, err
+	}
+	plan = compile(validation.Graph, script.Simulation)
 	e.mu.Lock()
 	e.plans[key] = plan
 	e.mu.Unlock()
 	return plan, nil
 }
 
-func compile(graph GraphDocument) *compiledPlan {
+func compile(graph GraphDocument, simulation ...bool) *compiledPlan {
 	plan := &compiledPlan{graph: graph, nodes: make(map[string]GraphNode), outgoing: make(map[string]map[string][]GraphEdge)}
+	if len(simulation) > 0 {
+		plan.simulation = simulation[0]
+	}
 	for _, node := range graph.Nodes {
 		plan.nodes[node.ID] = node
 	}
@@ -259,12 +310,31 @@ func (e *Engine) execute(ctx context.Context, plan *compiledPlan, trigger GraphN
 		if hops > 1000 {
 			return errors.New("maximum execution hops exceeded")
 		}
-		port, nextMessage, action, err := e.handleNode(item.node, item.msg)
+		definition, _ := e.registry.Definition(item.node.Type)
+		simulatedOutput := plan.simulation && definition.OutputNode && !definition.SimulationSafe
+		var port string
+		var nextMessage Message
+		var action bool
+		var err error
+		if simulatedOutput {
+			port, nextMessage, action = "out", item.msg, true
+		} else {
+			port, nextMessage, action, err = e.handleNode(item.node, item.msg)
+		}
 		run.NodesExecuted++
 		if action {
 			run.ActionsAttempted++
 		}
 		trace := TraceEvent{Sequence: run.NodesExecuted, Timestamp: time.Now().UTC(), NodeID: item.node.ID, NodeType: item.node.Type, Port: port, Status: "ok", Value: nextMessage.Value, Fields: cloneFields(nextMessage.Fields)}
+		if simulatedOutput {
+			trace.Message = "Simulation: output suppressed"
+		}
+		if item.node.Type == "core.debug" {
+			var config map[string]any
+			if json.Unmarshal(item.node.Config, &config) == nil {
+				trace.Message = strings.TrimSpace(stringConfig(config, "label"))
+			}
+		}
 		if err != nil {
 			trace.Status = "error"
 			trace.Message = err.Error()

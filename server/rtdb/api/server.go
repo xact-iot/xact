@@ -686,6 +686,8 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 				api.With(s.requireUIPermission("visual-scripts", "edit")).Post("/{id}/resume", s.visualScriptHandlers.Lifecycle("resume"))
 				api.With(s.requireUIPermission("visual-scripts", "edit")).Post("/{id}/stop", s.visualScriptHandlers.Lifecycle("stopped"))
 				api.With(s.requireUIPermission("visual-scripts", "edit")).Post("/{id}/run", s.visualScriptHandlers.HandleRunWithSchema())
+				api.With(s.requireUIPermission("visual-scripts", "edit")).Post("/{id}/backup", s.visualScriptHandlers.HandleBackupWithSchema())
+				api.With(s.requireUIPermission("visual-scripts", "edit")).Post("/{id}/restore", s.visualScriptHandlers.HandleRestoreWithSchema())
 				api.With(s.requireAnyUIPermission("visual-scripts", "view", "edit")).Get("/{id}/status", s.visualScriptHandlers.HandleStatusWithSchema())
 				api.With(s.requireAnyUIPermission("visual-scripts", "view", "edit")).Get("/{id}/runs", s.visualScriptHandlers.HandleRunsWithSchema())
 				api.With(s.requireAnyUIPermission("visual-scripts", "view", "edit")).Get("/{id}/runs/{runId}", s.visualScriptHandlers.HandleRunDetailWithSchema())

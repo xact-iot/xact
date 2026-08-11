@@ -12,7 +12,7 @@ import (
 )
 
 func (db *SQLiteDB) ListVisualScripts(ctx context.Context, org string) ([]visualscripts.Script, error) {
-	rows, err := db.db.QueryContext(ctx, `SELECT id, org_name, name, description, desired_state, latest_revision, active_revision, created_by, updated_by, created_at, updated_at FROM visual_scripts WHERE org_name = ? ORDER BY name`, org)
+	rows, err := db.db.QueryContext(ctx, `SELECT id, org_name, name, description, desired_state, latest_revision, active_revision, backup_revision, simulation, activate, created_by, updated_by, created_at, updated_at FROM visual_scripts WHERE org_name = ? ORDER BY name`, org)
 	if err != nil {
 		return nil, err
 	}
@@ -29,26 +29,50 @@ func (db *SQLiteDB) ListVisualScripts(ctx context.Context, org string) ([]visual
 }
 
 func (db *SQLiteDB) GetVisualScript(ctx context.Context, org, id string) (*visualscripts.Script, error) {
-	item, err := scanSQLiteScript(db.db.QueryRowContext(ctx, `SELECT id, org_name, name, description, desired_state, latest_revision, active_revision, created_by, updated_by, created_at, updated_at FROM visual_scripts WHERE org_name = ? AND id = ?`, org, id))
+	item, err := scanSQLiteScript(db.db.QueryRowContext(ctx, `SELECT id, org_name, name, description, desired_state, latest_revision, active_revision, backup_revision, simulation, activate, created_by, updated_by, created_at, updated_at FROM visual_scripts WHERE org_name = ? AND id = ?`, org, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	return item, err
 }
 
+func (db *SQLiteDB) ListActivatedVisualScripts(ctx context.Context) ([]visualscripts.Script, error) {
+	rows, err := db.db.QueryContext(ctx, `SELECT id, org_name, name, description, desired_state, latest_revision, active_revision, backup_revision, simulation, activate, created_by, updated_by, created_at, updated_at FROM visual_scripts WHERE activate = 1 ORDER BY org_name, name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []visualscripts.Script{}
+	for rows.Next() {
+		item, err := scanSQLiteScript(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
 type sqliteScanner interface{ Scan(...any) error }
 
 func scanSQLiteScript(row sqliteScanner) (*visualscripts.Script, error) {
 	var item visualscripts.Script
-	var active sql.NullInt64
+	var active, backup sql.NullInt64
+	var simulation, activate int
 	var created, updated string
-	if err := row.Scan(&item.ID, &item.OrgName, &item.Name, &item.Description, &item.DesiredState, &item.LatestRevision, &active, &item.CreatedBy, &item.UpdatedBy, &created, &updated); err != nil {
+	if err := row.Scan(&item.ID, &item.OrgName, &item.Name, &item.Description, &item.DesiredState, &item.LatestRevision, &active, &backup, &simulation, &activate, &item.CreatedBy, &item.UpdatedBy, &created, &updated); err != nil {
 		return nil, err
 	}
 	if active.Valid {
 		value := int(active.Int64)
 		item.ActiveRevision = &value
 	}
+	if backup.Valid {
+		value := int(backup.Int64)
+		item.BackupRevision = &value
+		item.HasBackup = true
+	}
+	item.Simulation, item.Activate = simulation != 0, activate != 0
 	item.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	item.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 	item.OutOfDate = item.LatestRevision > 0 && (item.ActiveRevision == nil || item.LatestRevision > *item.ActiveRevision)
@@ -177,6 +201,32 @@ func (db *SQLiteDB) SetVisualScriptActiveRevision(ctx context.Context, org, scri
 
 func (db *SQLiteDB) SetVisualScriptDesiredState(ctx context.Context, org, scriptID, state string) error {
 	res, err := db.db.ExecContext(ctx, `UPDATE visual_scripts SET desired_state = ?, updated_at = ? WHERE org_name = ? AND id = ?`, state, formatTimestamp(time.Now().UTC()), org, scriptID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return visualscripts.ErrNotFound
+	}
+	return nil
+}
+
+func (db *SQLiteDB) SetVisualScriptOptions(ctx context.Context, org, scriptID string, simulation, activate bool, actor int) error {
+	res, err := db.db.ExecContext(ctx, `UPDATE visual_scripts SET simulation = ?, activate = ?, updated_by = ?, updated_at = ? WHERE org_name = ? AND id = ?`, simulation, activate, actor, formatTimestamp(time.Now().UTC()), org, scriptID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return visualscripts.ErrNotFound
+	}
+	return nil
+}
+
+func (db *SQLiteDB) SetVisualScriptBackupRevision(ctx context.Context, org, scriptID string, revision *int, actor int) error {
+	var value any
+	if revision != nil {
+		value = *revision
+	}
+	res, err := db.db.ExecContext(ctx, `UPDATE visual_scripts SET backup_revision = ?, updated_by = ?, updated_at = ? WHERE org_name = ? AND id = ?`, value, actor, formatTimestamp(time.Now().UTC()), org, scriptID)
 	if err != nil {
 		return err
 	}

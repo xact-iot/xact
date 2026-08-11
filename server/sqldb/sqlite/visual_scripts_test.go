@@ -47,8 +47,25 @@ func TestVisualScriptRevisionDeployAndManualRun(t *testing.T) {
 	if err := store.CreateVisualScriptRevision(ctx, "default", script.ID, 0, &visualscripts.Revision{}); err != visualscripts.ErrConflict {
 		t.Fatalf("expected conflict, got %v", err)
 	}
-	if _, err := engine.Deploy(ctx, "default", script.ID, revision.Revision); err != nil {
+	if err := store.SetVisualScriptOptions(ctx, "default", script.ID, true, true, 1); err != nil {
 		t.Fatal(err)
+	}
+	if err := store.SetVisualScriptBackupRevision(ctx, "default", script.ID, &revision.Revision, 1); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := store.GetVisualScript(ctx, "default", script.ID)
+	if err != nil || stored == nil || !stored.Simulation || !stored.Activate || !stored.HasBackup {
+		t.Fatalf("script options not retained: %#v, %v", stored, err)
+	}
+	if activationErrors := engine.StartActivated(ctx); len(activationErrors) != 0 {
+		t.Fatalf("activated script failed to start: %v", activationErrors)
+	}
+	status, err := engine.Status(ctx, "default", script.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.RuntimeState != "running" {
+		t.Fatalf("current script did not start: %#v", status)
 	}
 	run, err := engine.RunManual(ctx, "default", script.ID, visualscripts.RunRequest{Value: 0})
 	if err != nil {

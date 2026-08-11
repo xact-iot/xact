@@ -63,7 +63,9 @@ func GraphHash(graph GraphDocument) (string, []byte, error) {
 
 func ValidateGraph(registry *Registry, graph GraphDocument) ValidationResult {
 	graph = NormalizeGraph(graph)
-	result := ValidationResult{Graph: graph}
+	// Diagnostics is an array in the API contract. Initializing it here keeps a
+	// successful validation from being encoded as `"diagnostics": null`.
+	result := ValidationResult{Graph: graph, Diagnostics: []Diagnostic{}}
 	hash, encoded, err := GraphHash(graph)
 	if err != nil {
 		result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_graph_json", "", "", "graph", err.Error()))

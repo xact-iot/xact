@@ -24,6 +24,9 @@ func TestValidateGraphAcceptsManualPureFlow(t *testing.T) {
 	if !result.Valid {
 		t.Fatalf("expected valid graph, got %#v", result.Diagnostics)
 	}
+	if result.Diagnostics == nil {
+		t.Fatal("expected successful validation diagnostics to be an empty array, not nil")
+	}
 	if result.GraphHash == "" {
 		t.Fatal("expected a stable graph hash")
 	}

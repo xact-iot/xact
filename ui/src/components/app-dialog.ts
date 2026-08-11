@@ -26,6 +26,18 @@ type DialogRequest =
       choices: DialogChoice[];
       tone: DialogTone;
       resolve: (value: string) => void;
+    }
+  | {
+      kind: 'prompt';
+      title: string;
+      message: string;
+      inputLabel: string;
+      value: string;
+      multiline: boolean;
+      confirmLabel: string;
+      cancelLabel: string;
+      tone: DialogTone;
+      resolve: (value: string | null) => void;
     };
 
 type AlertOptions = {
@@ -50,6 +62,16 @@ export type DialogChoice = {
 type ChoiceOptions = {
   title?: string;
   choices: DialogChoice[];
+  tone?: DialogTone;
+};
+
+type PromptOptions = {
+  title?: string;
+  inputLabel?: string;
+  value?: string;
+  multiline?: boolean;
+  confirmLabel?: string;
+  cancelLabel?: string;
   tone?: DialogTone;
 };
 
@@ -88,12 +110,18 @@ export class AppDialog extends BaseComponent {
             <div class="min-w-0 flex-1">
               <h2 class="text-lg font-semibold leading-6">${this.escapeHtml(this.active.title)}</h2>
               <p class="mt-2 text-sm leading-6 opacity-80 whitespace-pre-wrap">${this.escapeHtml(this.active.message)}</p>
+              ${this.active.kind === 'prompt' ? `
+                <label class="mt-4 block text-sm font-medium" for="dialog-input">${this.escapeHtml(this.active.inputLabel)}</label>
+                ${this.active.multiline
+                  ? `<textarea id="dialog-input" class="mt-2 min-h-28 w-full resize-y rounded-xl border px-3 py-2 font-mono text-sm" style="background:var(--content-bg);color:var(--content-text);border-color:var(--border-color)">${this.escapeHtml(this.active.value)}</textarea>`
+                  : `<input id="dialog-input" class="mt-2 w-full rounded-xl border px-3 py-2 text-sm" style="background:var(--content-bg);color:var(--content-text);border-color:var(--border-color)" value="${this.escapeHtml(this.active.value)}">`}
+              ` : ''}
             </div>
           </div>
         </div>
         <div class="flex items-center justify-end gap-3 px-6 py-4"
              style="background: color-mix(in srgb, var(--content-bg) 45%, var(--modal-bg));">
-          ${this.active.kind === 'confirm'
+          ${this.active.kind === 'confirm' || this.active.kind === 'prompt'
             ? `<button id="dialog-cancel" class="rounded-xl border px-4 py-2 text-sm font-medium transition-opacity hover:opacity-85"
                      style="background: color-mix(in srgb, var(--accent-color) 8%, var(--modal-bg)); border-color: color-mix(in srgb, var(--accent-color) 30%, var(--border-color)); color: var(--modal-text);">
                  ${this.escapeHtml(this.active.cancelLabel)}
@@ -175,17 +203,37 @@ export class AppDialog extends BaseComponent {
     });
   }
 
+  openPrompt(message: string, options: PromptOptions = {}): Promise<string | null> {
+    return new Promise(resolve => {
+      this.queue.push({
+        kind: 'prompt',
+        title: options.title ?? 'Enter a value',
+        message,
+        inputLabel: options.inputLabel ?? 'Value',
+        value: options.value ?? '',
+        multiline: options.multiline ?? false,
+        confirmLabel: options.confirmLabel ?? 'Continue',
+        cancelLabel: options.cancelLabel ?? 'Cancel',
+        tone: options.tone ?? 'default',
+        resolve,
+      });
+      this.showNext();
+    });
+  }
+
   private showNext(): void {
     if (this.active || this.queue.length === 0) return;
     this.active = this.queue.shift()!;
     this.rerender();
     requestAnimationFrame(() => {
+      const input = this.querySelector<HTMLInputElement | HTMLTextAreaElement>('#dialog-input');
       const button = this.querySelector<HTMLElement>('#dialog-confirm');
-      (button ?? this.querySelector<HTMLElement>('.dialog-choice'))?.focus();
+      (input ?? button ?? this.querySelector<HTMLElement>('.dialog-choice'))?.focus();
+      input?.select();
     });
   }
 
-  private settle(value?: boolean | string): void {
+  private settle(value?: boolean | string | null): void {
     if (!this.active) return;
     const current = this.active;
     this.active = null;
@@ -193,6 +241,8 @@ export class AppDialog extends BaseComponent {
       current.resolve(Boolean(value));
     } else if (current.kind === 'choice') {
       current.resolve(String(value ?? current.choices[0]?.value ?? ''));
+    } else if (current.kind === 'prompt') {
+      current.resolve(typeof value === 'string' ? value : null);
     } else {
       current.resolve();
     }
@@ -203,6 +253,8 @@ export class AppDialog extends BaseComponent {
   private handleBackdropClick = (): void => {
     if (this.active?.kind === 'confirm') {
       this.settle(false);
+    } else if (this.active?.kind === 'prompt') {
+      this.settle(null);
     } else if (this.active?.kind === 'choice') {
       this.settle(this.active.choices[0]?.value);
     } else {
@@ -211,11 +263,15 @@ export class AppDialog extends BaseComponent {
   };
 
   private handleCancel = (): void => {
-    this.settle(false);
+    this.settle(this.active?.kind === 'prompt' ? null : false);
   };
 
   private handleConfirm = (): void => {
-    this.settle(true);
+    if (this.active?.kind === 'prompt') {
+      this.settle(this.querySelector<HTMLInputElement | HTMLTextAreaElement>('#dialog-input')?.value ?? '');
+    } else {
+      this.settle(true);
+    }
   };
 
   private handleChoice = (event: Event): void => {
@@ -228,6 +284,7 @@ export class AppDialog extends BaseComponent {
     if (event.key === 'Escape') {
       event.preventDefault();
       if (this.active.kind === 'confirm') this.settle(false);
+      else if (this.active.kind === 'prompt') this.settle(null);
       else if (this.active.kind === 'choice') this.settle(this.active.choices[0]?.value);
       else this.settle();
     } else if (event.key === 'Enter') {
@@ -306,4 +363,8 @@ export function showConfirm(message: string, options?: ConfirmOptions): Promise<
 
 export function showChoice(message: string, options: ChoiceOptions): Promise<string> {
   return ensureDialog().openChoice(message, options);
+}
+
+export function showPrompt(message: string, options?: PromptOptions): Promise<string | null> {
+  return ensureDialog().openPrompt(message, options);
 }

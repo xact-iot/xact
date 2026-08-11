@@ -5,7 +5,7 @@ const root = '/api/v1/visual-scripts';
 export const listScripts = () => apiRequest<VisualScript[]>(`${root}/`);
 export const createScript = (name: string, description = '') => apiRequest<VisualScript>(`${root}/`, { method: 'POST', body: JSON.stringify({ name, description }) });
 export const getScript = (id: string) => apiRequest<VisualScript>(`${root}/${encodeURIComponent(id)}`);
-export const updateScript = (id: string, data: Partial<Pick<VisualScript, 'name'|'description'>>) => apiRequest<VisualScript>(`${root}/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) });
+export const updateScript = (id: string, data: Partial<Pick<VisualScript, 'name'|'description'|'simulation'|'activate'>>) => apiRequest<VisualScript>(`${root}/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) });
 export const deleteScript = (id: string) => apiRequest<void>(`${root}/${encodeURIComponent(id)}`, { method: 'DELETE' });
 export const getRevision = (id: string, revision: number) => apiRequest<VisualScriptRevision>(`${root}/${encodeURIComponent(id)}/revisions/${revision}`);
 export const saveRevision = (id: string, baseRevision: number, graph: GraphDocument) => apiRequest<VisualScriptRevision>(`${root}/${encodeURIComponent(id)}/revisions`, { method: 'POST', body: JSON.stringify({ baseRevision, graph }) });
@@ -16,3 +16,5 @@ export const runManual = (id: string, value: any, fields: Record<string, any> = 
 export const getStatus = (id: string) => apiRequest<RuntimeStatus>(`${root}/${encodeURIComponent(id)}/status`);
 export const getRuns = (id: string) => apiRequest<VisualScriptRun[]>(`${root}/${encodeURIComponent(id)}/runs`);
 export const getCatalog = () => apiRequest<NodeDefinition[]>('/api/v1/visual-script-nodes/catalog');
+export const backupScript = (id: string) => apiRequest<VisualScript>(`${root}/${encodeURIComponent(id)}/backup`, { method: 'POST' });
+export const restoreScript = (id: string) => apiRequest<VisualScriptRevision>(`${root}/${encodeURIComponent(id)}/restore`, { method: 'POST' });
