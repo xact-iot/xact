@@ -238,7 +238,7 @@ func (db *SQLiteDB) SetVisualScriptBackupRevision(ctx context.Context, org, scri
 
 func (db *SQLiteDB) AppendVisualScriptRun(ctx context.Context, run *visualscripts.Run) error {
 	trace, _ := json.Marshal(run.Trace)
-	_, err := db.db.ExecContext(ctx, `INSERT INTO visual_script_runs (run_id, org_name, script_id, active_revision, trigger_node_id, started_at, status, trace_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, run.RunID, run.OrgName, run.ScriptID, run.ActiveRevision, run.TriggerNodeID, formatTimestamp(run.StartedAt), run.Status, string(trace))
+	_, err := db.db.ExecContext(ctx, `INSERT INTO visual_script_runs (run_id, org_name, script_id, active_revision, trigger_node_id, instance_key, started_at, status, trace_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, run.RunID, run.OrgName, run.ScriptID, run.ActiveRevision, run.TriggerNodeID, run.InstanceKey, formatTimestamp(run.StartedAt), run.Status, string(trace))
 	return err
 }
 
@@ -249,6 +249,17 @@ func (db *SQLiteDB) CompleteVisualScriptRun(ctx context.Context, run *visualscri
 		completed = formatTimestamp(*run.CompletedAt)
 	}
 	_, err := db.db.ExecContext(ctx, `UPDATE visual_script_runs SET completed_at = ?, status = ?, duration_ms = ?, first_error_node_id = ?, message = ?, nodes_executed = ?, actions_attempted = ?, warnings = ?, dropped_traces = ?, trace_json = ? WHERE org_name = ? AND script_id = ? AND run_id = ?`, completed, run.Status, run.DurationMS, run.FirstErrorNodeID, run.Message, run.NodesExecuted, run.ActionsAttempted, run.Warnings, run.DroppedTraces, string(trace), run.OrgName, run.ScriptID, run.RunID)
+	return err
+}
+
+func (db *SQLiteDB) CancelIncompleteVisualScriptRuns(ctx context.Context, completed time.Time, reason string) error {
+	formatted := formatTimestamp(completed)
+	_, err := db.db.ExecContext(ctx, `UPDATE visual_script_runs SET completed_at = ?, status = 'cancelled', message = ?, duration_ms = MAX(0, CAST((julianday(?) - julianday(started_at)) * 86400000 AS INTEGER)) WHERE completed_at IS NULL AND status IN ('queued', 'running')`, formatted, reason, formatted)
+	return err
+}
+
+func (db *SQLiteDB) ClearVisualScriptRuns(ctx context.Context, org, scriptID string) error {
+	_, err := db.db.ExecContext(ctx, `DELETE FROM visual_script_runs WHERE org_name = ? AND script_id = ?`, org, scriptID)
 	return err
 }
 
@@ -281,14 +292,14 @@ func (db *SQLiteDB) GetVisualScriptRun(ctx context.Context, org, scriptID, runID
 	return item, err
 }
 
-const visualRunSelect = `SELECT run_id, org_name, script_id, active_revision, trigger_node_id, started_at, completed_at, status, duration_ms, first_error_node_id, message, nodes_executed, actions_attempted, warnings, dropped_traces, trace_json FROM visual_script_runs`
+const visualRunSelect = `SELECT run_id, org_name, script_id, active_revision, trigger_node_id, instance_key, started_at, completed_at, status, duration_ms, first_error_node_id, message, nodes_executed, actions_attempted, warnings, dropped_traces, trace_json FROM visual_script_runs`
 
 func scanSQLiteRun(row sqliteScanner) (*visualscripts.Run, error) {
 	var item visualscripts.Run
 	var started string
 	var completed sql.NullString
 	var trace string
-	if err := row.Scan(&item.RunID, &item.OrgName, &item.ScriptID, &item.ActiveRevision, &item.TriggerNodeID, &started, &completed, &item.Status, &item.DurationMS, &item.FirstErrorNodeID, &item.Message, &item.NodesExecuted, &item.ActionsAttempted, &item.Warnings, &item.DroppedTraces, &trace); err != nil {
+	if err := row.Scan(&item.RunID, &item.OrgName, &item.ScriptID, &item.ActiveRevision, &item.TriggerNodeID, &item.InstanceKey, &started, &completed, &item.Status, &item.DurationMS, &item.FirstErrorNodeID, &item.Message, &item.NodesExecuted, &item.ActionsAttempted, &item.Warnings, &item.DroppedTraces, &trace); err != nil {
 		return nil, err
 	}
 	item.StartedAt, _ = time.Parse(time.RFC3339Nano, started)

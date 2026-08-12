@@ -213,7 +213,8 @@ func validateNodeConfig(result *ValidationResult, node GraphNode, definition Nod
 	}
 	for _, parameter := range definition.Parameters {
 		value, exists := config[parameter.Name]
-		if parameter.Required && (!exists || value == nil || (parameter.Type == "string" && strings.TrimSpace(fmt.Sprint(value)) == "")) {
+		missing := !exists || (value == nil && parameter.Type != "json")
+		if parameter.Required && (missing || (parameter.Type == "string" && strings.TrimSpace(fmt.Sprint(value)) == "")) {
 			result.Diagnostics = append(result.Diagnostics, diagnostic("error", "missing_required_config", node.ID, "", "config."+parameter.Name, parameter.Label+" is required"))
 			continue
 		}
@@ -221,19 +222,42 @@ func validateNodeConfig(result *ValidationResult, node GraphNode, definition Nod
 			continue
 		}
 		if parameter.Type == "number" {
-			if _, ok := asFloat(value); !ok {
-				result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_number", node.ID, "", "config."+parameter.Name, parameter.Label+" must be a number"))
+			if _, ok := finiteFloat(value); !ok {
+				result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_number", node.ID, "", "config."+parameter.Name, parameter.Label+" must be a finite number"))
+			}
+		}
+		if parameter.Type == "string" {
+			if _, ok := value.(string); !ok {
+				result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_string", node.ID, "", "config."+parameter.Name, parameter.Label+" must be text"))
+			}
+		}
+		if parameter.Type == "boolean" {
+			if _, ok := value.(bool); !ok {
+				result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_boolean", node.ID, "", "config."+parameter.Name, parameter.Label+" must be true or false"))
 			}
 		}
 		if parameter.Type == "select" && len(parameter.Options) > 0 {
-			selected := fmt.Sprint(value)
+			selected, stringOK := value.(string)
 			valid := false
 			for _, option := range parameter.Options {
 				valid = valid || selected == option
 			}
-			if !valid {
+			if !stringOK || !valid {
 				result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_option", node.ID, "", "config."+parameter.Name, parameter.Label+" has an unsupported value"))
 			}
+		}
+	}
+	if field, exists := config["field"]; exists {
+		if path, ok := field.(string); ok && path != "" && !validFieldPath(path) {
+			result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_field_path", node.ID, "", "config.field", "Field path cannot contain empty segments"))
+		}
+	}
+	if node.Type == "core.and" || node.Type == "core.or" {
+		validateFieldList(result, node, config["fields"], true)
+	}
+	if node.Type == "core.average" {
+		if fields, exists := config["fields"]; exists && fields != nil {
+			validateFieldList(result, node, fields, false)
 		}
 	}
 	if node.Type == "core.divide" {
@@ -255,6 +279,37 @@ func validateNodeConfig(result *ValidationResult, node GraphNode, definition Nod
 			result.Diagnostics = append(result.Diagnostics, diagnostic("error", "zero_input_range", node.ID, "", "config.inputMax", "Input range cannot have zero width"))
 		}
 	}
+}
+
+func validateFieldList(result *ValidationResult, node GraphNode, value any, requireItems bool) {
+	fields, ok := value.([]any)
+	if !ok || (requireItems && len(fields) == 0) {
+		message := "Fields must be a JSON array of field paths"
+		if requireItems {
+			message = "Fields must contain at least one field path"
+		}
+		result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_field_list", node.ID, "", "config.fields", message))
+		return
+	}
+	for _, value := range fields {
+		field, ok := value.(string)
+		if !ok || !validFieldPath(field) {
+			result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_field_path", node.ID, "", "config.fields", "Every field must be a non-empty dotted path"))
+			return
+		}
+	}
+}
+
+func validFieldPath(path string) bool {
+	if strings.TrimSpace(path) != path || path == "" {
+		return false
+	}
+	for _, part := range strings.Split(path, ".") {
+		if strings.TrimSpace(part) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func findPort(ports []PortDefinition, name string) (PortDefinition, bool) {

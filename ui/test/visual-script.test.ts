@@ -5,6 +5,7 @@ import type { NodeDefinition } from '../src/visual-scripts/types';
 import '../src/visual-scripts/canvas';
 import '../src/visual-scripts/editor';
 import '../src/dashboards/dashboard-container';
+import '../src/dashboards/widgets/visual-script-widget';
 
 describe('visual script draft and canvas', () => {
   it('keeps graph dirty state and undo independent from dashboard state', () => {
@@ -39,8 +40,15 @@ describe('visual script draft and canvas', () => {
     expect(graph.edges[0]).toMatchObject({ from: { nodeId: 'manual', port: 'out' }, to: { nodeId: 'debug', port: 'in' } });
     const canvasStyles = canvas.querySelector('style').textContent;
     expect(canvasStyles).toContain('width:150px');
-    expect(canvasStyles).toContain('background:var(--widget-header-surface,var(--widget-header-bg))');
-    expect(canvasStyles).toContain('color:var(--widget-header-text,var(--content-text))');
+    expect(canvasStyles).toContain('background:#ede6d9;color:#3d3428');
+    expect(canvasStyles).toContain('border:1px solid #b8aa93');
+    expect(canvasStyles).toContain('outline:2px solid var(--accent-color)');
+    expect(canvasStyles).not.toContain('background:var(--widget-header-bg)');
+    expect(canvasStyles).not.toContain('background:var(--widget-header-surface');
+    expect(canvasStyles).not.toContain('color:var(--widget-header-text');
+    expect(canvasStyles).toContain('background:var(--vs-category-bg)');
+    expect(canvas.querySelector('[aria-label="Manual node"]')?.getAttribute('style')).toContain('--vs-category-bg:#31565b');
+    expect(canvas.querySelector('[aria-label="Debug node"]')?.getAttribute('style')).toContain('--vs-category-bg:#5b414b');
     expect(canvas.querySelector('.vsc-type')).toBeNull();
     expect(canvas.querySelector('[aria-label="Manual node"]')?.textContent).not.toContain('manual');
     canvas.remove();
@@ -151,7 +159,7 @@ describe('visual script draft and canvas', () => {
     canvas.remove();
   });
 
-  it('adds parameterless nodes when an older catalog sends null parameters', () => {
+  it('drags parameterless palette nodes onto the canvas at the drop position', () => {
     const editor = document.createElement('visual-script-editor') as any;
     const manual = {
       type: 'core.manual', typeVersion: 1, name: 'Manual', description: '', category: 'Triggers', icon: '▶',
@@ -163,11 +171,39 @@ describe('visual script draft and canvas', () => {
     }, emptyGraph(), [manual]);
     document.body.appendChild(editor);
 
-    expect(() => editor.querySelector('[data-add="core.manual"]').click()).not.toThrow();
+    const paletteItem = editor.querySelector<HTMLElement>('[data-add="core.manual"]')!;
+    const canvas = editor.querySelector<HTMLElement>('#vse-canvas')!;
+    paletteItem.click();
+    expect(editor.draft.value.nodes).toHaveLength(0);
+    expect(paletteItem.draggable).toBe(true);
+    expect(paletteItem.getAttribute('aria-label')).toBe('Drag Manual node to canvas');
+
+    paletteItem.getBoundingClientRect = () => ({ left: 10, top: 10, right: 170, bottom: 40, width: 160, height: 30, x: 10, y: 10, toJSON: () => ({}) });
+    canvas.getBoundingClientRect = () => ({ left: 100, top: 50, right: 900, bottom: 650, width: 800, height: 600, x: 100, y: 50, toJSON: () => ({}) });
+    canvas.scrollLeft = 40;
+    canvas.scrollTop = 20;
+    const values = new Map<string, string>();
+    const dataTransfer = {
+      effectAllowed: 'none', dropEffect: 'none',
+      setData: (type: string, value: string) => values.set(type, value),
+      getData: (type: string) => values.get(type) || '',
+    } as unknown as DataTransfer;
+    const dragEvent = (type: string, clientX: number, clientY: number) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperties(event, { dataTransfer: { value: dataTransfer }, clientX: { value: clientX }, clientY: { value: clientY } });
+      return event;
+    };
+    paletteItem.dispatchEvent(dragEvent('dragstart', 20, 25));
+    canvas.dispatchEvent(dragEvent('dragover', 350, 250));
+    expect(canvas.classList.contains('palette-drop-target')).toBe(true);
+    canvas.dispatchEvent(dragEvent('drop', 350, 250));
+
     expect(editor.draft.value.nodes).toHaveLength(1);
-    expect(editor.draft.value.nodes[0]).toMatchObject({ type: 'core.manual', position: { x: 24, y: 70 }, config: {} });
+    expect(editor.draft.value.nodes[0]).toMatchObject({ type: 'core.manual', position: { x: 280, y: 210 }, config: {} });
     expect(editor.querySelector('style').textContent).toContain('z-index:3100');
     expect(editor.querySelector('style').textContent).toContain('grid-template-columns:180px minmax(360px,1fr) 230px');
+    expect(editor.querySelector('[data-category="Triggers"]')?.getAttribute('style')).toContain('--vs-category-bg:#31565b');
+    expect(editor.querySelector('[data-node-id]')?.getAttribute('style')).toContain('--vs-category-bg:#31565b');
     editor.remove();
   });
 
@@ -190,6 +226,137 @@ describe('visual script draft and canvas', () => {
     expect(editor.querySelector('.vse-inspector')?.textContent).toContain('Manual');
     expect(editor.querySelector('[data-node-id="manual"]')?.classList.contains('selected')).toBe(true);
     editor.remove();
+  });
+
+  it('uses readable select options and suggests known keys for Get Context', () => {
+    const graph = emptyGraph();
+    graph.nodes = [
+      { id: 'set-temperature', type: 'core.set-context', typeVersion: 1, position: { x: 20, y: 20 }, config: { scope: 'script', key: 'Temperature' } },
+      { id: 'increment-count', type: 'core.increment-context', typeVersion: 1, position: { x: 20, y: 120 }, config: { scope: 'script', key: 'Count' } },
+      { id: 'set-node-only', type: 'core.set-context', typeVersion: 1, position: { x: 20, y: 220 }, config: { scope: 'node', key: 'Private' } },
+      { id: 'get', type: 'core.get-context', typeVersion: 1, position: { x: 300, y: 20 }, config: { scope: 'script', key: '' } },
+    ];
+    const contextParameters = [
+      { name: 'scope', label: 'Scope', type: 'select', required: true, options: ['node', 'script'], default: 'script' },
+      { name: 'key', label: 'Key', type: 'string', required: true },
+    ];
+    const catalog = [
+      { type: 'core.set-context', typeVersion: 1, name: 'Set Context', description: '', category: 'Context', icon: '⇤', inputs: [], outputs: [], parameters: contextParameters, available: true },
+      { type: 'core.increment-context', typeVersion: 1, name: 'Increment Context', description: '', category: 'Context', icon: '+1', inputs: [], outputs: [], parameters: contextParameters, available: true },
+      { type: 'core.get-context', typeVersion: 1, name: 'Get Context', description: '', category: 'Context', icon: '⇥', inputs: [], outputs: [], parameters: contextParameters, available: true },
+    ] as NodeDefinition[];
+    const editor = document.createElement('visual-script-editor') as any;
+    editor.initialize({
+      id: 'script-1', name: 'Test script', description: '', desiredState: 'stopped', latestRevision: 1,
+      createdAt: '', updatedAt: '', outOfDate: false,
+    }, graph, catalog);
+    document.body.appendChild(editor);
+
+    (editor.querySelector('[data-node-id="get"]') as HTMLElement).click();
+
+    const keyInput = editor.querySelector<HTMLInputElement>('[data-param="key"]')!;
+    const options = [...editor.querySelectorAll<HTMLOptionElement>('#vse-context-key-options option')].map(option => option.value);
+    expect(keyInput.getAttribute('list')).toBe('vse-context-key-options');
+    expect(options).toEqual(['Count', 'Temperature']);
+    expect(options).not.toContain('Private');
+    expect(editor.querySelector('style').textContent).toContain('select option{color:var(--content-text);background:var(--widget-bg)}');
+    editor.remove();
+  });
+
+  it('queues the selected Manual node from its Trigger button while running', async () => {
+    const graph = emptyGraph();
+    graph.nodes = [
+      { id: 'manual-secondary', type: 'core.manual', typeVersion: 1, position: { x: 24, y: 70 }, config: {} },
+      { id: 'debug', type: 'core.debug', typeVersion: 1, position: { x: 240, y: 70 }, config: {} },
+    ];
+    const manual: NodeDefinition = {
+      type: 'core.manual', typeVersion: 1, name: 'Manual', description: 'Starts a controlled editor run', category: 'Triggers', icon: '▶',
+      inputs: [], outputs: [{ name: 'out', label: 'Output', dataType: 'message' }], parameters: [], available: true,
+    };
+    const acceptedRun = {
+      runId: 'run-1', scriptId: 'script-1', activeRevision: 1, triggerNodeId: 'manual-secondary', instanceKey: 'manual',
+      startedAt: new Date().toISOString(), status: 'queued', durationMs: 0, nodesExecuted: 0,
+    };
+    const completedRun = {
+      ...acceptedRun, status: 'ok', durationMs: 2, nodesExecuted: 2,
+      trace: [{ sequence: 2, timestamp: new Date().toISOString(), nodeId: 'debug', nodeType: 'core.debug', port: 'out', status: 'ok', value: 23, fields: { source: 'context' } }],
+    };
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => ({
+      ok: true, status: url.endsWith('/run') ? 202 : 200,
+      json: async () => url.endsWith('/run') ? acceptedRun : completedRun,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const editor = document.createElement('visual-script-editor') as any;
+    editor.initialize({
+      id: 'script-1', name: 'Test script', description: '', desiredState: 'running', runtimeState: 'running', latestRevision: 1,
+      createdAt: '', updatedAt: '', outOfDate: false,
+    }, graph, [manual, {
+      type: 'core.debug', typeVersion: 1, name: 'Debug', description: '', category: 'Actions', icon: '◎',
+      inputs: [{ name: 'in', label: 'Input', dataType: 'message' }], outputs: [{ name: 'out', label: 'Output', dataType: 'message' }], parameters: [], available: true,
+    }]);
+    document.body.appendChild(editor);
+
+    const trigger = editor.querySelector<HTMLButtonElement>('[data-trigger-node="manual-secondary"]')!;
+    expect(trigger).toBeTruthy();
+    expect(trigger.disabled).toBe(false);
+    trigger.click();
+    await vi.waitFor(() => expect(editor.notice).toBe('Manual trigger queued'));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('/xact/api/v1/visual-scripts/script-1/run');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ triggerNodeId: 'manual-secondary', value: null, fields: {} });
+    expect(editor.textContent).toContain('queued · 0 nodes');
+    await vi.waitFor(() => expect(editor.selectedRun.status).toBe('ok'));
+    expect(fetchMock.mock.calls[1][0]).toBe('/xact/api/v1/visual-scripts/script-1/runs/run-1');
+    expect(editor.querySelector('.vse-trace')?.textContent).toContain('Debug · ok · out');
+    expect(editor.querySelector('.vse-trace pre')?.textContent).toContain('"value": 23');
+    expect(editor.querySelector('.vse-trace pre')?.textContent).toContain('"source": "context"');
+    editor.remove();
+    vi.unstubAllGlobals();
+  });
+
+  it('shows Manual Trigger disabled until the script is running', () => {
+    const graph = emptyGraph();
+    graph.nodes = [{ id: 'manual', type: 'core.manual', typeVersion: 1, position: { x: 20, y: 20 }, config: {} }];
+    const manual: NodeDefinition = {
+      type: 'core.manual', typeVersion: 1, name: 'Manual', description: '', category: 'Triggers', icon: '▶', inputs: [],
+      outputs: [{ name: 'out', label: 'Output', dataType: 'message' }], parameters: [], available: true,
+    };
+    const canvas = document.createElement('visual-script-canvas') as any;
+    document.body.appendChild(canvas);
+    canvas.setData(graph, [manual], true, '', '', { showManualTrigger: true, manualTriggerEnabled: false });
+    const trigger = canvas.querySelector<HTMLButtonElement>('[data-trigger-node="manual"]')!;
+    expect(trigger.disabled).toBe(true);
+    expect(trigger.title).toContain('Start the script');
+    canvas.remove();
+  });
+
+  it('queues a Manual trigger from the read-only dashboard graph', async () => {
+    const graph = emptyGraph();
+    graph.nodes = [{ id: 'manual-dashboard', type: 'core.manual', typeVersion: 1, position: { x: 20, y: 20 }, config: {} }];
+    const manual: NodeDefinition = {
+      type: 'core.manual', typeVersion: 1, name: 'Manual', description: '', category: 'Triggers', icon: '▶', inputs: [],
+      outputs: [{ name: 'out', label: 'Output', dataType: 'message' }], parameters: [], available: true,
+    };
+    const acceptedRun = {
+      runId: 'run-dashboard', scriptId: 'script-1', activeRevision: 1, triggerNodeId: 'manual-dashboard', instanceKey: 'manual',
+      startedAt: new Date().toISOString(), status: 'queued', durationMs: 0, nodesExecuted: 0,
+    };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 202, json: async () => acceptedRun });
+    vi.stubGlobal('fetch', fetchMock);
+    const widget = document.createElement('visual-script-widget') as any;
+    widget.loading = false;
+    widget.canEdit = true;
+    widget.script = { id: 'script-1', name: 'Test', description: '', desiredState: 'running', runtimeState: 'running', latestRevision: 1, createdAt: '', updatedAt: '', outOfDate: false };
+    widget.status = { scriptId: 'script-1', desiredState: 'running', runtimeState: 'running', activeRevision: 1, latestRevision: 1, queueDepth: 0, sequence: 1 };
+    widget.graph = graph;
+    widget.catalog = [manual];
+    widget.render();
+
+    widget.querySelector<HTMLButtonElement>('[data-trigger-node="manual-dashboard"]')!.click();
+    await vi.waitFor(() => expect(widget.notice).toBe('Manual trigger queued'));
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).triggerNodeId).toBe('manual-dashboard');
+    vi.unstubAllGlobals();
   });
 
   it('finishes a valid response when an older server sends null diagnostics', async () => {
@@ -229,7 +396,10 @@ describe('visual script draft and canvas', () => {
     editor.initialize({
       id: 'script-1', name: 'Test script', description: '', desiredState: 'stopped', latestRevision: 0,
       createdAt: '', updatedAt: '', outOfDate: false,
-    }, emptyGraph(), []);
+    }, emptyGraph(), [], [{
+      runId: 'old-run', scriptId: 'script-1', activeRevision: 1, triggerNodeId: 'manual', instanceKey: 'manual',
+      startedAt: new Date().toISOString(), status: 'ok', durationMs: 1, nodesExecuted: 1,
+    }]);
     document.body.appendChild(editor);
     editor.draft.update(graph);
 
@@ -247,6 +417,9 @@ describe('visual script draft and canvas', () => {
     expect(editor.querySelector('#vse-backup')).toBeTruthy();
     expect(editor.querySelector('#vse-simulate')).toBeTruthy();
     expect(editor.querySelector('#vse-activate')).toBeTruthy();
+    expect(editor.runs).toEqual([]);
+    expect(editor.textContent).toContain('No runs yet.');
+    expect(editor.querySelector('#vse-save')?.hasAttribute('disabled')).toBe(true);
     editor.remove();
     vi.unstubAllGlobals();
   });

@@ -25,11 +25,23 @@ func TestPathMatcherUsesSegmentWildcards(t *testing.T) {
 	}
 }
 
+func TestPathMatcherDerivesStableWildcardInstanceKey(t *testing.T) {
+	matcher, err := CompilePathPattern("SITE.Area*.Pump??.Status.Running")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instanceKey, matched := matcher.MatchInstance("SITE.AreaWest.Pump01.Status.Running")
+	if !matched || instanceKey != "AreaWest/Pump01" {
+		t.Fatalf("instance match = %q, %v; want AreaWest/Pump01, true", instanceKey, matched)
+	}
+}
+
 func TestTagChangeRouterSeparatesTenantsAndLimitsFanout(t *testing.T) {
 	router := NewTagChangeRouter(10, 2)
 	calls := 0
+	instanceKeys := map[string]bool{}
 	register := func(org, id, pattern string) {
-		if _, err := router.Register(org, id, pattern, func(TagChange) { calls++ }); err != nil {
+		if _, err := router.Register(org, id, pattern, func(change TagChange) { calls++; instanceKeys[change.InstanceKey] = true }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -42,6 +54,9 @@ func TestTagChangeRouterSeparatesTenantsAndLimitsFanout(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("callbacks=%d, want 2", calls)
+	}
+	if !instanceKeys["SITE.Pump01.Value"] || !instanceKeys["Pump01"] {
+		t.Fatalf("callback instance keys = %#v", instanceKeys)
 	}
 	if matched := router.Dispatch(TagChange{OrgName: "missing", TagPath: "SITE.Pump01.Value"}); matched != 0 {
 		t.Fatalf("tenant leak matched %d", matched)

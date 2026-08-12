@@ -65,3 +65,39 @@ func TestValidateGraphRejectsInvalidNumericConfiguration(t *testing.T) {
 		t.Fatal("division by zero must fail validation")
 	}
 }
+
+func TestValidateGraphChecksNodeSpecificConfigurationTypes(t *testing.T) {
+	graph := GraphDocument{Nodes: []GraphNode{
+		node("manual", "core.manual", `{}`),
+		node("range", "core.in-range", `{"minimum":0,"maximum":10,"inclusive":"yes"}`),
+		node("and", "core.and", `{"fields":["valid","bad..path"]}`),
+	}, Edges: []GraphEdge{
+		{ID: "e1", From: EdgeEndpoint{NodeID: "manual", Port: "out"}, To: EdgeEndpoint{NodeID: "range", Port: "in"}},
+		{ID: "e2", From: EdgeEndpoint{NodeID: "range", Port: "true"}, To: EdgeEndpoint{NodeID: "and", Port: "in"}},
+	}}
+	result := ValidateGraph(NewRegistry(), graph)
+	if result.Valid {
+		t.Fatal("invalid node configuration was accepted")
+	}
+	wanted := map[string]bool{"invalid_boolean": false, "invalid_field_path": false}
+	for _, item := range result.Diagnostics {
+		if _, exists := wanted[item.Code]; exists {
+			wanted[item.Code] = true
+		}
+	}
+	for code, found := range wanted {
+		if !found {
+			t.Errorf("missing diagnostic %s: %#v", code, result.Diagnostics)
+		}
+	}
+}
+
+func TestValidateGraphAllowsNullJSONConstants(t *testing.T) {
+	graph := GraphDocument{Nodes: []GraphNode{
+		node("manual", "core.manual", `{}`),
+		node("set", "core.set-field", `{"field":"optional","value":null}`),
+	}, Edges: []GraphEdge{{ID: "e", From: EdgeEndpoint{NodeID: "manual", Port: "out"}, To: EdgeEndpoint{NodeID: "set", Port: "in"}}}}
+	if result := ValidateGraph(NewRegistry(), graph); !result.Valid {
+		t.Fatalf("null JSON constant should be valid: %#v", result.Diagnostics)
+	}
+}

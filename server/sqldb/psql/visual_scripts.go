@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/xact-iot/xact/visualscripts"
@@ -206,7 +207,7 @@ func (db *PostgresDB) SetVisualScriptBackupRevision(ctx context.Context, org, sc
 
 func (db *PostgresDB) AppendVisualScriptRun(ctx context.Context, run *visualscripts.Run) error {
 	trace, _ := json.Marshal(run.Trace)
-	_, err := db.pool.Exec(ctx, `INSERT INTO visual_script_runs (run_id,org_name,script_id,active_revision,trigger_node_id,started_at,status,trace_json) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, run.RunID, run.OrgName, run.ScriptID, run.ActiveRevision, run.TriggerNodeID, run.StartedAt, run.Status, trace)
+	_, err := db.pool.Exec(ctx, `INSERT INTO visual_script_runs (run_id,org_name,script_id,active_revision,trigger_node_id,instance_key,started_at,status,trace_json) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, run.RunID, run.OrgName, run.ScriptID, run.ActiveRevision, run.TriggerNodeID, run.InstanceKey, run.StartedAt, run.Status, trace)
 	return err
 }
 func (db *PostgresDB) CompleteVisualScriptRun(ctx context.Context, run *visualscripts.Run) error {
@@ -215,12 +216,22 @@ func (db *PostgresDB) CompleteVisualScriptRun(ctx context.Context, run *visualsc
 	return err
 }
 
-const pgRunSelect = `SELECT run_id,org_name,script_id::text,active_revision,trigger_node_id,started_at,completed_at,status,duration_ms,first_error_node_id,message,nodes_executed,actions_attempted,warnings,dropped_traces,trace_json FROM visual_script_runs`
+func (db *PostgresDB) CancelIncompleteVisualScriptRuns(ctx context.Context, completed time.Time, reason string) error {
+	_, err := db.pool.Exec(ctx, `UPDATE visual_script_runs SET completed_at=$1,status='cancelled',message=$2,duration_ms=GREATEST(0,EXTRACT(EPOCH FROM ($1-started_at))*1000)::BIGINT WHERE completed_at IS NULL AND status IN ('queued','running')`, completed, reason)
+	return err
+}
+
+func (db *PostgresDB) ClearVisualScriptRuns(ctx context.Context, org, scriptID string) error {
+	_, err := db.pool.Exec(ctx, `DELETE FROM visual_script_runs WHERE org_name=$1 AND script_id=$2`, org, scriptID)
+	return err
+}
+
+const pgRunSelect = `SELECT run_id,org_name,script_id::text,active_revision,trigger_node_id,instance_key,started_at,completed_at,status,duration_ms,first_error_node_id,message,nodes_executed,actions_attempted,warnings,dropped_traces,trace_json FROM visual_script_runs`
 
 func scanPGRun(row pgScanner) (*visualscripts.Run, error) {
 	var item visualscripts.Run
 	var trace []byte
-	if err := row.Scan(&item.RunID, &item.OrgName, &item.ScriptID, &item.ActiveRevision, &item.TriggerNodeID, &item.StartedAt, &item.CompletedAt, &item.Status, &item.DurationMS, &item.FirstErrorNodeID, &item.Message, &item.NodesExecuted, &item.ActionsAttempted, &item.Warnings, &item.DroppedTraces, &trace); err != nil {
+	if err := row.Scan(&item.RunID, &item.OrgName, &item.ScriptID, &item.ActiveRevision, &item.TriggerNodeID, &item.InstanceKey, &item.StartedAt, &item.CompletedAt, &item.Status, &item.DurationMS, &item.FirstErrorNodeID, &item.Message, &item.NodesExecuted, &item.ActionsAttempted, &item.Warnings, &item.DroppedTraces, &trace); err != nil {
 		return nil, err
 	}
 	_ = json.Unmarshal(trace, &item.Trace)

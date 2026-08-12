@@ -1,7 +1,7 @@
 import { BaseComponent } from '../../components/base-component';
 import { can } from '../../permissions/permissions';
 import { registerPermissions } from '../../permissions/registry';
-import { createScript, getCatalog, getRevision, getRuns, getScript, getStatus, lifecycle, listScripts } from '../../visual-scripts/api';
+import { createScript, getCatalog, getRevision, getRuns, getScript, getStatus, lifecycle, listScripts, runManual } from '../../visual-scripts/api';
 import { emptyGraph } from '../../visual-scripts/types';
 import type { GraphDocument, NodeDefinition, RuntimeStatus, VisualScript, VisualScriptRun } from '../../visual-scripts/types';
 import type { VisualScriptCanvas } from '../../visual-scripts/canvas';
@@ -33,6 +33,7 @@ export class VisualScriptWidget extends BaseComponent {
   private canEdit = false;
   private editor: VisualScriptEditor | null = null;
   private statusTimer: ReturnType<typeof setInterval> | null = null;
+  private triggerBusy = false;
 
   setConfig(value: Partial<Config>): void { this.config = { ...this.config, ...value }; if (this.isConnected) void this.load(); }
   getConfig(): Config { return { ...this.config }; }
@@ -70,7 +71,10 @@ export class VisualScriptWidget extends BaseComponent {
       visual-script-widget .vsw-shell{height:100%;display:flex;flex-direction:column;min-height:0}.vsw-statusbar{display:flex;align-items:center;gap:8px;padding:6px 9px;border-bottom:1px solid var(--border-color);font-size:11px}.vsw-status{padding:2px 7px;border-radius:10px;border:1px solid var(--border-color);text-transform:capitalize}.vsw-status.running{color:var(--status-good-color,#4ade80)}.vsw-status.error{color:var(--status-bad-color,#f87171)}.vsw-status.paused{color:var(--status-warning-color,#fbbf24)}.vsw-notice{max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--status-warning-color,#fbbf24)}
       visual-script-widget button,visual-script-widget input,visual-script-widget select{font:12px var(--widget-font-family);color:var(--content-text);background:color-mix(in srgb,var(--content-text) 5%,transparent);border:1px solid var(--border-color);border-radius:4px;padding:5px 8px}visual-script-widget select option{color:var(--content-text);background:var(--widget-bg)}visual-script-widget button{cursor:pointer}.vsw-grow{flex:1}.vsw-center{height:100%;display:flex;align-items:center;justify-content:center;padding:20px;text-align:center}.vsw-panel{width:min(460px,95%);padding:20px;border:1px solid var(--border-color);border-radius:8px;background:var(--widget-bg);font-size:.75rem}.vsw-panel h2{font-size:1rem;line-height:1.25;margin:0 0 7px}.vsw-panel p{font-size:.75rem;line-height:1.4;opacity:.65}.vsw-panel button,.vsw-panel input,.vsw-panel select{font-size:.75rem;line-height:1.25}.vsw-row{display:flex;gap:6px;margin-top:10px}.vsw-row input,.vsw-row select{flex:1;min-width:0}.vsw-overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;padding:10px}.vsw-stat{border:1px solid var(--border-color);border-radius:5px;padding:9px}.vsw-stat small{display:block;opacity:.55}.vsw-stat b{font-size:15px}
     </style>${this.bodyMarkup()}`;
-    if (this.script && !this.loading && !this.error && this.config.display === 'editor') this.querySelector<VisualScriptCanvas>('#vsw-canvas')?.setData(this.graph, this.catalog, true);
+    if (this.script && !this.loading && !this.error && this.config.display === 'editor') {
+      const state = this.status?.runtimeState || this.script.runtimeState || this.script.desiredState;
+      this.querySelector<VisualScriptCanvas>('#vsw-canvas')?.setData(this.graph, this.catalog, true, '', '', { showManualTrigger: this.canEdit, manualTriggerEnabled: state === 'running' && !this.triggerBusy });
+    }
     this.attachEventListeners();
   }
 
@@ -90,6 +94,7 @@ export class VisualScriptWidget extends BaseComponent {
     const click = (selector: string, handler: () => void) => { const element = this.querySelector<HTMLElement>(selector); if (element) element.onclick = handler; };
     click('#vsw-retry',()=>void this.load()); click('#vsw-create',()=>void this.create()); click('#vsw-attach',()=>this.attachExisting()); click('#vsw-detach',()=>this.attachScript(''));
     click('#vsw-edit',()=>this.openEditor()); click('#vsw-run-control',()=>void this.toggleRuntime()); click('#vsw-pause',()=>void this.control('pause'));
+    this.querySelector('#vsw-canvas')?.addEventListener('visual-manual-trigger',event=>void this.triggerManual((event as CustomEvent).detail.nodeId));
   }
   protected detachEventListeners(): void { /* Rendered nodes are discarded together. */ }
 
@@ -100,6 +105,7 @@ export class VisualScriptWidget extends BaseComponent {
   private closeEditor(reload:boolean):void{if(!this.editor)return;this.editor.remove();this.editor=null;this.emit('visual-script-focus-changed',{active:false});if(reload)void this.load()}
   private async toggleRuntime():Promise<void>{const state=this.status?.runtimeState||this.script?.runtimeState;if(state==='running')await this.control('stop');else if(state==='paused')await this.control('resume');else await this.control('start')}
   private async control(action:'start'|'pause'|'resume'|'stop'):Promise<void>{if(!this.script)return;this.notice='';try{this.status=await lifecycle(this.script.id,action);this.notice=action==='start'||action==='resume'?'Script started':action==='pause'?'Script paused':'Script stopped';this.render()}catch(error:any){this.notice=error?.message||'Command failed';this.render()}}
+  private async triggerManual(triggerNodeId:string):Promise<void>{if(!this.script||!triggerNodeId||this.triggerBusy||(this.status?.runtimeState||this.script.runtimeState||this.script.desiredState)!=='running')return;this.triggerBusy=true;this.notice='Queuing manual trigger…';this.render();try{const run=await runManual(this.script.id,triggerNodeId);this.runs=[run,...this.runs.filter(item=>item.runId!==run.runId)];this.notice='Manual trigger queued'}catch(error:any){this.notice=error?.message||'Manual trigger failed'}finally{this.triggerBusy=false;this.render()}}
   private async refreshStatus():Promise<void>{if(!this.script||document.hidden)return;try{const next=await getStatus(this.script.id);if(!this.status||next.sequence>=this.status.sequence){this.status=next;this.render()}}catch{/* retain last snapshot */}}
   private startStatusTimer():void{this.clearStatusTimer();this.statusTimer=setInterval(()=>void this.refreshStatus(),10000)}
   private clearStatusTimer():void{if(this.statusTimer){clearInterval(this.statusTimer);this.statusTimer=null}}

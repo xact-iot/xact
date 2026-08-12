@@ -11,6 +11,7 @@ import (
 // Wildcards are segment-oriented: neither * nor ? can cross a dot separator.
 type PathMatcher interface {
 	Match(path string) bool
+	MatchInstance(path string) (string, bool)
 	Pattern() string
 	Exact() bool
 }
@@ -43,20 +44,34 @@ func CompilePathPattern(value string) (PathMatcher, error) {
 func (m *pathMatcher) Pattern() string { return m.pattern }
 func (m *pathMatcher) Exact() bool     { return m.exact }
 func (m *pathMatcher) Match(value string) bool {
+	_, matched := m.MatchInstance(value)
+	return matched
+}
+
+// MatchInstance returns a stable instance identity for a matching path. For a
+// wildcard pattern the identity is composed from the complete path segments
+// containing wildcards, rather than only the substring consumed by * or ?.
+// This makes SITE.*.Status produce Pump01 for SITE.Pump01.Status and keeps all
+// events for the same resolved device in the same script instance.
+func (m *pathMatcher) MatchInstance(value string) (string, bool) {
 	path := NormalizePathPattern(value)
 	if m.exact {
-		return path == m.pattern
+		return path, path == m.pattern
 	}
 	segments := strings.Split(path, ".")
 	if len(segments) != len(m.segments) {
-		return false
+		return "", false
 	}
+	dynamic := make([]string, 0, len(segments))
 	for i := range segments {
 		if !matchSegment(m.segments[i], segments[i]) {
-			return false
+			return "", false
+		}
+		if strings.ContainsAny(m.segments[i], "*?") {
+			dynamic = append(dynamic, segments[i])
 		}
 	}
-	return true
+	return strings.Join(dynamic, "/"), true
 }
 
 func matchSegment(pattern, value string) bool {
@@ -87,10 +102,13 @@ func matchSegment(pattern, value string) bool {
 }
 
 type TagChange struct {
-	OrgName   string
-	TagPath   string
-	Value     any
-	Timestamp time.Time
+	OrgName     string
+	InstanceKey string
+	DevicePath  string
+	TagPath     string
+	Value       any
+	Fields      map[string]any
+	Timestamp   time.Time
 }
 
 type TagChangeCallback func(TagChange)
@@ -165,17 +183,22 @@ func (r *TagChangeRouter) Register(org, id, pattern string, callback TagChangeCa
 func (r *TagChangeRouter) Dispatch(change TagChange) int {
 	change.TagPath = NormalizePathPattern(change.TagPath)
 	r.mu.RLock()
-	matches := make([]tagRegistration, 0)
+	type routedChange struct {
+		registration tagRegistration
+		instanceKey  string
+	}
+	matches := make([]routedChange, 0)
 	for _, registration := range r.exact[change.OrgName][change.TagPath] {
-		matches = append(matches, registration)
+		instanceKey, _ := registration.matcher.MatchInstance(change.TagPath)
+		matches = append(matches, routedChange{registration: registration, instanceKey: instanceKey})
 		if len(matches) >= r.maxFanout {
 			break
 		}
 	}
 	if len(matches) < r.maxFanout {
 		for _, registration := range r.wildcard[change.OrgName] {
-			if registration.matcher.Match(change.TagPath) {
-				matches = append(matches, registration)
+			if instanceKey, matched := registration.matcher.MatchInstance(change.TagPath); matched {
+				matches = append(matches, routedChange{registration: registration, instanceKey: instanceKey})
 				if len(matches) >= r.maxFanout {
 					break
 				}
@@ -183,8 +206,10 @@ func (r *TagChangeRouter) Dispatch(change TagChange) int {
 		}
 	}
 	r.mu.RUnlock()
-	for _, registration := range matches {
-		registration.callback(change)
+	for _, match := range matches {
+		routed := change
+		routed.InstanceKey = match.instanceKey
+		match.registration.callback(routed)
 	}
 	return len(matches)
 }

@@ -367,7 +367,7 @@ func (h *VisualScriptHandlers) HandleRun(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	h.audit(r, "manual-run", map[string]any{"scriptId": run.ScriptID, "revision": run.ActiveRevision, "runId": run.RunID, "status": run.Status})
-	writeJSON(w, http.StatusOK, run)
+	writeJSON(w, http.StatusAccepted, run)
 }
 func (h *VisualScriptHandlers) HandleRunsWithSchema() openapischema.Handler {
 	return openapischema.WithSchema(h.HandleRuns, nil, []visualscripts.Run{}, "visual-scripts")
@@ -432,6 +432,10 @@ func writeVisualError(w http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	} else if errors.Is(err, visualscripts.ErrConflict) {
 		status = http.StatusConflict
+	} else if errors.Is(err, visualscripts.ErrNotRunning) {
+		status = http.StatusConflict
+	} else if errors.Is(err, visualscripts.ErrQueueFull) {
+		status = http.StatusTooManyRequests
 	} else if strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "deploy") || strings.Contains(err.Error(), "active revision") || strings.Contains(err.Error(), "Manual trigger") {
 		status = http.StatusBadRequest
 	}

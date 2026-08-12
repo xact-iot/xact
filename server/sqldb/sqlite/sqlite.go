@@ -412,6 +412,7 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 			script_id           TEXT NOT NULL REFERENCES visual_scripts(id) ON DELETE CASCADE,
 			active_revision     INTEGER NOT NULL,
 			trigger_node_id     TEXT NOT NULL,
+			instance_key        TEXT NOT NULL DEFAULT 'manual',
 			started_at          TEXT NOT NULL,
 			completed_at        TEXT,
 			status              TEXT NOT NULL,
@@ -424,6 +425,7 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 			dropped_traces      INTEGER NOT NULL DEFAULT 0,
 			trace_json          TEXT NOT NULL DEFAULT '[]'
 		)`,
+		`ALTER TABLE visual_script_runs ADD COLUMN instance_key TEXT NOT NULL DEFAULT 'manual'`,
 		`CREATE INDEX IF NOT EXISTS idx_visual_script_runs_lookup ON visual_script_runs(org_name, script_id, started_at DESC)`,
 	}
 

@@ -504,6 +504,7 @@ func main() {
 
 		if visualStore, ok := database.(visualscripts.Store); ok {
 			visualEngine := visualscripts.New(visualStore)
+			defer visualEngine.Close()
 			for _, err := range visualEngine.StartActivated(context.Background()) {
 				log.Printf("Warning: visual script activation failed: %v", err)
 			}

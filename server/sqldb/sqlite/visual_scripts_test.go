@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/xact-iot/xact/sqldb/sqlite"
 	"github.com/xact-iot/xact/visualscripts"
@@ -22,6 +23,7 @@ func TestVisualScriptRevisionDeployAndManualRun(t *testing.T) {
 	}
 	store := database.(visualscripts.Store)
 	engine := visualscripts.New(store)
+	defer engine.Close()
 	script := &visualscripts.Script{Name: "Temperature check", Description: "test", CreatedBy: 1, UpdatedBy: 1}
 	if err := store.CreateVisualScript(ctx, "default", script); err != nil {
 		t.Fatal(err)
@@ -53,12 +55,20 @@ func TestVisualScriptRevisionDeployAndManualRun(t *testing.T) {
 	if err := store.SetVisualScriptBackupRevision(ctx, "default", script.ID, &revision.Revision, 1); err != nil {
 		t.Fatal(err)
 	}
+	stale := &visualscripts.Run{RunID: "run-before-restart", OrgName: "default", ScriptID: script.ID, ActiveRevision: revision.Revision, TriggerNodeID: "manual", InstanceKey: "Pump00", StartedAt: time.Now().Add(-time.Minute).UTC(), Status: "running"}
+	if err := store.AppendVisualScriptRun(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
 	stored, err := store.GetVisualScript(ctx, "default", script.ID)
 	if err != nil || stored == nil || !stored.Simulation || !stored.Activate || !stored.HasBackup {
 		t.Fatalf("script options not retained: %#v, %v", stored, err)
 	}
 	if activationErrors := engine.StartActivated(ctx); len(activationErrors) != 0 {
 		t.Fatalf("activated script failed to start: %v", activationErrors)
+	}
+	recovered, err := store.GetVisualScriptRun(ctx, "default", script.ID, stale.RunID)
+	if err != nil || recovered != nil {
+		t.Fatalf("run trace was not cleared when the activated script started: %#v, %v", recovered, err)
 	}
 	status, err := engine.Status(ctx, "default", script.ID)
 	if err != nil {
@@ -71,14 +81,22 @@ func TestVisualScriptRevisionDeployAndManualRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.Status != "ok" || run.NodesExecuted != 4 {
-		t.Fatalf("unexpected run: %#v", run)
+	if run.Status != "queued" || run.InstanceKey != "manual" {
+		t.Fatalf("unexpected accepted run: %#v", run)
 	}
-	detail, err := store.GetVisualScriptRun(ctx, "default", script.ID, run.RunID)
-	if err != nil {
-		t.Fatal(err)
+	var detail *visualscripts.Run
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		detail, err = store.GetVisualScriptRun(ctx, "default", script.ID, run.RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if detail != nil && (detail.Status == "ok" || detail.Status == "error" || detail.Status == "cancelled") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	if detail == nil || len(detail.Trace) != 4 {
+	if detail == nil || detail.Status != "ok" || detail.NodesExecuted != 4 || detail.InstanceKey != "manual" || len(detail.Trace) != 4 {
 		t.Fatalf("trace not retained: %#v", detail)
 	}
 	other, err := store.GetVisualScript(ctx, "other", script.ID)

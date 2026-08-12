@@ -1,10 +1,12 @@
 import type { GraphDocument, GraphEdge, GraphNode, NodeDefinition } from './types';
+import { visualScriptCategoryStyle } from './category-colors';
 
 const nodeWidth = 150;
 const headerHeight = 32;
 const portStep = 22;
 type Endpoint = { nodeId: string; port: string };
 type Point = { x: number; y: number };
+type CanvasOptions = { showManualTrigger?: boolean; manualTriggerEnabled?: boolean };
 
 export class VisualScriptCanvas extends HTMLElement {
   private graph: GraphDocument | null = null;
@@ -13,16 +15,18 @@ export class VisualScriptCanvas extends HTMLElement {
   private selectedEdge = '';
   private pendingOutput: Endpoint | null = null;
   private readonly = false;
+  private options: CanvasOptions = {};
   private drag: { id: string; startX: number; startY: number; x: number; y: number; moved: boolean } | null = null;
   private connectionDrag: { from: Endpoint; x: number; y: number } | null = null;
   private rewireDrag: { edgeId: string; end: 'from'|'to'; fixed: Point } | null = null;
 
-  setData(graph: GraphDocument, definitions: NodeDefinition[], readonly = false, selected = '', selectedEdge = ''): void {
+  setData(graph: GraphDocument, definitions: NodeDefinition[], readonly = false, selected = '', selectedEdge = '', options: CanvasOptions = {}): void {
     this.graph = graph;
     this.definitions = new Map(definitions.map(d => [d.type, d]));
     this.readonly = readonly;
     this.selected = selected;
     this.selectedEdge = selectedEdge;
+    this.options = options;
     this.render();
   }
 
@@ -47,22 +51,23 @@ export class VisualScriptCanvas extends HTMLElement {
         visual-script-canvas svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}.vsc-edges{z-index:0}.vsc-overlay{z-index:2}
         visual-script-canvas path{fill:none;stroke:var(--accent-color);stroke-width:2;opacity:.62}.vsc-edge-hit{stroke:transparent;stroke-width:14;opacity:0;pointer-events:${this.readonly ? 'none' : 'stroke'};cursor:${this.readonly ? 'default' : 'pointer'}}.vsc-edge-line{pointer-events:none}.vsc-edge.selected .vsc-edge-line{stroke-width:4;opacity:1;filter:drop-shadow(0 0 3px var(--accent-color))}
         visual-script-canvas path.vsc-draft-edge{stroke-dasharray:6 4;opacity:.9}
-        visual-script-canvas .vsc-edge-handle{fill:var(--widget-header-surface,var(--widget-header-bg));stroke:var(--accent-color);stroke-width:3;pointer-events:all;cursor:grab;touch-action:none}.vsc-edge-handle:hover{r:7}.vsc-edge-handle:active{cursor:grabbing}
-        visual-script-canvas .vsc-node{z-index:1;position:absolute;width:${nodeWidth}px;min-height:58px;border:1px solid color-mix(in srgb,var(--widget-header-text,var(--content-text)) 30%,var(--widget-header-surface,var(--widget-header-bg)));border-radius:6px;background:var(--widget-header-surface,var(--widget-header-bg));color:var(--widget-header-text,var(--content-text));box-shadow:0 4px 12px var(--widget-shadow);font:12px var(--widget-font-family);user-select:none}
-        visual-script-canvas .vsc-node.selected{border-color:var(--accent-color);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent-color) 28%,transparent)}
-        visual-script-canvas .vsc-head{box-sizing:border-box;height:${headerHeight}px;padding:5px 8px;cursor:${this.readonly ? 'default' : 'grab'};display:flex;align-items:center;gap:6px;border-bottom:1px solid color-mix(in srgb,var(--widget-header-text,var(--content-text)) 18%,transparent)}
+        visual-script-canvas .vsc-edge-handle{fill:#ede6d9;stroke:var(--accent-color);stroke-width:3;pointer-events:all;cursor:grab;touch-action:none}.vsc-edge-handle:hover{r:7}.vsc-edge-handle:active{cursor:grabbing}
+        visual-script-canvas .vsc-node{z-index:1;position:absolute;width:${nodeWidth}px;min-height:58px;overflow:hidden;border:1px solid #b8aa93;border-radius:6px;background:#ede6d9;color:#3d3428;box-shadow:0 4px 12px rgba(61,52,40,.22);font:12px var(--widget-font-family);user-select:none}
+        visual-script-canvas .vsc-node.selected{border-color:var(--accent-color);outline:2px solid var(--accent-color);outline-offset:1px;box-shadow:0 0 0 3px color-mix(in srgb,var(--accent-color) 32%,transparent),0 6px 16px rgba(61,52,40,.3)}
+        visual-script-canvas .vsc-head{box-sizing:border-box;height:${headerHeight}px;padding:5px 8px;cursor:${this.readonly ? 'default' : 'grab'};display:flex;align-items:center;gap:6px;background:var(--vs-category-bg);color:var(--vs-category-text);border-bottom:1px solid var(--vs-category-border)}
         visual-script-canvas .vsc-head>span:last-child{min-width:0;flex:1}.vsc-icon{font-size:14px}.vsc-title{font-size:13px;line-height:1.2;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         visual-script-canvas .vsc-ports{display:flex;justify-content:space-between;align-items:flex-start;padding:5px 3px;gap:4px}
         visual-script-canvas .vsc-port-col{display:flex;flex-direction:column;gap:2px;max-width:50%}
         visual-script-canvas .vsc-port{border:0;background:none;color:inherit;font:12px var(--widget-font-family);padding:2px;display:flex;align-items:center;gap:3px;cursor:${this.readonly ? 'default' : 'crosshair'};white-space:nowrap}
-        visual-script-canvas .vsc-port::before{content:'';width:6px;height:6px;border:2px solid var(--accent-color);border-radius:50%;background:var(--widget-header-surface,var(--widget-header-bg))}
+        visual-script-canvas .vsc-port::before{content:'';width:6px;height:6px;border:2px solid var(--accent-color);border-radius:50%;background:#ede6d9}
         visual-script-canvas .vsc-out{flex-direction:row-reverse;text-align:right;cursor:${this.readonly ? 'default' : 'grab'};touch-action:none}.vsc-out.pending{color:var(--accent-color);font-weight:700;cursor:grabbing}
+        visual-script-canvas .vsc-manual-action{display:flex;justify-content:center;padding:0 5px 5px}.vsc-manual-trigger{min-width:70px;padding:3px 9px;border:1px solid #998b73;border-radius:4px;background:#fffaf0;color:#3d3428;font:600 12px var(--widget-font-family);cursor:pointer}.vsc-manual-trigger:hover:not(:disabled){border-color:var(--accent-color);box-shadow:0 0 0 1px var(--accent-color)}.vsc-manual-trigger:disabled{opacity:.45;cursor:not-allowed}
         visual-script-canvas.connecting .vsc-in,visual-script-canvas.rewiring-to .vsc-in,visual-script-canvas.rewiring-from .vsc-out{color:var(--accent-color)}visual-script-canvas .vsc-port.drop-target{font-weight:700;background:color-mix(in srgb,var(--accent-color) 18%,transparent);border-radius:4px}
         visual-script-canvas .vsc-empty{position:absolute;left:50%;top:40%;transform:translate(-50%,-50%);opacity:.5;text-align:center;max-width:320px}
       </style>
       <div class="vsc-surface">
         <svg class="vsc-edges" aria-label="Connections">${edges}</svg>
-        ${nodes || '<div class="vsc-empty">Add a Manual trigger from the palette to begin.</div>'}
+        ${nodes || '<div class="vsc-empty">Drag a Manual trigger from the palette to begin.</div>'}
         <svg class="vsc-overlay" aria-label="Selected connection controls">${this.edgeHandlesMarkup()}</svg>
       </div>`;
     this.scrollGraphIntoView();
@@ -81,9 +86,11 @@ export class VisualScriptCanvas extends HTMLElement {
     const definition = this.definitions.get(node.type);
     const inputs = (definition?.inputs || []).map(port => `<button class="vsc-port vsc-in" data-node="${esc(node.id)}" data-port="${esc(port.name)}" data-kind="in" aria-label="Connect to ${esc(definition?.name || node.type)} ${esc(port.label)}">${esc(port.label)}</button>`).join('');
     const outputs = (definition?.outputs || []).map(port => `<button class="vsc-port vsc-out ${this.pendingOutput?.nodeId === node.id && this.pendingOutput.port === port.name ? 'pending' : ''}" data-node="${esc(node.id)}" data-port="${esc(port.name)}" data-kind="out" aria-label="Connect from ${esc(definition?.name || node.type)} ${esc(port.label)}">${esc(port.label)}</button>`).join('');
-    return `<section class="vsc-node ${this.selected === node.id ? 'selected' : ''}" tabindex="0" data-node-id="${esc(node.id)}" style="left:${node.position.x}px;top:${node.position.y}px" aria-label="${esc(definition?.name || node.type)} node">
+    const manualTrigger = node.type === 'core.manual' && this.options.showManualTrigger ? `<div class="vsc-manual-action"><button class="vsc-manual-trigger" data-trigger-node="${esc(node.id)}" ${this.options.manualTriggerEnabled ? '' : 'disabled'} title="${this.options.manualTriggerEnabled ? 'Run the script from this Manual trigger' : 'Start the script to enable this trigger'}">Trigger</button></div>` : '';
+    return `<section class="vsc-node ${this.selected === node.id ? 'selected' : ''}" tabindex="0" data-node-id="${esc(node.id)}" style="left:${node.position.x}px;top:${node.position.y}px;${visualScriptCategoryStyle(definition?.category)}" aria-label="${esc(definition?.name || node.type)} node">
       <div class="vsc-head"><span class="vsc-icon">${esc(definition?.icon || '◇')}</span><span><div class="vsc-title">${esc(definition?.name || node.type)}</div></span></div>
       <div class="vsc-ports"><div class="vsc-port-col">${inputs}</div><div class="vsc-port-col">${outputs}</div></div>
+      ${manualTrigger}
     </section>`;
   }
 
@@ -119,7 +126,7 @@ export class VisualScriptCanvas extends HTMLElement {
 
   private bind(): void {
     this.querySelectorAll<HTMLElement>('.vsc-node').forEach(node => {
-      node.addEventListener('click', event => { if ((event.target as HTMLElement).closest('.vsc-port')) return; this.select(node.dataset.nodeId || ''); });
+      node.addEventListener('click', event => { if ((event.target as HTMLElement).closest('.vsc-port,.vsc-manual-trigger')) return; this.select(node.dataset.nodeId || ''); });
       node.addEventListener('keydown', event => this.onNodeKey(event, node.dataset.nodeId || ''));
       node.querySelector('.vsc-head')?.addEventListener('pointerdown', event => this.startDrag(event as PointerEvent, node.dataset.nodeId || ''));
     });
@@ -127,6 +134,11 @@ export class VisualScriptCanvas extends HTMLElement {
       port.addEventListener('click', event => { event.stopPropagation(); this.portClick(port); });
       if (port.dataset.kind === 'out') port.addEventListener('pointerdown', event => this.startConnectionDrag(event, port));
     });
+    this.querySelectorAll<HTMLButtonElement>('.vsc-manual-trigger').forEach(button => button.addEventListener('click', event => {
+      event.stopPropagation();
+      if (button.disabled) return;
+      this.dispatchEvent(new CustomEvent('visual-manual-trigger', { detail: { nodeId: button.dataset.triggerNode || '' }, bubbles: true }));
+    }));
     this.querySelectorAll<SVGPathElement>('.vsc-edge-hit').forEach(path => {
       path.addEventListener('click', event => { event.stopPropagation(); this.selectEdge(path.closest<SVGGElement>('.vsc-edge')?.dataset.edgeId || ''); });
       path.addEventListener('keydown', event => { if (isDeleteKey(event)) { event.preventDefault(); this.removeEdge(path.closest<SVGGElement>('.vsc-edge')?.dataset.edgeId || ''); } });

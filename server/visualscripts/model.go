@@ -1,5 +1,5 @@
 // Package visualscripts implements XACT-owned visual scripting contracts,
-// validation, compilation, and the safe first-release manual runner.
+// validation, compilation, and instance-aware asynchronous execution.
 package visualscripts
 
 import (
@@ -10,8 +10,10 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("visual script not found")
-	ErrConflict = errors.New("visual script revision conflict")
+	ErrNotFound   = errors.New("visual script not found")
+	ErrConflict   = errors.New("visual script revision conflict")
+	ErrQueueFull  = errors.New("visual script instance queue is full")
+	ErrNotRunning = errors.New("visual script is not running")
 )
 
 const SchemaVersion = 1
@@ -62,6 +64,7 @@ type Message struct {
 	ScriptID         string         `json:"scriptId"`
 	ActiveRevision   int            `json:"activeRevision"`
 	TriggerNodeID    string         `json:"triggerNodeId"`
+	InstanceKey      string         `json:"instanceKey"`
 	TriggerTimestamp time.Time      `json:"triggerTimestamp"`
 	DevicePath       string         `json:"devicePath,omitempty"`
 	TagPath          string         `json:"tagPath,omitempty"`
@@ -159,6 +162,7 @@ type Run struct {
 	ScriptID         string       `json:"scriptId"`
 	ActiveRevision   int          `json:"activeRevision"`
 	TriggerNodeID    string       `json:"triggerNodeId"`
+	InstanceKey      string       `json:"instanceKey"`
 	StartedAt        time.Time    `json:"startedAt"`
 	CompletedAt      *time.Time   `json:"completedAt,omitempty"`
 	Status           string       `json:"status"`
@@ -213,6 +217,8 @@ type Store interface {
 	SetVisualScriptBackupRevision(context.Context, string, string, *int, int) error
 	AppendVisualScriptRun(context.Context, *Run) error
 	CompleteVisualScriptRun(context.Context, *Run) error
+	CancelIncompleteVisualScriptRuns(context.Context, time.Time, string) error
+	ClearVisualScriptRuns(context.Context, string, string) error
 	ListVisualScriptRuns(context.Context, string, string, int) ([]Run, error)
 	GetVisualScriptRun(context.Context, string, string, string) (*Run, error)
 }
@@ -244,6 +250,9 @@ type DeployRequest struct {
 
 type RunRequest struct {
 	TriggerNodeID string         `json:"triggerNodeId,omitempty"`
+	InstanceKey   string         `json:"instanceKey,omitempty"`
+	DevicePath    string         `json:"devicePath,omitempty"`
+	TagPath       string         `json:"tagPath,omitempty"`
 	Value         any            `json:"value,omitempty"`
 	Fields        map[string]any `json:"fields,omitempty"`
 }

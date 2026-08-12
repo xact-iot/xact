@@ -21,18 +21,65 @@ type compiledPlan struct {
 	simulation bool
 }
 
+type queuedRun struct {
+	run     *Run
+	trigger GraphNode
+	message Message
+	plan    *compiledPlan
+}
+
+type instanceRuntime struct {
+	org            string
+	scriptID       string
+	instanceKey    string
+	activeRevision int
+	maxConcurrency int
+	queueLimit     int
+	ctx            context.Context
+	cancel         context.CancelFunc
+	mu             sync.Mutex
+	queue          []*queuedRun
+	running        int
+	stopped        bool
+}
+
 type Engine struct {
-	store    Store
-	registry *Registry
-	mu       sync.RWMutex
-	plans    map[string]*compiledPlan
-	statuses map[string]RuntimeStatus
-	context  map[string]any
-	sequence uint64
+	store       Store
+	registry    *Registry
+	mu          sync.RWMutex
+	plans       map[string]*compiledPlan
+	statuses    map[string]RuntimeStatus
+	context     map[string]any
+	instances   map[string]*instanceRuntime
+	rootCtx     context.Context
+	rootCancel  context.CancelFunc
+	lifecycleMu sync.Mutex
+	stateMu     sync.RWMutex
+	closed      bool
+	runs        sync.WaitGroup
+	sequence    uint64
+	nodeHandler func(context.Context, GraphNode, Message) (string, Message, bool, error)
 }
 
 func New(store Store) *Engine {
-	return &Engine{store: store, registry: NewRegistry(), plans: make(map[string]*compiledPlan), statuses: make(map[string]RuntimeStatus), context: make(map[string]any)}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Engine{store: store, registry: NewRegistry(), plans: make(map[string]*compiledPlan), statuses: make(map[string]RuntimeStatus), context: make(map[string]any), instances: make(map[string]*instanceRuntime), rootCtx: ctx, rootCancel: cancel}
+}
+
+// Close cancels all queued and running script instances and waits for their
+// goroutines to finish. Long-running node implementations must honor the
+// context passed to handleNode so shutdown remains prompt.
+func (e *Engine) Close() {
+	e.lifecycleMu.Lock()
+	if e.closed {
+		e.lifecycleMu.Unlock()
+		return
+	}
+	e.closed = true
+	e.rootCancel()
+	e.lifecycleMu.Unlock()
+	e.cancelInstances("", "", "Engine stopped")
+	e.runs.Wait()
 }
 
 func (e *Engine) Registry() *Registry { return e.registry }
@@ -42,6 +89,8 @@ func (e *Engine) Validate(graph GraphDocument) ValidationResult {
 }
 
 func (e *Engine) Deploy(ctx context.Context, org, scriptID string, revision int) (*RuntimeStatus, error) {
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
 	rev, err := e.store.GetVisualScriptRevision(ctx, org, scriptID, revision)
 	if err != nil {
 		return nil, err
@@ -64,6 +113,7 @@ func (e *Engine) Deploy(ctx context.Context, org, scriptID string, revision int)
 	if err := e.store.SetVisualScriptActiveRevision(ctx, org, scriptID, &revision); err != nil {
 		return nil, err
 	}
+	e.cancelInstances(org, scriptID, "Script revision changed")
 	e.mu.Lock()
 	e.plans[scriptKey(org, scriptID)] = plan
 	e.clearContextLocked(org, scriptID)
@@ -89,15 +139,29 @@ func (e *Engine) StartCurrent(ctx context.Context, org, scriptID string) (*Runti
 	if _, err = e.Deploy(ctx, org, scriptID, script.LatestRevision); err != nil {
 		return nil, err
 	}
+	if err = e.store.ClearVisualScriptRuns(ctx, org, scriptID); err != nil {
+		return nil, fmt.Errorf("clearing run trace: %w", err)
+	}
+	e.mu.Lock()
+	status := e.statuses[scriptKey(org, scriptID)]
+	status.LastTriggerAt = nil
+	status.LastCompleteAt = nil
+	status.ErrorSummary = ""
+	status.QueueDepth = 0
+	e.statuses[scriptKey(org, scriptID)] = status
+	e.mu.Unlock()
 	return e.SetDesiredState(ctx, org, scriptID, "running")
 }
 
 func (e *Engine) StartActivated(ctx context.Context) []error {
+	errorsFound := []error{}
+	if err := e.store.CancelIncompleteVisualScriptRuns(ctx, time.Now().UTC(), "Server restarted before the run completed"); err != nil {
+		errorsFound = append(errorsFound, fmt.Errorf("recovering incomplete visual script runs: %w", err))
+	}
 	scripts, err := e.store.ListActivatedVisualScripts(ctx)
 	if err != nil {
-		return []error{err}
+		return append(errorsFound, err)
 	}
-	errorsFound := []error{}
 	for _, script := range scripts {
 		if _, err := e.StartCurrent(ctx, script.OrgName, script.ID); err != nil {
 			errorsFound = append(errorsFound, fmt.Errorf("starting activated script %s/%s: %w", script.OrgName, script.Name, err))
@@ -107,12 +171,15 @@ func (e *Engine) StartActivated(ctx context.Context) []error {
 }
 
 func (e *Engine) Undeploy(ctx context.Context, org, scriptID string) (*RuntimeStatus, error) {
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
 	if err := e.store.SetVisualScriptDesiredState(ctx, org, scriptID, "stopped"); err != nil {
 		return nil, err
 	}
 	if err := e.store.SetVisualScriptActiveRevision(ctx, org, scriptID, nil); err != nil {
 		return nil, err
 	}
+	e.cancelInstances(org, scriptID, "Script stopped")
 	e.mu.Lock()
 	delete(e.plans, scriptKey(org, scriptID))
 	e.clearContextLocked(org, scriptID)
@@ -123,6 +190,8 @@ func (e *Engine) Undeploy(ctx context.Context, org, scriptID string) (*RuntimeSt
 }
 
 func (e *Engine) SetDesiredState(ctx context.Context, org, scriptID, state string) (*RuntimeStatus, error) {
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
 	if state != "stopped" && state != "running" && state != "paused" {
 		return nil, fmt.Errorf("invalid desired state %q", state)
 	}
@@ -140,6 +209,7 @@ func (e *Engine) SetDesiredState(ctx context.Context, org, scriptID, state strin
 		return nil, err
 	}
 	if state == "stopped" {
+		e.cancelInstances(org, scriptID, "Script stopped")
 		e.mu.Lock()
 		e.clearContextLocked(org, scriptID)
 		e.mu.Unlock()
@@ -176,12 +246,48 @@ func (e *Engine) Status(ctx context.Context, org, scriptID string) (RuntimeStatu
 }
 
 func (e *Engine) RunManual(ctx context.Context, org, scriptID string, request RunRequest) (*Run, error) {
+	if strings.TrimSpace(request.InstanceKey) == "" {
+		request.InstanceKey = "manual"
+	}
+	return e.enqueueTrigger(ctx, org, scriptID, request, "core.manual", time.Time{})
+}
+
+// RunTagChange is the RTDB-facing trigger entry point. TagChangeRouter assigns
+// InstanceKey from wildcard path segments, so events for the same resolved
+// device share context and limits while different devices run independently.
+func (e *Engine) RunTagChange(ctx context.Context, org, scriptID, triggerNodeID string, change TagChange) (*Run, error) {
+	instanceKey := strings.TrimSpace(change.InstanceKey)
+	if instanceKey == "" {
+		instanceKey = NormalizePathPattern(change.TagPath)
+	}
+	return e.enqueueTrigger(ctx, org, scriptID, RunRequest{
+		TriggerNodeID: triggerNodeID,
+		InstanceKey:   instanceKey,
+		DevicePath:    change.DevicePath,
+		TagPath:       change.TagPath,
+		Value:         change.Value,
+		Fields:        change.Fields,
+	}, "", change.Timestamp)
+}
+
+func (e *Engine) enqueueTrigger(ctx context.Context, org, scriptID string, request RunRequest, requiredType string, triggerAt time.Time) (*Run, error) {
+	// Serialize acceptance with state transitions. In particular, a trigger that
+	// observed "running" cannot create a fresh instance after Stop has cancelled
+	// the script's existing instances.
+	e.stateMu.RLock()
+	defer e.stateMu.RUnlock()
+	if e.rootCtx.Err() != nil {
+		return nil, ErrNotRunning
+	}
 	script, err := e.store.GetVisualScript(ctx, org, scriptID)
 	if err != nil {
 		return nil, err
 	}
 	if script == nil || script.ActiveRevision == nil {
 		return nil, errors.New("no active revision")
+	}
+	if script.DesiredState != "running" {
+		return nil, fmt.Errorf("%w: script is %s", ErrNotRunning, script.DesiredState)
 	}
 	plan, err := e.plan(ctx, org, scriptID, *script.ActiveRevision)
 	if err != nil {
@@ -190,59 +296,238 @@ func (e *Engine) RunManual(ctx context.Context, org, scriptID string, request Ru
 	triggerID := request.TriggerNodeID
 	if triggerID == "" {
 		for _, node := range plan.graph.Nodes {
-			if node.Type == "core.manual" {
+			definition, _ := e.registry.Definition(node.Type)
+			if (requiredType == "" && definition.Category == "Triggers") || node.Type == requiredType {
 				triggerID = node.ID
 				break
 			}
 		}
 	}
 	trigger, ok := plan.nodes[triggerID]
-	if !ok || trigger.Type != "core.manual" {
-		return nil, errors.New("select a Manual trigger")
+	definition, definitionOK := e.registry.Definition(trigger.Type)
+	if !ok || !definitionOK || definition.Category != "Triggers" || (requiredType != "" && trigger.Type != requiredType) {
+		if requiredType == "core.manual" {
+			return nil, errors.New("select a Manual trigger")
+		}
+		return nil, errors.New("select a trigger node")
+	}
+	instanceKey := strings.TrimSpace(request.InstanceKey)
+	if instanceKey == "" {
+		instanceKey = "default"
+	}
+	if len(instanceKey) > 512 {
+		return nil, errors.New("script instance key exceeds 512 bytes")
+	}
+	if strings.ContainsRune(instanceKey, '\x00') {
+		return nil, errors.New("script instance key contains an invalid character")
 	}
 	now := time.Now().UTC()
+	if triggerAt.IsZero() {
+		triggerAt = now
+	} else {
+		triggerAt = triggerAt.UTC()
+	}
 	runID := newID("run")
-	run := &Run{RunID: runID, OrgName: org, ScriptID: scriptID, ActiveRevision: *script.ActiveRevision, TriggerNodeID: triggerID, StartedAt: now, Status: "running"}
-	message := Message{ID: newID("msg"), CorrelationID: runID, OrgName: org, ScriptID: scriptID, ActiveRevision: *script.ActiveRevision, TriggerNodeID: triggerID, TriggerTimestamp: now, Value: request.Value, Fields: cloneFields(request.Fields)}
+	run := &Run{RunID: runID, OrgName: org, ScriptID: scriptID, ActiveRevision: *script.ActiveRevision, TriggerNodeID: triggerID, InstanceKey: instanceKey, StartedAt: now, Status: "queued"}
+	message := Message{ID: newID("msg"), CorrelationID: runID, OrgName: org, ScriptID: scriptID, ActiveRevision: *script.ActiveRevision, TriggerNodeID: triggerID, InstanceKey: instanceKey, TriggerTimestamp: triggerAt, DevicePath: request.DevicePath, TagPath: NormalizePathPattern(request.TagPath), Value: request.Value, Fields: cloneFields(request.Fields)}
 	if message.Fields == nil {
 		message.Fields = make(map[string]any)
 	}
 	if encoded, marshalErr := json.Marshal(message); marshalErr != nil || len(encoded) > 256<<10 {
-		return nil, errors.New("manual message must be JSON-compatible and no larger than 256 KiB")
+		return nil, errors.New("trigger message must be JSON-compatible and no larger than 256 KiB")
+	}
+	runtime := e.instanceRuntime(org, scriptID, instanceKey, *script.ActiveRevision, plan)
+	task := &queuedRun{run: run, trigger: trigger, message: message, plan: plan}
+	runtime.mu.Lock()
+	if runtime.stopped {
+		runtime.mu.Unlock()
+		return nil, ErrNotRunning
+	}
+	if runtime.running >= runtime.maxConcurrency && len(runtime.queue) >= runtime.queueLimit {
+		runtime.mu.Unlock()
+		return nil, ErrQueueFull
 	}
 	if err := e.store.AppendVisualScriptRun(ctx, run); err != nil {
+		runtime.mu.Unlock()
 		return nil, err
 	}
-	e.mu.Lock()
-	status := e.statuses[scriptKey(org, scriptID)]
-	status.LastTriggerAt = &now
-	e.statuses[scriptKey(org, scriptID)] = status
-	e.mu.Unlock()
+	startNow := runtime.running < runtime.maxConcurrency
+	if startNow {
+		runtime.running++
+	} else {
+		runtime.queue = append(runtime.queue, task)
+	}
+	runtime.mu.Unlock()
 
-	execErr := e.execute(ctx, plan, trigger, message, run)
+	e.recordAcceptedTrigger(org, scriptID, now, !startNow)
+	response := *run
+	if startNow {
+		if !e.launchRun(runtime, task) {
+			e.cancelQueuedRun(task.run, "Engine stopped")
+		}
+	}
+	return &response, nil
+}
+
+func (e *Engine) instanceRuntime(org, scriptID, instanceKey string, revision int, plan *compiledPlan) *instanceRuntime {
+	key := instanceRuntimeKey(org, scriptID, revision, instanceKey)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if runtime := e.instances[key]; runtime != nil {
+		return runtime
+	}
+	ctx, cancel := context.WithCancel(e.rootCtx)
+	runtime := &instanceRuntime{
+		org: org, scriptID: scriptID, instanceKey: instanceKey, activeRevision: revision,
+		maxConcurrency: plan.graph.Settings.MaxConcurrency, queueLimit: plan.graph.Settings.QueueLimit,
+		ctx: ctx, cancel: cancel,
+	}
+	e.instances[key] = runtime
+	return runtime
+}
+
+func (e *Engine) launchRun(runtime *instanceRuntime, task *queuedRun) bool {
+	e.lifecycleMu.Lock()
+	if e.closed {
+		e.lifecycleMu.Unlock()
+		return false
+	}
+	e.runs.Add(1)
+	e.lifecycleMu.Unlock()
+	go func() {
+		defer e.runs.Done()
+		e.executeQueuedRun(runtime, task)
+		e.finishInstanceRun(runtime)
+	}()
+	return true
+}
+
+func (e *Engine) executeQueuedRun(runtime *instanceRuntime, task *queuedRun) {
+	task.run.Status = "running"
+	_ = e.persistRun(task.run)
+	executionStarted := time.Now().UTC()
+	execErr := e.execute(runtime.ctx, task.plan, task.trigger, task.message, task.run)
+	completed := time.Now().UTC()
+	task.run.CompletedAt = &completed
+	task.run.DurationMS = completed.Sub(executionStarted).Milliseconds()
+	if execErr != nil {
+		if errors.Is(execErr, context.Canceled) {
+			task.run.Status = "cancelled"
+			task.run.Message = "Run cancelled"
+		} else {
+			task.run.Status = "error"
+			task.run.Message = execErr.Error()
+		}
+	} else {
+		task.run.Status = "ok"
+		task.run.Message = "Run completed"
+	}
+	_ = e.persistRun(task.run)
+	e.recordCompletedRun(runtime.org, runtime.scriptID, completed, execErr)
+}
+
+func (e *Engine) finishInstanceRun(runtime *instanceRuntime) {
+	var next *queuedRun
+	runtime.mu.Lock()
+	if runtime.running > 0 {
+		runtime.running--
+	}
+	if !runtime.stopped && len(runtime.queue) > 0 {
+		next = runtime.queue[0]
+		runtime.queue = runtime.queue[1:]
+		runtime.running++
+	}
+	runtime.mu.Unlock()
+	if next != nil {
+		e.adjustQueueDepth(runtime.org, runtime.scriptID, -1)
+		if !e.launchRun(runtime, next) {
+			e.cancelQueuedRun(next.run, "Engine stopped")
+		}
+	}
+}
+
+func (e *Engine) cancelInstances(org, scriptID, reason string) {
+	e.mu.Lock()
+	runtimes := make([]*instanceRuntime, 0)
+	for key, runtime := range e.instances {
+		if (org == "" || runtime.org == org) && (scriptID == "" || runtime.scriptID == scriptID) {
+			delete(e.instances, key)
+			runtimes = append(runtimes, runtime)
+		}
+	}
+	e.mu.Unlock()
+	for _, runtime := range runtimes {
+		runtime.mu.Lock()
+		runtime.stopped = true
+		runtime.cancel()
+		queued := runtime.queue
+		runtime.queue = nil
+		runtime.mu.Unlock()
+		if len(queued) > 0 {
+			e.adjustQueueDepth(runtime.org, runtime.scriptID, -len(queued))
+		}
+		for _, task := range queued {
+			e.cancelQueuedRun(task.run, reason)
+		}
+	}
+}
+
+func (e *Engine) cancelQueuedRun(run *Run, reason string) {
 	completed := time.Now().UTC()
 	run.CompletedAt = &completed
-	run.DurationMS = completed.Sub(now).Milliseconds()
-	if execErr != nil {
-		run.Status = "error"
-		run.Message = execErr.Error()
-	} else {
-		run.Status = "ok"
-		run.Message = "Run completed"
-	}
-	if err := e.store.CompleteVisualScriptRun(ctx, run); err != nil {
-		return nil, err
-	}
+	run.Status = "cancelled"
+	run.Message = reason
+	_ = e.persistRun(run)
+	e.recordCompletedRun(run.OrgName, run.ScriptID, completed, context.Canceled)
+}
+
+func (e *Engine) persistRun(run *Run) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return e.store.CompleteVisualScriptRun(ctx, run)
+}
+
+func (e *Engine) recordAcceptedTrigger(org, scriptID string, at time.Time, queued bool) {
 	e.mu.Lock()
-	status = e.statuses[scriptKey(org, scriptID)]
+	defer e.mu.Unlock()
+	key := scriptKey(org, scriptID)
+	status := e.statuses[key]
+	status.LastTriggerAt = &at
+	if queued {
+		status.QueueDepth++
+	}
+	e.sequence++
+	status.Sequence = e.sequence
+	e.statuses[key] = status
+}
+
+func (e *Engine) adjustQueueDepth(org, scriptID string, delta int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	key := scriptKey(org, scriptID)
+	status := e.statuses[key]
+	status.QueueDepth += delta
+	if status.QueueDepth < 0 {
+		status.QueueDepth = 0
+	}
+	e.sequence++
+	status.Sequence = e.sequence
+	e.statuses[key] = status
+}
+
+func (e *Engine) recordCompletedRun(org, scriptID string, completed time.Time, execErr error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	key := scriptKey(org, scriptID)
+	status := e.statuses[key]
 	status.LastCompleteAt = &completed
 	status.ErrorSummary = ""
-	if execErr != nil {
+	if execErr != nil && !errors.Is(execErr, context.Canceled) {
 		status.ErrorSummary = execErr.Error()
 	}
-	e.statuses[scriptKey(org, scriptID)] = status
-	e.mu.Unlock()
-	return run, nil
+	e.sequence++
+	status.Sequence = e.sequence
+	e.statuses[key] = status
 }
 
 func (e *Engine) plan(ctx context.Context, org, scriptID string, revision int) (*compiledPlan, error) {
@@ -312,6 +597,7 @@ func (e *Engine) execute(ctx context.Context, plan *compiledPlan, trigger GraphN
 		}
 		definition, _ := e.registry.Definition(item.node.Type)
 		simulatedOutput := plan.simulation && definition.OutputNode && !definition.SimulationSafe
+		traceInput := cloneMessage(item.msg)
 		var port string
 		var nextMessage Message
 		var action bool
@@ -319,13 +605,21 @@ func (e *Engine) execute(ctx context.Context, plan *compiledPlan, trigger GraphN
 		if simulatedOutput {
 			port, nextMessage, action = "out", item.msg, true
 		} else {
-			port, nextMessage, action, err = e.handleNode(item.node, item.msg)
+			if e.nodeHandler != nil {
+				port, nextMessage, action, err = e.nodeHandler(ctx, item.node, item.msg)
+			} else {
+				port, nextMessage, action, err = e.handleNode(ctx, item.node, item.msg)
+			}
 		}
 		run.NodesExecuted++
 		if action {
 			run.ActionsAttempted++
 		}
-		trace := TraceEvent{Sequence: run.NodesExecuted, Timestamp: time.Now().UTC(), NodeID: item.node.ID, NodeType: item.node.Type, Port: port, Status: "ok", Value: nextMessage.Value, Fields: cloneFields(nextMessage.Fields)}
+		traceValue, traceFields := nextMessage.Value, nextMessage.Fields
+		if item.node.Type == "core.debug" {
+			traceValue, traceFields = traceInput.Value, traceInput.Fields
+		}
+		trace := TraceEvent{Sequence: run.NodesExecuted, Timestamp: time.Now().UTC(), NodeID: item.node.ID, NodeType: item.node.Type, Port: port, Status: "ok", Value: cloneValue(traceValue), Fields: cloneFields(traceFields)}
 		if simulatedOutput {
 			trace.Message = "Simulation: output suppressed"
 		}
@@ -351,41 +645,69 @@ func (e *Engine) execute(ctx context.Context, plan *compiledPlan, trigger GraphN
 		for _, edge := range plan.outgoing[item.node.ID][port] {
 			next, ok := plan.nodes[edge.To.NodeID]
 			if ok {
-				copyMessage := nextMessage
-				copyMessage.Fields = cloneFields(nextMessage.Fields)
-				queue = append(queue, queuedNode{node: next, msg: copyMessage})
+				queue = append(queue, queuedNode{node: next, msg: cloneMessage(nextMessage)})
 			}
 		}
 	}
 	return nil
 }
 
-func (e *Engine) handleNode(node GraphNode, msg Message) (string, Message, bool, error) {
+func (e *Engine) handleNode(ctx context.Context, node GraphNode, msg Message) (string, Message, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", msg, false, err
+	}
 	var config map[string]any
 	if err := json.Unmarshal(node.Config, &config); err != nil {
 		return "", msg, false, err
 	}
-	value := selectedValue(msg, stringConfig(config, "field"))
 	switch node.Type {
 	case "core.manual":
 		return "out", msg, false, nil
 	case "core.compare":
+		value, err := selectedValue(msg, stringConfig(config, "field"))
+		if err != nil {
+			return "", msg, false, err
+		}
 		result, err := compareValues(value, config["compareTo"], stringConfig(config, "operator"))
 		return boolPort(result), msg, false, err
 	case "core.in-range":
-		n, ok := asFloat(value)
-		min, minOK := asFloat(config["minimum"])
-		max, maxOK := asFloat(config["maximum"])
-		if !ok || !minOK || !maxOK {
-			return "", msg, false, errors.New("in-range requires numeric values")
+		value, err := selectedValue(msg, stringConfig(config, "field"))
+		if err != nil {
+			return "", msg, false, err
 		}
-		inclusive, _ := config["inclusive"].(bool)
-		inside := n > min && n < max
+		n, ok := finiteFloat(value)
+		if !ok {
+			return "", msg, false, errors.New("in-range input must be a finite number")
+		}
+		minimum, err := configFiniteFloat(config, "minimum", 0)
+		if err != nil {
+			return "", msg, false, err
+		}
+		maximum, err := configFiniteFloat(config, "maximum", 100)
+		if err != nil {
+			return "", msg, false, err
+		}
+		if minimum > maximum {
+			return "", msg, false, errors.New("in-range maximum must be greater than or equal to minimum")
+		}
+		inclusive := true
+		if configured, exists := config["inclusive"]; exists {
+			var valid bool
+			inclusive, valid = configured.(bool)
+			if !valid {
+				return "", msg, false, errors.New("in-range inclusive must be a boolean")
+			}
+		}
+		inside := n > minimum && n < maximum
 		if inclusive {
-			inside = n >= min && n <= max
+			inside = n >= minimum && n <= maximum
 		}
 		return boolPort(inside), msg, false, nil
 	case "core.not":
+		value, err := selectedValue(msg, stringConfig(config, "field"))
+		if err != nil {
+			return "", msg, false, err
+		}
 		truth, ok := value.(bool)
 		if !ok {
 			return "", msg, false, errors.New("NOT requires a boolean")
@@ -420,6 +742,10 @@ func (e *Engine) handleNode(node GraphNode, msg Message) (string, Message, bool,
 		}
 		msg.Value = selected
 	case "core.multiply", "core.divide", "core.clamp", "core.scale":
+		value, err := selectedValue(msg, stringConfig(config, "field"))
+		if err != nil {
+			return "", msg, false, err
+		}
 		output, err := transformNumber(node.Type, value, config)
 		if err != nil {
 			return "", msg, false, err
@@ -467,7 +793,10 @@ func (e *Engine) handleNode(node GraphNode, msg Message) (string, Message, bool,
 	case "core.delete-context":
 		e.deleteContext(msg, node.ID, stringConfig(config, "scope"), stringConfig(config, "key"))
 	case "core.increment-context":
-		amount, _ := asFloat(config["amount"])
+		amount, err := configFiniteFloat(config, "amount", 1)
+		if err != nil {
+			return "", msg, false, err
+		}
 		incremented, err := e.incrementContext(msg, node.ID, stringConfig(config, "scope"), stringConfig(config, "key"), amount)
 		if err != nil {
 			return "", msg, false, err
@@ -482,30 +811,57 @@ func (e *Engine) handleNode(node GraphNode, msg Message) (string, Message, bool,
 }
 
 func transformNumber(nodeType string, value any, config map[string]any) (float64, error) {
-	n, ok := asFloat(value)
-	if !ok || math.IsNaN(n) || math.IsInf(n, 0) {
+	n, ok := finiteFloat(value)
+	if !ok {
 		return 0, errors.New("transform requires a finite numeric value")
 	}
 	var result float64
 	switch nodeType {
 	case "core.multiply":
-		factor, _ := asFloat(config["factor"])
+		factor, err := configFiniteFloat(config, "factor", 1)
+		if err != nil {
+			return 0, err
+		}
 		result = n * factor
 	case "core.divide":
-		divisor, _ := asFloat(config["divisor"])
+		divisor, err := configFiniteFloat(config, "divisor", 1)
+		if err != nil {
+			return 0, err
+		}
 		if divisor == 0 {
 			return 0, errors.New("division by zero")
 		}
 		result = n / divisor
 	case "core.clamp":
-		minimum, _ := asFloat(config["minimum"])
-		maximum, _ := asFloat(config["maximum"])
+		minimum, err := configFiniteFloat(config, "minimum", 0)
+		if err != nil {
+			return 0, err
+		}
+		maximum, err := configFiniteFloat(config, "maximum", 100)
+		if err != nil {
+			return 0, err
+		}
+		if minimum > maximum {
+			return 0, errors.New("clamp maximum must be greater than or equal to minimum")
+		}
 		result = math.Max(minimum, math.Min(maximum, n))
 	case "core.scale":
-		inputMin, _ := asFloat(config["inputMin"])
-		inputMax, _ := asFloat(config["inputMax"])
-		outputMin, _ := asFloat(config["outputMin"])
-		outputMax, _ := asFloat(config["outputMax"])
+		inputMin, err := configFiniteFloat(config, "inputMin", 0)
+		if err != nil {
+			return 0, err
+		}
+		inputMax, err := configFiniteFloat(config, "inputMax", 100)
+		if err != nil {
+			return 0, err
+		}
+		outputMin, err := configFiniteFloat(config, "outputMin", 0)
+		if err != nil {
+			return 0, err
+		}
+		outputMax, err := configFiniteFloat(config, "outputMax", 1)
+		if err != nil {
+			return 0, err
+		}
 		if inputMin == inputMax {
 			return 0, errors.New("input range has zero width")
 		}
@@ -518,8 +874,8 @@ func transformNumber(nodeType string, value any, config map[string]any) (float64
 }
 
 func compareValues(left, right any, operator string) (bool, error) {
-	if l, ok := asFloat(left); ok {
-		if r, rightOK := asFloat(right); rightOK {
+	if l, ok := finiteFloat(left); ok {
+		if r, rightOK := finiteFloat(right); rightOK {
 			switch operator {
 			case "<":
 				return l < r, nil
@@ -571,6 +927,20 @@ func asFloat(value any) (float64, bool) {
 		return float64(n), true
 	case int32:
 		return float64(n), true
+	case int16:
+		return float64(n), true
+	case int8:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint16:
+		return float64(n), true
+	case uint8:
+		return float64(n), true
 	case json.Number:
 		v, err := n.Float64()
 		return v, err == nil
@@ -579,12 +949,32 @@ func asFloat(value any) (float64, bool) {
 	}
 }
 
-func selectedValue(msg Message, field string) any {
-	if field == "" {
-		return msg.Value
+func finiteFloat(value any) (float64, bool) {
+	number, ok := asFloat(value)
+	return number, ok && !math.IsNaN(number) && !math.IsInf(number, 0)
+}
+
+func configFiniteFloat(config map[string]any, key string, defaultValue float64) (float64, error) {
+	value, exists := config[key]
+	if !exists {
+		return defaultValue, nil
 	}
-	value, _ := getField(msg.Fields, field)
-	return value
+	number, ok := finiteFloat(value)
+	if !ok {
+		return 0, fmt.Errorf("%s must be a finite number", key)
+	}
+	return number, nil
+}
+
+func selectedValue(msg Message, field string) (any, error) {
+	if field == "" {
+		return msg.Value, nil
+	}
+	value, ok := getField(msg.Fields, field)
+	if !ok {
+		return nil, fmt.Errorf("field %q does not exist", field)
+	}
+	return value, nil
 }
 
 func setSelectedValue(msg *Message, field string, value any) {
@@ -634,9 +1024,31 @@ func cloneFields(fields map[string]any) map[string]any {
 	}
 	copy := make(map[string]any, len(fields))
 	for key, value := range fields {
-		copy[key] = value
+		copy[key] = cloneValue(value)
 	}
 	return copy
+}
+
+func cloneMessage(message Message) Message {
+	copy := message
+	copy.Value = cloneValue(message.Value)
+	copy.Fields = cloneFields(message.Fields)
+	return copy
+}
+
+func cloneValue(value any) any {
+	switch item := value.(type) {
+	case map[string]any:
+		return cloneFields(item)
+	case []any:
+		copy := make([]any, len(item))
+		for i := range item {
+			copy[i] = cloneValue(item[i])
+		}
+		return copy
+	default:
+		return value
+	}
 }
 
 func stringConfig(config map[string]any, key string) string {
@@ -652,9 +1064,16 @@ func boolPort(value bool) string {
 }
 
 func scriptKey(org, scriptID string) string { return org + "\x00" + scriptID }
+func instanceRuntimeKey(org, scriptID string, revision int, instanceKey string) string {
+	return scriptKey(org, scriptID) + fmt.Sprintf("\x00%d\x00%s", revision, instanceKey)
+}
 
 func contextKey(msg Message, nodeID, scope, key string) string {
-	prefix := scriptKey(msg.OrgName, msg.ScriptID) + fmt.Sprintf("\x00%d\x00", msg.ActiveRevision)
+	instanceKey := msg.InstanceKey
+	if instanceKey == "" {
+		instanceKey = "default"
+	}
+	prefix := instanceRuntimeKey(msg.OrgName, msg.ScriptID, msg.ActiveRevision, instanceKey) + "\x00"
 	if scope == "node" {
 		prefix += nodeID + "\x00"
 	} else {
@@ -667,12 +1086,12 @@ func (e *Engine) getContext(msg Message, nodeID, scope, key string) (any, bool) 
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	value, ok := e.context[contextKey(msg, nodeID, scope, key)]
-	return value, ok
+	return cloneValue(value), ok
 }
 func (e *Engine) setContext(msg Message, nodeID, scope, key string, value any) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.context[contextKey(msg, nodeID, scope, key)] = value
+	e.context[contextKey(msg, nodeID, scope, key)] = cloneValue(value)
 }
 func (e *Engine) deleteContext(msg Message, nodeID, scope, key string) {
 	e.mu.Lock()
