@@ -96,8 +96,19 @@ func TestVisualScriptRevisionDeployAndManualRun(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if detail == nil || detail.Status != "ok" || detail.NodesExecuted != 4 || detail.InstanceKey != "manual" || len(detail.Trace) != 4 {
+	if detail == nil || detail.Status != "ok" || detail.NodesExecuted != 4 || detail.InstanceKey != "manual" || len(detail.Trace) != 1 || detail.Trace[0].NodeType != "core.debug" {
 		t.Fatalf("trace not retained: %#v", detail)
+	}
+	next := &visualscripts.Run{RunID: "next-run", OrgName: "default", ScriptID: script.ID, ActiveRevision: revision.Revision, TriggerNodeID: "manual", InstanceKey: "manual", StartedAt: time.Now().UTC(), Status: "queued"}
+	if err := store.AppendVisualScriptRun(ctx, next); err != nil {
+		t.Fatal(err)
+	}
+	items, err := store.ListVisualScriptRuns(ctx, "default", script.ID, 50)
+	if err != nil || len(items) != 2 || items[0].RunID != next.RunID {
+		t.Fatalf("current-session runs were not retained: %#v, %v", items, err)
+	}
+	if previous, err := store.GetVisualScriptRun(ctx, "default", script.ID, run.RunID); err != nil || previous == nil || len(previous.Trace) != 1 {
+		t.Fatalf("previous Debug trace was not retained: %#v, %v", previous, err)
 	}
 	other, err := store.GetVisualScript(ctx, "other", script.ID)
 	if err != nil {

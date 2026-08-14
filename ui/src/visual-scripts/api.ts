@@ -14,8 +14,9 @@ export const deployRevision = (id: string, revision: number) => apiRequest<Runti
 export const lifecycle = (id: string, action: 'start'|'pause'|'resume'|'stop'|'undeploy') => apiRequest<RuntimeStatus>(`${root}/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
 export const runManual = (id: string, triggerNodeId: string, value: any = null, fields: Record<string, any> = {}) => apiRequest<VisualScriptRun>(`${root}/${encodeURIComponent(id)}/run`, { method: 'POST', body: JSON.stringify({ triggerNodeId, value, fields }) });
 export const getStatus = (id: string) => apiRequest<RuntimeStatus>(`${root}/${encodeURIComponent(id)}/status`);
-export const getRuns = (id: string) => apiRequest<VisualScriptRun[]>(`${root}/${encodeURIComponent(id)}/runs`);
+export const getRuns = (id: string) => apiRequest<VisualScriptRun[]>(`${root}/${encodeURIComponent(id)}/runs?limit=200`);
 export const getRun = (id: string, runId: string) => apiRequest<VisualScriptRun>(`${root}/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}`);
+export const clearRuns = (id: string) => apiRequest<void>(`${root}/${encodeURIComponent(id)}/runs`, { method: 'DELETE' });
 export const getCatalog = () => apiRequest<NodeDefinition[]>('/api/v1/visual-script-nodes/catalog');
 export const backupScript = (id: string) => apiRequest<VisualScript>(`${root}/${encodeURIComponent(id)}/backup`, { method: 'POST' });
 export const restoreScript = (id: string) => apiRequest<VisualScriptRevision>(`${root}/${encodeURIComponent(id)}/restore`, { method: 'POST' });

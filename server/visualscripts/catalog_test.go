@@ -15,3 +15,25 @@ func TestCatalogUsesArraysForCollectionFields(t *testing.T) {
 		}
 	}
 }
+
+func TestContextNodeTypesUseVariableLabels(t *testing.T) {
+	want := map[string]string{
+		"core.get-context":       "Get Variable",
+		"core.set-context":       "Set Variable",
+		"core.delete-context":    "Delete Variable",
+		"core.increment-context": "Increment Variable",
+	}
+	for _, definition := range NewRegistry().Catalog() {
+		name, ok := want[definition.Type]
+		if !ok {
+			continue
+		}
+		if definition.Name != name || definition.Category != "Variables" {
+			t.Errorf("%s label = %q in %q, want %q in Variables", definition.Type, definition.Name, definition.Category, name)
+		}
+		delete(want, definition.Type)
+	}
+	if len(want) != 0 {
+		t.Fatalf("variable nodes missing from catalog: %#v", want)
+	}
+}

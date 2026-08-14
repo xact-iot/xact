@@ -381,6 +381,18 @@ func (h *VisualScriptHandlers) HandleRuns(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, http.StatusOK, items)
 }
+func (h *VisualScriptHandlers) HandleClearRunsWithSchema() openapischema.Handler {
+	return openapischema.WithResponses(h.HandleClearRuns, map[int]any{http.StatusNoContent: nil}, "visual-scripts")
+}
+func (h *VisualScriptHandlers) HandleClearRuns(w http.ResponseWriter, r *http.Request) {
+	org, id := h.GetOrg(r), chi.URLParam(r, "id")
+	if err := h.Store.ClearVisualScriptRuns(r.Context(), org, id); err != nil {
+		writeVisualError(w, err)
+		return
+	}
+	h.audit(r, "clear-run-trace", map[string]any{"scriptId": id})
+	w.WriteHeader(http.StatusNoContent)
+}
 func (h *VisualScriptHandlers) HandleRunDetailWithSchema() openapischema.Handler {
 	return openapischema.WithSchema(h.HandleRunDetail, nil, visualscripts.Run{}, "visual-scripts")
 }

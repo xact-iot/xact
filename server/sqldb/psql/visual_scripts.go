@@ -252,7 +252,6 @@ func (db *PostgresDB) ListVisualScriptRuns(ctx context.Context, org, scriptID st
 		if err != nil {
 			return nil, err
 		}
-		item.Trace = nil
 		items = append(items, *item)
 	}
 	return items, rows.Err()

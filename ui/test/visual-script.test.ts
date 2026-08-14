@@ -47,8 +47,8 @@ describe('visual script draft and canvas', () => {
     expect(canvasStyles).not.toContain('background:var(--widget-header-surface');
     expect(canvasStyles).not.toContain('color:var(--widget-header-text');
     expect(canvasStyles).toContain('background:var(--vs-category-bg)');
-    expect(canvas.querySelector('[aria-label="Manual node"]')?.getAttribute('style')).toContain('--vs-category-bg:#31565b');
-    expect(canvas.querySelector('[aria-label="Debug node"]')?.getAttribute('style')).toContain('--vs-category-bg:#5b414b');
+    expect(canvas.querySelector('[aria-label="Manual node"]')?.getAttribute('style')).toContain('--vs-category-bg:#245c48');
+    expect(canvas.querySelector('[aria-label="Debug node"]')?.getAttribute('style')).toContain('--vs-category-bg:#673848');
     expect(canvas.querySelector('.vsc-type')).toBeNull();
     expect(canvas.querySelector('[aria-label="Manual node"]')?.textContent).not.toContain('manual');
     canvas.remove();
@@ -202,8 +202,15 @@ describe('visual script draft and canvas', () => {
     expect(editor.draft.value.nodes[0]).toMatchObject({ type: 'core.manual', position: { x: 280, y: 210 }, config: {} });
     expect(editor.querySelector('style').textContent).toContain('z-index:3100');
     expect(editor.querySelector('style').textContent).toContain('grid-template-columns:180px minmax(360px,1fr) 230px');
-    expect(editor.querySelector('[data-category="Triggers"]')?.getAttribute('style')).toContain('--vs-category-bg:#31565b');
-    expect(editor.querySelector('[data-node-id]')?.getAttribute('style')).toContain('--vs-category-bg:#31565b');
+    expect(editor.querySelector('[data-category="Triggers"]')?.getAttribute('style')).toContain('--vs-category-bg:#245c48');
+    expect(editor.querySelector('#vse-category-0')?.getAttribute('style')).toContain('--vs-category-bg:#245c48');
+    expect(editor.querySelector('[data-node-id]')?.getAttribute('style')).toContain('--vs-category-bg:#245c48');
+    expect(editor.querySelector('style').textContent).toContain('var(--vs-category-bg) 38%');
+    const triggersHeader = editor.querySelector('[data-category="Triggers"]') as HTMLButtonElement;
+    expect(triggersHeader.getAttribute('aria-expanded')).toBe('true');
+    triggersHeader.click();
+    expect((editor.querySelector('[data-category="Triggers"]') as HTMLButtonElement).getAttribute('aria-expanded')).toBe('false');
+    expect(editor.querySelector('#vse-category-0')?.hasAttribute('hidden')).toBe(true);
     editor.remove();
   });
 
@@ -228,7 +235,7 @@ describe('visual script draft and canvas', () => {
     editor.remove();
   });
 
-  it('uses readable select options and suggests known keys for Get Context', () => {
+  it('uses readable select options and suggests known keys for Get Variable', () => {
     const graph = emptyGraph();
     graph.nodes = [
       { id: 'set-temperature', type: 'core.set-context', typeVersion: 1, position: { x: 20, y: 20 }, config: { scope: 'script', key: 'Temperature' } },
@@ -241,9 +248,9 @@ describe('visual script draft and canvas', () => {
       { name: 'key', label: 'Key', type: 'string', required: true },
     ];
     const catalog = [
-      { type: 'core.set-context', typeVersion: 1, name: 'Set Context', description: '', category: 'Context', icon: '⇤', inputs: [], outputs: [], parameters: contextParameters, available: true },
-      { type: 'core.increment-context', typeVersion: 1, name: 'Increment Context', description: '', category: 'Context', icon: '+1', inputs: [], outputs: [], parameters: contextParameters, available: true },
-      { type: 'core.get-context', typeVersion: 1, name: 'Get Context', description: '', category: 'Context', icon: '⇥', inputs: [], outputs: [], parameters: contextParameters, available: true },
+      { type: 'core.set-context', typeVersion: 1, name: 'Set Variable', description: '', category: 'Variables', icon: '⇤', inputs: [], outputs: [], parameters: contextParameters, available: true },
+      { type: 'core.increment-context', typeVersion: 1, name: 'Increment Variable', description: '', category: 'Variables', icon: '+1', inputs: [], outputs: [], parameters: contextParameters, available: true },
+      { type: 'core.get-context', typeVersion: 1, name: 'Get Variable', description: '', category: 'Variables', icon: '⇥', inputs: [], outputs: [], parameters: contextParameters, available: true },
     ] as NodeDefinition[];
     const editor = document.createElement('visual-script-editor') as any;
     editor.initialize({
@@ -279,7 +286,10 @@ describe('visual script draft and canvas', () => {
     };
     const completedRun = {
       ...acceptedRun, status: 'ok', durationMs: 2, nodesExecuted: 2,
-      trace: [{ sequence: 2, timestamp: new Date().toISOString(), nodeId: 'debug', nodeType: 'core.debug', port: 'out', status: 'ok', value: 23, fields: { source: 'context' } }],
+      trace: [
+        { sequence: 1, timestamp: new Date().toISOString(), nodeId: 'manual-secondary', nodeType: 'core.manual', port: 'out', status: 'ok', value: null, fields: {} },
+        { sequence: 2, timestamp: '2026-08-13T07:08:09.045Z', nodeId: 'debug', nodeType: 'core.debug', port: 'out', status: 'ok', value: 23, fields: { source: 'context' } },
+      ],
     };
     const fetchMock = vi.fn().mockImplementation(async (url: string) => ({
       ok: true, status: url.endsWith('/run') ? 202 : 200,
@@ -305,12 +315,88 @@ describe('visual script draft and canvas', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe('/xact/api/v1/visual-scripts/script-1/run');
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ triggerNodeId: 'manual-secondary', value: null, fields: {} });
-    expect(editor.textContent).toContain('queued · 0 nodes');
-    await vi.waitFor(() => expect(editor.selectedRun.status).toBe('ok'));
+    expect(editor.textContent).toContain('Run in progress…');
+    await vi.waitFor(() => expect(editor.runs.find((item: any) => item.runId === 'run-1')?.status).toBe('ok'));
     expect(fetchMock.mock.calls[1][0]).toBe('/xact/api/v1/visual-scripts/script-1/runs/run-1');
-    expect(editor.querySelector('.vse-trace')?.textContent).toContain('Debug · ok · out');
-    expect(editor.querySelector('.vse-trace pre')?.textContent).toContain('"value": 23');
-    expect(editor.querySelector('.vse-trace pre')?.textContent).toContain('"source": "context"');
+    expect(editor.querySelector('.vse-trace-header')?.textContent).toContain('Debug· ok');
+    expect(editor.querySelector('.vse-trace-header time')?.textContent).toMatch(/^\d{2}:\d{2}:\d{2}\.045$/);
+    expect(editor.querySelector('.vse-trace-json')?.textContent).toBe('{"value":23,"fields":{"source":"context"}}');
+    expect(editor.querySelectorAll('.vse-trace-event')).toHaveLength(1);
+    (editor.querySelector('[data-format-trace="run-1:2"]') as HTMLButtonElement).click();
+    expect(editor.querySelector('[role="dialog"]')).toBeTruthy();
+    expect(editor.querySelector('.vse-json-dialog pre')?.textContent).toContain('"value": 23');
+    expect(editor.querySelector('.vse-json-dialog pre')?.textContent).toContain('"source": "context"');
+    expect(editor.querySelector('#vse-recent-runs')).toBeNull();
+    expect(editor.querySelector('#vse-clear-trace')).toBeTruthy();
+    editor.remove();
+    vi.unstubAllGlobals();
+  });
+
+  it('accumulates Debug entries for the current started session and clears without confirmation', async () => {
+    const run = {
+      runId: 'run-1', scriptId: 'script-1', activeRevision: 1, triggerNodeId: 'manual', instanceKey: 'manual',
+      startedAt: new Date().toISOString(), status: 'ok', durationMs: 2, nodesExecuted: 1,
+      trace: [{ sequence: 1, timestamp: '2026-08-13T07:08:10.123Z', nodeId: 'debug', nodeType: 'core.debug', port: 'out', status: 'ok', value: 'new', fields: {} }],
+    };
+    const olderRun = {
+      ...run, runId: 'run-old', status: 'ok',
+      trace: [{ sequence: 1, timestamp: '2026-08-13T07:08:09.012Z', nodeId: 'debug', nodeType: 'core.debug', port: 'out', status: 'ok', value: 'old', fields: {} }],
+    };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+    vi.stubGlobal('fetch', fetchMock);
+    const editor = document.createElement('visual-script-editor') as any;
+    editor.initialize({
+      id: 'script-1', name: 'Test script', description: '', desiredState: 'running', runtimeState: 'running', latestRevision: 1,
+      createdAt: '', updatedAt: '', outOfDate: false,
+    }, emptyGraph(), [], [run, olderRun]);
+    document.body.appendChild(editor);
+    expect(editor.runs).toEqual([run, olderRun]);
+    expect(editor.textContent).not.toContain('Recent runs');
+    expect([...editor.querySelectorAll('.vse-trace-json')].map((item: Element) => item.textContent)).toEqual([
+      '{"value":"old","fields":{}}',
+      '{"value":"new","fields":{}}',
+    ]);
+    (editor.querySelector('#vse-clear-trace') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(editor.notice).toBe('Trace cleared'));
+
+    expect(document.querySelector('app-dialog #dialog-confirm')).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith('/xact/api/v1/visual-scripts/script-1/runs', expect.objectContaining({ method: 'DELETE' }));
+    expect(editor.runs).toEqual([]);
+    expect(editor.textContent).toContain('No debug output recorded.');
+    editor.remove();
+    vi.unstubAllGlobals();
+  });
+
+  it('does not restore cleared traces from an in-flight run poll', async () => {
+    const queuedRun = {
+      runId: 'run-polling', scriptId: 'script-1', activeRevision: 1, triggerNodeId: 'manual', instanceKey: 'manual',
+      startedAt: new Date().toISOString(), status: 'running', durationMs: 0, nodesExecuted: 1,
+      trace: [{ sequence: 1, timestamp: new Date().toISOString(), nodeId: 'debug', nodeType: 'core.debug', port: 'out', status: 'ok', value: 'before-clear', fields: {} }],
+    };
+    const completedRun = { ...queuedRun, status: 'ok', trace: [{ ...queuedRun.trace[0], value: 'late-response' }] };
+    let resolvePoll: ((response: any) => void) | undefined;
+    const fetchMock = vi.fn().mockImplementation(async (url: string, options?: RequestInit) => {
+      if (options?.method === 'DELETE') return { ok: true, status: 204 };
+      return new Promise(resolve => { resolvePoll = resolve; });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const editor = document.createElement('visual-script-editor') as any;
+    editor.initialize({
+      id: 'script-1', name: 'Test script', description: '', desiredState: 'running', runtimeState: 'running', latestRevision: 1,
+      createdAt: '', updatedAt: '', outOfDate: false,
+    }, emptyGraph(), [], [queuedRun]);
+    document.body.appendChild(editor);
+
+    const poll = editor.pollRun(queuedRun.runId, editor.traceGeneration);
+    await vi.waitFor(() => expect(resolvePoll).toBeTypeOf('function'));
+    (editor.querySelector('#vse-clear-trace') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(editor.notice).toBe('Trace cleared'));
+    resolvePoll!({ ok: true, status: 200, json: async () => completedRun });
+    await poll;
+
+    expect(editor.runs).toEqual([]);
+    expect(editor.querySelectorAll('.vse-trace-event')).toHaveLength(0);
+    expect(editor.textContent).toContain('No debug output recorded.');
     editor.remove();
     vi.unstubAllGlobals();
   });
@@ -418,7 +504,7 @@ describe('visual script draft and canvas', () => {
     expect(editor.querySelector('#vse-simulate')).toBeTruthy();
     expect(editor.querySelector('#vse-activate')).toBeTruthy();
     expect(editor.runs).toEqual([]);
-    expect(editor.textContent).toContain('No runs yet.');
+    expect(editor.textContent).toContain('No debug output recorded.');
     expect(editor.querySelector('#vse-save')?.hasAttribute('disabled')).toBe(true);
     editor.remove();
     vi.unstubAllGlobals();

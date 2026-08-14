@@ -7,11 +7,11 @@ export interface VisualScriptCategoryColors {
 const fallback: VisualScriptCategoryColors = { background: '#46515c', text: '#f7fafc', border: '#606d79' };
 
 const categoryColors: Record<string, VisualScriptCategoryColors> = {
-  triggers: { background: '#31565b', text: '#f4fbfb', border: '#456c71' },
-  conditions: { background: '#5a4d32', text: '#fff8e1', border: '#756644' },
-  transforms: { background: '#3b506d', text: '#f4f8ff', border: '#526a89' },
-  context: { background: '#504461', text: '#fbf7ff', border: '#6b5a80' },
-  actions: { background: '#5b414b', text: '#fff7fa', border: '#755663' },
+  triggers: { background: '#245c48', text: '#f2fff9', border: '#3b8066' },
+  conditions: { background: '#66501f', text: '#fff9df', border: '#8c7130' },
+  transforms: { background: '#334f7a', text: '#f3f7ff', border: '#4d70a3' },
+  variables: { background: '#504461', text: '#fbf7ff', border: '#6b5a80' },
+  actions: { background: '#673848', text: '#fff4f7', border: '#8d5064' },
 };
 
 export function visualScriptCategoryColors(category?: string): VisualScriptCategoryColors {

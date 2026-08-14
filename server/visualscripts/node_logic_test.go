@@ -114,6 +114,9 @@ func TestBranchMessagesAndTracesAreDeeplyIsolated(t *testing.T) {
 	if err := engine.execute(context.Background(), plan, plan.nodes["core.manual"], message, run); err != nil {
 		t.Fatal(err)
 	}
+	if len(run.Trace) != 1 || run.Trace[0].NodeID != "debug" {
+		t.Fatalf("trace should contain only the Debug node: %#v", run.Trace)
+	}
 	var debug TraceEvent
 	for _, event := range run.Trace {
 		if event.NodeID == "debug" {

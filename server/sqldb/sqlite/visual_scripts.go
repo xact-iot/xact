@@ -278,7 +278,6 @@ func (db *SQLiteDB) ListVisualScriptRuns(ctx context.Context, org, scriptID stri
 		if err != nil {
 			return nil, err
 		}
-		item.Trace = nil
 		items = append(items, *item)
 	}
 	return items, rows.Err()

@@ -597,7 +597,10 @@ func (e *Engine) execute(ctx context.Context, plan *compiledPlan, trigger GraphN
 		}
 		definition, _ := e.registry.Definition(item.node.Type)
 		simulatedOutput := plan.simulation && definition.OutputNode && !definition.SimulationSafe
-		traceInput := cloneMessage(item.msg)
+		var traceInput Message
+		if item.node.Type == "core.debug" {
+			traceInput = cloneMessage(item.msg)
+		}
 		var port string
 		var nextMessage Message
 		var action bool
@@ -615,29 +618,24 @@ func (e *Engine) execute(ctx context.Context, plan *compiledPlan, trigger GraphN
 		if action {
 			run.ActionsAttempted++
 		}
-		traceValue, traceFields := nextMessage.Value, nextMessage.Fields
 		if item.node.Type == "core.debug" {
-			traceValue, traceFields = traceInput.Value, traceInput.Fields
-		}
-		trace := TraceEvent{Sequence: run.NodesExecuted, Timestamp: time.Now().UTC(), NodeID: item.node.ID, NodeType: item.node.Type, Port: port, Status: "ok", Value: cloneValue(traceValue), Fields: cloneFields(traceFields)}
-		if simulatedOutput {
-			trace.Message = "Simulation: output suppressed"
-		}
-		if item.node.Type == "core.debug" {
+			trace := TraceEvent{Sequence: run.NodesExecuted, Timestamp: time.Now().UTC(), NodeID: item.node.ID, NodeType: item.node.Type, Port: port, Status: "ok", Value: cloneValue(traceInput.Value), Fields: cloneFields(traceInput.Fields)}
 			var config map[string]any
 			if json.Unmarshal(item.node.Config, &config) == nil {
 				trace.Message = strings.TrimSpace(stringConfig(config, "label"))
 			}
+			if err != nil {
+				trace.Status = "error"
+				trace.Message = err.Error()
+			}
+			if len(run.Trace) < 200 {
+				run.Trace = append(run.Trace, trace)
+			} else {
+				run.DroppedTraces++
+			}
 		}
 		if err != nil {
-			trace.Status = "error"
-			trace.Message = err.Error()
 			run.FirstErrorNodeID = item.node.ID
-		}
-		if len(run.Trace) < 200 {
-			run.Trace = append(run.Trace, trace)
-		} else {
-			run.DroppedTraces++
 		}
 		if err != nil {
 			return fmt.Errorf("node %s: %w", item.node.ID, err)
