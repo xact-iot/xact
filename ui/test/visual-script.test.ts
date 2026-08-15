@@ -242,6 +242,8 @@ describe('visual script draft and canvas', () => {
       { id: 'increment-count', type: 'core.increment-context', typeVersion: 1, position: { x: 20, y: 120 }, config: { scope: 'script', key: 'Count' } },
       { id: 'set-node-only', type: 'core.set-context', typeVersion: 1, position: { x: 20, y: 220 }, config: { scope: 'node', key: 'Private' } },
       { id: 'get', type: 'core.get-context', typeVersion: 1, position: { x: 300, y: 20 }, config: { scope: 'script', key: '' } },
+      { id: 'set-time', type: 'core.set-time-context', typeVersion: 1, position: { x: 20, y: 320 }, config: { key: 'LastSeen', source: 'now' } },
+      { id: 'get-time', type: 'core.get-time-context', typeVersion: 1, position: { x: 300, y: 120 }, config: { key: '' } },
     ];
     const contextParameters = [
       { name: 'scope', label: 'Scope', type: 'select', required: true, options: ['node', 'script'], default: 'script' },
@@ -251,6 +253,8 @@ describe('visual script draft and canvas', () => {
       { type: 'core.set-context', typeVersion: 1, name: 'Set Variable', description: '', category: 'Variables', icon: '⇤', inputs: [], outputs: [], parameters: contextParameters, available: true },
       { type: 'core.increment-context', typeVersion: 1, name: 'Increment Variable', description: '', category: 'Variables', icon: '+1', inputs: [], outputs: [], parameters: contextParameters, available: true },
       { type: 'core.get-context', typeVersion: 1, name: 'Get Variable', description: '', category: 'Variables', icon: '⇥', inputs: [], outputs: [], parameters: contextParameters, available: true },
+      { type: 'core.set-time-context', typeVersion: 1, name: 'Set Time Variable', description: '', category: 'Variables', icon: '⇤◷', inputs: [], outputs: [], parameters: [{ name: 'key', label: 'Key', type: 'string', required: true }], available: true },
+      { type: 'core.get-time-context', typeVersion: 1, name: 'Get Time Variable', description: '', category: 'Variables', icon: '⇥◷', inputs: [], outputs: [], parameters: [{ name: 'key', label: 'Key', type: 'string', required: true }], available: true },
     ] as NodeDefinition[];
     const editor = document.createElement('visual-script-editor') as any;
     editor.initialize({
@@ -266,6 +270,9 @@ describe('visual script draft and canvas', () => {
     expect(keyInput.getAttribute('list')).toBe('vse-context-key-options');
     expect(options).toEqual(['Count', 'Temperature']);
     expect(options).not.toContain('Private');
+    (editor.querySelector('[data-node-id="get-time"]') as HTMLElement).click();
+    const timeOptions = [...editor.querySelectorAll<HTMLOptionElement>('#vse-context-key-options option')].map(option => option.value);
+    expect(timeOptions).toEqual(['LastSeen']);
     expect(editor.querySelector('style').textContent).toContain('select option{color:var(--content-text);background:var(--widget-bg)}');
     editor.remove();
   });
@@ -288,7 +295,7 @@ describe('visual script draft and canvas', () => {
       ...acceptedRun, status: 'ok', durationMs: 2, nodesExecuted: 2,
       trace: [
         { sequence: 1, timestamp: new Date().toISOString(), nodeId: 'manual-secondary', nodeType: 'core.manual', port: 'out', status: 'ok', value: null, fields: {} },
-        { sequence: 2, timestamp: '2026-08-13T07:08:09.045Z', nodeId: 'debug', nodeType: 'core.debug', port: 'out', status: 'ok', value: 23, fields: { source: 'context' } },
+        { sequence: 2, timestamp: '2026-08-13T07:08:09.045Z', nodeId: 'debug', nodeType: 'core.debug', port: 'out', status: 'ok', value: 23, fields: { source: 'context' }, formattedTimes: { '$value': '2026-08-15T12:30:00.123Z' } },
       ],
     };
     const fetchMock = vi.fn().mockImplementation(async (url: string) => ({
@@ -320,12 +327,13 @@ describe('visual script draft and canvas', () => {
     expect(fetchMock.mock.calls[1][0]).toBe('/xact/api/v1/visual-scripts/script-1/runs/run-1');
     expect(editor.querySelector('.vse-trace-header')?.textContent).toContain('Debug· ok');
     expect(editor.querySelector('.vse-trace-header time')?.textContent).toMatch(/^\d{2}:\d{2}:\d{2}\.045$/);
-    expect(editor.querySelector('.vse-trace-json')?.textContent).toBe('{"value":23,"fields":{"source":"context"}}');
+    expect(editor.querySelector('.vse-trace-json')?.textContent).toBe('{"value":23,"fields":{"source":"context"},"formattedTimes":{"$value":"2026-08-15T12:30:00.123Z"}}');
     expect(editor.querySelectorAll('.vse-trace-event')).toHaveLength(1);
     (editor.querySelector('[data-format-trace="run-1:2"]') as HTMLButtonElement).click();
     expect(editor.querySelector('[role="dialog"]')).toBeTruthy();
     expect(editor.querySelector('.vse-json-dialog pre')?.textContent).toContain('"value": 23');
     expect(editor.querySelector('.vse-json-dialog pre')?.textContent).toContain('"source": "context"');
+    expect(editor.querySelector('.vse-json-dialog pre')?.textContent).toContain('"$value": "2026-08-15T12:30:00.123Z"');
     expect(editor.querySelector('#vse-recent-runs')).toBeNull();
     expect(editor.querySelector('#vse-clear-trace')).toBeTruthy();
     editor.remove();

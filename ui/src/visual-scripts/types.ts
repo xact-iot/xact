@@ -20,7 +20,7 @@ export interface PortDefinition { name: string; label: string; dataType: string 
 export interface ParameterDefinition { name: string; label: string; type: 'string'|'number'|'boolean'|'select'|'json'; description?: string; required?: boolean; options?: string[]; default?: any }
 export interface NodeDefinition { type: string; typeVersion: number; name: string; description: string; category: string; icon: string; inputs: PortDefinition[]; outputs: PortDefinition[]; parameters: ParameterDefinition[]; available: boolean; unavailableReason?: string; outputNode?: boolean; simulationSafe?: boolean }
 export interface RuntimeStatus { scriptId: string; desiredState: string; runtimeState: string; activeRevision?: number; latestRevision: number; queueDepth: number; sequence: number; lastTriggerAt?: string; lastCompletionAt?: string; errorSummary?: string }
-export interface TraceEvent { sequence: number; timestamp: string; nodeId: string; nodeType: string; port?: string; status: string; value?: any; fields?: Record<string, any>; message?: string }
+export interface TraceEvent { sequence: number; timestamp: string; nodeId: string; nodeType: string; port?: string; status: string; value?: any; fields?: Record<string, any>; message?: string; formattedTimes?: Record<string, string> }
 export interface VisualScriptRun { runId: string; scriptId: string; activeRevision: number; triggerNodeId: string; instanceKey: string; startedAt: string; completedAt?: string; status: string; durationMs: number; message?: string; nodesExecuted: number; trace?: TraceEvent[] }
 
 export function emptyGraph(): GraphDocument {

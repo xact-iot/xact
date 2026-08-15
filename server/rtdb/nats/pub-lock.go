@@ -22,6 +22,12 @@ func PreparePubDedup(s *server.Server, nc *nats.Conn) error {
 	return nil
 }
 
+// MayExecuteVisualScripts centralizes the existing cluster-leader policy for
+// trigger admission and the final recheck before visual-script side effects.
+func MayExecuteVisualScripts() bool {
+	return !isClustered.Load() || (natsServer != nil && natsServer.JetStreamIsLeader())
+}
+
 type PubLock struct {
 }
 

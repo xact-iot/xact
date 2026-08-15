@@ -58,12 +58,26 @@ type Engine struct {
 	closed      bool
 	runs        sync.WaitGroup
 	sequence    uint64
+	services    RuntimeServices
+	triggerMu   sync.Mutex
+	triggers    map[string]*triggerSession
+	edgeStates  map[string]edgeState
 	nodeHandler func(context.Context, GraphNode, Message) (string, Message, bool, error)
 }
 
 func New(store Store) *Engine {
+	return NewWithServices(store, RuntimeServices{})
+}
+
+func NewWithServices(store Store, services RuntimeServices) *Engine {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Engine{store: store, registry: NewRegistry(), plans: make(map[string]*compiledPlan), statuses: make(map[string]RuntimeStatus), context: make(map[string]any), instances: make(map[string]*instanceRuntime), rootCtx: ctx, rootCancel: cancel}
+	if services.TagRouter == nil {
+		services.TagRouter = NewTagChangeRouter(100, 100)
+	}
+	if services.Now == nil {
+		services.Now = time.Now
+	}
+	return &Engine{store: store, registry: NewRegistry(), plans: make(map[string]*compiledPlan), statuses: make(map[string]RuntimeStatus), context: make(map[string]any), instances: make(map[string]*instanceRuntime), rootCtx: ctx, rootCancel: cancel, services: services, triggers: make(map[string]*triggerSession), edgeStates: make(map[string]edgeState)}
 }
 
 // Close cancels all queued and running script instances and waits for their
@@ -76,6 +90,7 @@ func (e *Engine) Close() {
 		return
 	}
 	e.closed = true
+	e.stopTriggers("", "")
 	e.rootCancel()
 	e.lifecycleMu.Unlock()
 	e.cancelInstances("", "", "Engine stopped")
@@ -89,6 +104,10 @@ func (e *Engine) Validate(graph GraphDocument) ValidationResult {
 }
 
 func (e *Engine) Deploy(ctx context.Context, org, scriptID string, revision int) (*RuntimeStatus, error) {
+	return e.deploy(ctx, org, scriptID, revision, true)
+}
+
+func (e *Engine) deploy(ctx context.Context, org, scriptID string, revision int, startAutonomous bool) (*RuntimeStatus, error) {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
 	rev, err := e.store.GetVisualScriptRevision(ctx, org, scriptID, revision)
@@ -114,11 +133,15 @@ func (e *Engine) Deploy(ctx context.Context, org, scriptID string, revision int)
 		return nil, err
 	}
 	e.cancelInstances(org, scriptID, "Script revision changed")
+	e.stopTriggers(org, scriptID)
 	e.mu.Lock()
 	e.plans[scriptKey(org, scriptID)] = plan
 	e.clearContextLocked(org, scriptID)
 	e.sequence++
 	e.mu.Unlock()
+	if startAutonomous && script.DesiredState == "running" {
+		e.startTriggers(org, scriptID, revision, plan)
+	}
 	status, err := e.Status(ctx, org, scriptID)
 	return &status, err
 }
@@ -136,7 +159,7 @@ func (e *Engine) StartCurrent(ctx context.Context, org, scriptID string) (*Runti
 	if script.LatestRevision < 1 {
 		return nil, errors.New("save the script before starting it")
 	}
-	if _, err = e.Deploy(ctx, org, scriptID, script.LatestRevision); err != nil {
+	if _, err = e.deploy(ctx, org, scriptID, script.LatestRevision, false); err != nil {
 		return nil, err
 	}
 	if err = e.store.ClearVisualScriptRuns(ctx, org, scriptID); err != nil {
@@ -180,6 +203,7 @@ func (e *Engine) Undeploy(ctx context.Context, org, scriptID string) (*RuntimeSt
 		return nil, err
 	}
 	e.cancelInstances(org, scriptID, "Script stopped")
+	e.stopTriggers(org, scriptID)
 	e.mu.Lock()
 	delete(e.plans, scriptKey(org, scriptID))
 	e.clearContextLocked(org, scriptID)
@@ -210,9 +234,18 @@ func (e *Engine) SetDesiredState(ctx context.Context, org, scriptID, state strin
 	}
 	if state == "stopped" {
 		e.cancelInstances(org, scriptID, "Script stopped")
+		e.stopTriggers(org, scriptID)
 		e.mu.Lock()
 		e.clearContextLocked(org, scriptID)
 		e.mu.Unlock()
+	} else if state == "paused" {
+		e.stopTriggers(org, scriptID)
+	} else if state == "running" {
+		plan, planErr := e.plan(ctx, org, scriptID, *script.ActiveRevision)
+		if planErr != nil {
+			return nil, planErr
+		}
+		e.startTriggers(org, scriptID, *script.ActiveRevision, plan)
 	}
 	status, err := e.Status(ctx, org, scriptID)
 	return &status, err
@@ -271,6 +304,9 @@ func (e *Engine) RunTagChange(ctx context.Context, org, scriptID, triggerNodeID 
 }
 
 func (e *Engine) enqueueTrigger(ctx context.Context, org, scriptID string, request RunRequest, requiredType string, triggerAt time.Time) (*Run, error) {
+	if e.services.CanExecute != nil && !e.services.CanExecute() {
+		return nil, ErrNotLeader
+	}
 	// Serialize acceptance with state transitions. In particular, a trigger that
 	// observed "running" cannot create a fresh instance after Stop has cancelled
 	// the script's existing instances.
@@ -596,6 +632,9 @@ func (e *Engine) execute(ctx context.Context, plan *compiledPlan, trigger GraphN
 			return errors.New("maximum execution hops exceeded")
 		}
 		definition, _ := e.registry.Definition(item.node.Type)
+		if definition.OutputNode && !definition.SimulationSafe && e.services.CanExecute != nil && !e.services.CanExecute() {
+			return fmt.Errorf("node %s: %w", item.node.ID, ErrNotLeader)
+		}
 		simulatedOutput := plan.simulation && definition.OutputNode && !definition.SimulationSafe
 		var traceInput Message
 		if item.node.Type == "core.debug" {
@@ -623,6 +662,7 @@ func (e *Engine) execute(ctx context.Context, plan *compiledPlan, trigger GraphN
 			var config map[string]any
 			if json.Unmarshal(item.node.Config, &config) == nil {
 				trace.Message = strings.TrimSpace(stringConfig(config, "label"))
+				trace.FormattedTimes = debugFormattedTimes(traceInput, config)
 			}
 			if err != nil {
 				trace.Status = "error"
@@ -659,7 +699,7 @@ func (e *Engine) handleNode(ctx context.Context, node GraphNode, msg Message) (s
 		return "", msg, false, err
 	}
 	switch node.Type {
-	case "core.manual":
+	case "core.manual", "core.timer", "core.tag-changed", "core.rising-edge", "core.falling-edge", "core.startup":
 		return "out", msg, false, nil
 	case "core.compare":
 		value, err := selectedValue(msg, stringConfig(config, "field"))
@@ -667,6 +707,21 @@ func (e *Engine) handleNode(ctx context.Context, node GraphNode, msg Message) (s
 			return "", msg, false, err
 		}
 		result, err := compareValues(value, config["compareTo"], stringConfig(config, "operator"))
+		return boolPort(result), msg, false, err
+	case "core.compare-times":
+		leftValue, err := selectedValue(msg, stringConfig(config, "leftField"))
+		if err != nil {
+			return "", msg, false, err
+		}
+		left, err := timestampMillis(leftValue)
+		if err != nil {
+			return "", msg, false, fmt.Errorf("left time: %w", err)
+		}
+		right, err := configuredOrMessageTime(msg, config, stringConfig(config, "rightSource"), "rightField", "rightTime", e.services.Now)
+		if err != nil {
+			return "", msg, false, fmt.Errorf("right time: %w", err)
+		}
+		result, err := compareTimeValues(left, right, stringConfig(config, "operator"))
 		return boolPort(result), msg, false, err
 	case "core.in-range":
 		value, err := selectedValue(msg, stringConfig(config, "field"))
@@ -739,6 +794,22 @@ func (e *Engine) handleNode(ctx context.Context, node GraphNode, msg Message) (s
 			return "", msg, false, fmt.Errorf("field %q does not exist", field)
 		}
 		msg.Value = selected
+	case "core.current-time":
+		setSelectedValue(&msg, stringConfig(config, "outputField"), e.services.Now().UnixMilli())
+	case "core.time-since":
+		value, err := selectedValue(msg, stringConfig(config, "field"))
+		if err != nil {
+			return "", msg, false, err
+		}
+		then, err := timestampMillis(value)
+		if err != nil {
+			return "", msg, false, err
+		}
+		elapsed, err := elapsedInUnit(e.services.Now().UnixMilli()-then, stringConfig(config, "unit"))
+		if err != nil {
+			return "", msg, false, err
+		}
+		setSelectedValue(&msg, stringConfig(config, "outputField"), elapsed)
 	case "core.multiply", "core.divide", "core.clamp", "core.scale":
 		value, err := selectedValue(msg, stringConfig(config, "field"))
 		if err != nil {
@@ -800,12 +871,72 @@ func (e *Engine) handleNode(ctx context.Context, node GraphNode, msg Message) (s
 			return "", msg, false, err
 		}
 		msg.Value = incremented
+	case "core.set-time-context":
+		timestamp, err := configuredOrMessageTime(msg, config, stringConfig(config, "source"), "field", "time", e.services.Now)
+		if err != nil {
+			return "", msg, false, err
+		}
+		e.setContext(msg, node.ID, "script", stringConfig(config, "key"), timestamp)
+	case "core.get-time-context":
+		contextValue, ok := e.getContext(msg, node.ID, "script", stringConfig(config, "key"))
+		if !ok {
+			return "", msg, false, errors.New("time variable does not exist")
+		}
+		timestamp, err := timestampMillis(contextValue)
+		if err != nil {
+			return "", msg, false, fmt.Errorf("stored time variable: %w", err)
+		}
+		setSelectedValue(&msg, stringConfig(config, "outputField"), timestamp)
+	case "core.set-tag":
+		if e.services.SetTag == nil {
+			return "", msg, true, errors.New("Set Tag service is unavailable")
+		}
+		value := actionValue(msg, config)
+		if err := e.services.SetTag(ctx, msg, node.ID, stringConfig(config, "tagPath"), value); err != nil {
+			return "", msg, true, err
+		}
+		return "out", msg, true, nil
+	case "core.send-control":
+		if e.services.SendControl == nil {
+			return "", msg, true, errors.New("Send Control service is unavailable")
+		}
+		timeoutSeconds, err := configFiniteFloat(config, "timeout", 10)
+		if err != nil || timeoutSeconds <= 0 {
+			return "", msg, true, errors.New("control timeout must be greater than zero")
+		}
+		if err := e.services.SendControl(ctx, msg, node.ID, stringConfig(config, "deviceName"), stringConfig(config, "tagPath"), actionValue(msg, config), time.Duration(timeoutSeconds*float64(time.Second))); err != nil {
+			return "", msg, true, err
+		}
+		return "out", msg, true, nil
+	case "core.send-notification":
+		if e.services.SendNotification == nil {
+			return "", msg, true, errors.New("Send Notification service is unavailable")
+		}
+		if err := e.services.SendNotification(ctx, msg, node.ID, stringConfig(config, "profile"), stringConfig(config, "severity"), stringConfig(config, "message"), stringConfig(config, "device")); err != nil {
+			return "", msg, true, err
+		}
+		return "out", msg, true, nil
+	case "core.log-event":
+		if e.services.LogEvent == nil {
+			return "", msg, true, errors.New("Log Event service is unavailable")
+		}
+		if err := e.services.LogEvent(ctx, msg, node.ID, stringConfig(config, "severity"), stringConfig(config, "message"), stringConfig(config, "device")); err != nil {
+			return "", msg, true, err
+		}
+		return "out", msg, true, nil
 	case "core.debug":
 		return "out", msg, true, nil
 	default:
 		return "", msg, false, fmt.Errorf("node type %q cannot execute", node.Type)
 	}
 	return "out", msg, false, nil
+}
+
+func actionValue(msg Message, config map[string]any) any {
+	if stringConfig(config, "source") == "configured" {
+		return config["value"]
+	}
+	return msg.Value
 }
 
 func transformNumber(nodeType string, value any, config map[string]any) (float64, error) {

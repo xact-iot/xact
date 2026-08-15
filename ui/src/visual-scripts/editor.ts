@@ -91,7 +91,7 @@ export class VisualScriptEditor extends HTMLElement {
       if (p.type === 'boolean') return `<label class="vse-field"><span>${esc(p.label)}</span><input type="checkbox" data-param="${esc(p.name)}" data-type="boolean" ${value?'checked':''}></label>`;
       if (p.type === 'select') return `<label class="vse-field"><span>${esc(p.label)}</span><select data-param="${esc(p.name)}" data-type="select">${(p.options||[]).map(o=>`<option ${value===o?'selected':''}>${esc(o)}</option>`).join('')}</select></label>`;
       if (p.type === 'json') return `<label class="vse-field"><span>${esc(p.label)}</span><textarea data-param="${esc(p.name)}" data-type="json">${esc(value === undefined ? '' : JSON.stringify(value, null, 2))}</textarea></label>`;
-      if (node.type === 'core.get-context' && p.name === 'key') {
+      if ((node.type === 'core.get-context' || node.type === 'core.get-time-context') && p.name === 'key') {
         const keys = this.contextKeyOptions(node);
         return `<label class="vse-field"><span>${esc(p.label)}</span><input data-param="key" data-type="string" type="text" value="${esc(value ?? '')}" list="vse-context-key-options"><datalist id="vse-context-key-options">${keys.map(key=>`<option value="${esc(key)}"></option>`).join('')}</datalist><small style="opacity:.5">Choose a key written by a variable node in this scope, or enter a new key.</small></label>`;
       }
@@ -101,7 +101,7 @@ export class VisualScriptEditor extends HTMLElement {
 
   private contextKeyOptions(node: GraphNode): string[] {
     const scope = String(node.config.scope ?? 'script');
-    const writers = new Set(['core.set-context', 'core.increment-context']);
+    const writers = new Set(node.type === 'core.get-time-context' ? ['core.set-time-context'] : ['core.set-context', 'core.increment-context']);
     return [...new Set(this.draft.value.nodes
       .filter(candidate => writers.has(candidate.type) && String(candidate.config.scope ?? 'script') === scope)
       .map(candidate => String(candidate.config.key ?? '').trim())
@@ -116,7 +116,7 @@ export class VisualScriptEditor extends HTMLElement {
     return `<div class="vse-trace">${toolbar}${entries.map(({ key, event }) => {
       const node = this.draft.value.nodes.find(item => item.id === event.nodeId);
       const name = this.catalog.find(item => item.type === node?.type)?.name || event.nodeType;
-      const payload = JSON.stringify({ value: event.value ?? null, fields: event.fields ?? {} });
+      const payload = JSON.stringify({ value: event.value ?? null, fields: event.fields ?? {}, ...(event.formattedTimes?{formattedTimes:event.formattedTimes}:{}) });
       return `<div class="vse-trace-event"><div class="vse-trace-header"><time datetime="${esc(event.timestamp)}">${esc(formatTraceTime(event.timestamp))}</time><b>${esc(name)}</b><span>· ${esc(event.status)}${event.message?` · ${esc(event.message)}`:''}</span><button data-format-trace="${esc(key)}" title="Show formatted JSON">Format JSON</button></div><code class="vse-trace-json" title="${esc(payload)}">${esc(payload)}</code></div>`;
     }).join('')}${running?'<div class="vse-empty-message" style="opacity:.6">Run in progress…</div>':''}</div>`;
   }
@@ -128,7 +128,7 @@ export class VisualScriptEditor extends HTMLElement {
     const event = found.event;
     const node = this.draft.value.nodes.find(item => item.id === event.nodeId);
     const name = this.catalog.find(item => item.type === node?.type)?.name || event.nodeType;
-    const payload = JSON.stringify({ value: event.value ?? null, fields: event.fields ?? {} }, null, 2);
+    const payload = JSON.stringify({ value: event.value ?? null, fields: event.fields ?? {}, ...(event.formattedTimes?{formattedTimes:event.formattedTimes}:{}) }, null, 2);
     return `<div class="vse-json-popup" id="vse-json-popup"><div class="vse-json-dialog" role="dialog" aria-modal="true" aria-labelledby="vse-json-title"><header><h2 id="vse-json-title">${esc(name)} output</h2><button id="vse-json-close" aria-label="Close formatted JSON">Close</button></header><pre>${esc(payload)}</pre></div></div>`;
   }
 

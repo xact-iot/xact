@@ -14,6 +14,7 @@ var (
 	ErrConflict   = errors.New("visual script revision conflict")
 	ErrQueueFull  = errors.New("visual script instance queue is full")
 	ErrNotRunning = errors.New("visual script is not running")
+	ErrNotLeader  = errors.New("visual script execution is handled by the cluster leader")
 )
 
 const SchemaVersion = 1
@@ -177,15 +178,16 @@ type Run struct {
 }
 
 type TraceEvent struct {
-	Sequence  int            `json:"sequence"`
-	Timestamp time.Time      `json:"timestamp"`
-	NodeID    string         `json:"nodeId"`
-	NodeType  string         `json:"nodeType"`
-	Port      string         `json:"port,omitempty"`
-	Status    string         `json:"status"`
-	Value     any            `json:"value,omitempty"`
-	Fields    map[string]any `json:"fields,omitempty"`
-	Message   string         `json:"message,omitempty"`
+	Sequence       int               `json:"sequence"`
+	Timestamp      time.Time         `json:"timestamp"`
+	NodeID         string            `json:"nodeId"`
+	NodeType       string            `json:"nodeType"`
+	Port           string            `json:"port,omitempty"`
+	Status         string            `json:"status"`
+	Value          any               `json:"value,omitempty"`
+	Fields         map[string]any    `json:"fields,omitempty"`
+	Message        string            `json:"message,omitempty"`
+	FormattedTimes map[string]string `json:"formattedTimes,omitempty"`
 }
 
 type RuntimeStatus struct {

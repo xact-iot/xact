@@ -503,7 +503,14 @@ func main() {
 		defer schedEngine.Stop()
 
 		if visualStore, ok := database.(visualscripts.Store); ok {
-			visualEngine := visualscripts.New(visualStore)
+			visualServices, visualTagSubscription, err := visualScriptServices(database, treeOps, nc, publisher)
+			if err != nil {
+				log.Printf("Warning: visual script tag subscription unavailable: %v", err)
+			}
+			if visualTagSubscription != nil {
+				defer visualTagSubscription.Unsubscribe()
+			}
+			visualEngine := visualscripts.NewWithServices(visualStore, visualServices)
 			defer visualEngine.Close()
 			for _, err := range visualEngine.StartActivated(context.Background()) {
 				log.Printf("Warning: visual script activation failed: %v", err)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
@@ -46,6 +47,17 @@ func NormalizeGraph(graph GraphDocument) GraphDocument {
 		}
 		if len(graph.Nodes[i].Config) == 0 || string(graph.Nodes[i].Config) == "null" {
 			graph.Nodes[i].Config = json.RawMessage(`{}`)
+		}
+		if graph.Nodes[i].Type == "core.tag-changed" || graph.Nodes[i].Type == "core.rising-edge" || graph.Nodes[i].Type == "core.falling-edge" {
+			var config map[string]any
+			if json.Unmarshal(graph.Nodes[i].Config, &config) == nil {
+				if path, ok := config["pathPattern"].(string); ok {
+					config["pathPattern"] = NormalizePathPattern(path)
+					if encoded, err := json.Marshal(config); err == nil {
+						graph.Nodes[i].Config = encoded
+					}
+				}
+			}
 		}
 	}
 	return graph
@@ -252,6 +264,13 @@ func validateNodeConfig(result *ValidationResult, node GraphNode, definition Nod
 			result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_field_path", node.ID, "", "config.field", "Field path cannot contain empty segments"))
 		}
 	}
+	for _, key := range []string{"leftField", "rightField", "outputField"} {
+		if field, exists := config[key]; exists {
+			if path, ok := field.(string); ok && path != "" && !validFieldPath(path) {
+				result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_field_path", node.ID, "", "config."+key, "Field path cannot contain empty segments"))
+			}
+		}
+	}
 	if node.Type == "core.and" || node.Type == "core.or" {
 		validateFieldList(result, node, config["fields"], true)
 	}
@@ -278,6 +297,97 @@ func validateNodeConfig(result *ValidationResult, node GraphNode, definition Nod
 		if minOK && maxOK && min == max {
 			result.Diagnostics = append(result.Diagnostics, diagnostic("error", "zero_input_range", node.ID, "", "config.inputMax", "Input range cannot have zero width"))
 		}
+	}
+	if node.Type == "core.timer" {
+		validateDurationConfig(result, node, config, "interval", time.Second, true)
+		validateDurationConfig(result, node, config, "initialDelay", 0, false)
+		validateDurationConfig(result, node, config, "jitter", 0, false)
+	}
+	if node.Type == "core.startup" {
+		validateDurationConfig(result, node, config, "delay", 0, false)
+	}
+	if node.Type == "core.tag-changed" || node.Type == "core.rising-edge" || node.Type == "core.falling-edge" {
+		pattern := stringConfig(config, "pathPattern")
+		if _, err := CompilePathPattern(pattern); err != nil {
+			result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_path_pattern", node.ID, "", "config.pathPattern", err.Error()))
+		}
+	}
+	if node.Type == "core.rising-edge" || node.Type == "core.falling-edge" {
+		validateDurationConfig(result, node, config, "debounce", 0, false)
+	}
+	if node.Type == "core.send-control" {
+		if timeout, ok := finiteFloat(config["timeout"]); ok && timeout <= 0 {
+			result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_timeout", node.ID, "", "config.timeout", "Timeout must be greater than zero"))
+		}
+	}
+	if node.Type == "core.compare-times" {
+		switch stringConfig(config, "rightSource") {
+		case "field":
+			if strings.TrimSpace(stringConfig(config, "rightField")) == "" {
+				result.Diagnostics = append(result.Diagnostics, diagnostic("error", "missing_time_field", node.ID, "", "config.rightField", "Right time field is required"))
+			}
+		case "configured":
+			validateTimestampConfig(result, node, config, "rightTime")
+		}
+	}
+	if node.Type == "core.set-time-context" {
+		switch stringConfig(config, "source") {
+		case "field":
+			if strings.TrimSpace(stringConfig(config, "field")) == "" {
+				result.Diagnostics = append(result.Diagnostics, diagnostic("error", "missing_time_field", node.ID, "", "config.field", "Time field is required"))
+			}
+		case "configured":
+			validateTimestampConfig(result, node, config, "time")
+		}
+	}
+	if node.Type == "core.debug" {
+		if fields, exists := config["timeFields"]; exists && fields != nil {
+			validateTimeFieldList(result, node, fields)
+		}
+	}
+}
+
+func validateTimestampConfig(result *ValidationResult, node GraphNode, config map[string]any, key string) {
+	value, exists := config[key]
+	if !exists || strings.TrimSpace(fmt.Sprint(value)) == "" {
+		result.Diagnostics = append(result.Diagnostics, diagnostic("error", "missing_timestamp", node.ID, "", "config."+key, "Configured time is required"))
+		return
+	}
+	if _, err := timestampMillis(value); err != nil {
+		result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_timestamp", node.ID, "", "config."+key, err.Error()))
+	}
+}
+
+func validateTimeFieldList(result *ValidationResult, node GraphNode, value any) {
+	fields, ok := value.([]any)
+	if !ok {
+		result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_time_field_list", node.ID, "", "config.timeFields", "Time fields must be a JSON array"))
+		return
+	}
+	for _, value := range fields {
+		field, ok := value.(string)
+		if !ok || (field != "$value" && !validFieldPath(field)) {
+			result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_time_field", node.ID, "", "config.timeFields", "Each time field must be $value or a dotted field path"))
+			return
+		}
+	}
+}
+
+func validateDurationConfig(result *ValidationResult, node GraphNode, config map[string]any, key string, minimum time.Duration, required bool) {
+	value, exists := config[key]
+	if !exists || strings.TrimSpace(fmt.Sprint(value)) == "" {
+		if required {
+			result.Diagnostics = append(result.Diagnostics, diagnostic("error", "missing_duration", node.ID, "", "config."+key, key+" is required"))
+		}
+		return
+	}
+	duration, err := time.ParseDuration(fmt.Sprint(value))
+	if err != nil || duration < minimum {
+		message := key + " must be a valid non-negative duration such as 30s or 5m"
+		if minimum > 0 {
+			message = fmt.Sprintf("%s must be at least %s", key, minimum)
+		}
+		result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_duration", node.ID, "", "config."+key, message))
 	}
 }
 

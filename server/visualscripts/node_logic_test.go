@@ -7,10 +7,28 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEveryCatalogNodeHasWorkingExecutionLogic(t *testing.T) {
-	engine := New(newRuntimeTestStore(Script{}, Revision{}))
+	actionCalls := map[string]int{}
+	fixedNow := time.Date(2026, time.August, 15, 12, 30, 0, 123_000_000, time.UTC)
+	engine := NewWithServices(newRuntimeTestStore(Script{}, Revision{}), RuntimeServices{
+		Now:    func() time.Time { return fixedNow },
+		SetTag: func(context.Context, Message, string, string, any) error { actionCalls["set-tag"]++; return nil },
+		SendControl: func(context.Context, Message, string, string, string, any, time.Duration) error {
+			actionCalls["send-control"]++
+			return nil
+		},
+		SendNotification: func(context.Context, Message, string, string, string, string, string) error {
+			actionCalls["send-notification"]++
+			return nil
+		},
+		LogEvent: func(context.Context, Message, string, string, string, string) error {
+			actionCalls["log-event"]++
+			return nil
+		},
+	})
 	defer engine.Close()
 	base := Message{OrgName: "org", ScriptID: "script", ActiveRevision: 1, InstanceKey: "Pump01"}
 	tests := []struct {
@@ -24,18 +42,30 @@ func TestEveryCatalogNodeHasWorkingExecutionLogic(t *testing.T) {
 		wantAction bool
 	}{
 		{name: "manual passes the message through", nodeType: "core.manual", config: `{}`, message: messageWith(base, 7, nil), wantPort: "out", wantValue: 7},
+		{name: "timer passes its trigger message", nodeType: "core.timer", config: `{"interval":"1m"}`, message: messageWith(base, 7, nil), wantPort: "out", wantValue: 7},
+		{name: "tag changed passes its trigger message", nodeType: "core.tag-changed", config: `{"pathPattern":"SITE.Pump.Status"}`, message: messageWith(base, true, nil), wantPort: "out", wantValue: true},
+		{name: "rising edge passes its accepted trigger", nodeType: "core.rising-edge", config: `{"pathPattern":"SITE.Pump.Status","coercion":"strict"}`, message: messageWith(base, true, nil), wantPort: "out", wantValue: true},
+		{name: "falling edge passes its accepted trigger", nodeType: "core.falling-edge", config: `{"pathPattern":"SITE.Pump.Status","coercion":"strict"}`, message: messageWith(base, false, nil), wantPort: "out", wantValue: false},
+		{name: "startup passes its trigger message", nodeType: "core.startup", config: `{}`, message: messageWith(base, nil, nil), wantPort: "out"},
 		{name: "compare routes numeric fields", nodeType: "core.compare", config: `{"field":"temperature","operator":">=","compareTo":20}`, message: messageWith(base, nil, map[string]any{"temperature": 21}), wantPort: "true", wantFields: map[string]any{"temperature": 21}},
 		{name: "in range includes boundaries by default", nodeType: "core.in-range", config: `{"minimum":0,"maximum":10}`, message: messageWith(base, 0, nil), wantPort: "true", wantValue: 0},
 		{name: "not negates a boolean", nodeType: "core.not", config: `{}`, message: messageWith(base, false, nil), wantPort: "true", wantValue: false},
 		{name: "and requires every field", nodeType: "core.and", config: `{"fields":["ready","enabled"]}`, message: messageWith(base, nil, map[string]any{"ready": true, "enabled": false}), wantPort: "false", wantFields: map[string]any{"ready": true, "enabled": false}},
 		{name: "or accepts any field", nodeType: "core.or", config: `{"fields":["ready","enabled"]}`, message: messageWith(base, nil, map[string]any{"ready": false, "enabled": true}), wantPort: "true", wantFields: map[string]any{"ready": false, "enabled": true}},
+		{name: "compare times routes before", nodeType: "core.compare-times", config: `{"operator":"before","rightSource":"now"}`, message: messageWith(base, fixedNow.Add(-time.Second).UnixMilli(), nil), wantPort: "true", wantValue: fixedNow.Add(-time.Second).UnixMilli()},
 		{name: "set field creates a nested path", nodeType: "core.set-field", config: `{"field":"state.level","value":9}`, message: messageWith(base, nil, nil), wantPort: "out", wantFields: map[string]any{"state": map[string]any{"level": float64(9)}}},
 		{name: "select field copies into value", nodeType: "core.select-field", config: `{"field":"state.level"}`, message: messageWith(base, nil, map[string]any{"state": map[string]any{"level": 5}}), wantPort: "out", wantValue: 5, wantFields: map[string]any{"state": map[string]any{"level": 5}}},
+		{name: "current time writes epoch milliseconds", nodeType: "core.current-time", config: `{}`, message: messageWith(base, nil, nil), wantPort: "out", wantValue: fixedNow.UnixMilli()},
+		{name: "time since preserves a negative future duration", nodeType: "core.time-since", config: `{"unit":"seconds"}`, message: messageWith(base, fixedNow.Add(time.Second).UnixMilli(), nil), wantPort: "out", wantValue: float64(-1)},
 		{name: "multiply updates a selected field", nodeType: "core.multiply", config: `{"field":"temperature","factor":2}`, message: messageWith(base, nil, map[string]any{"temperature": 3}), wantPort: "out", wantFields: map[string]any{"temperature": float64(6)}},
 		{name: "divide updates value", nodeType: "core.divide", config: `{"divisor":3}`, message: messageWith(base, 9, nil), wantPort: "out", wantValue: float64(3)},
 		{name: "average handles value arrays", nodeType: "core.average", config: `{}`, message: messageWith(base, []any{2, 4, 6}, nil), wantPort: "out", wantValue: float64(4)},
 		{name: "clamp limits value", nodeType: "core.clamp", config: `{"minimum":0,"maximum":100}`, message: messageWith(base, 150, nil), wantPort: "out", wantValue: float64(100)},
 		{name: "scale maps ranges", nodeType: "core.scale", config: `{"inputMin":0,"inputMax":100,"outputMin":0,"outputMax":1}`, message: messageWith(base, 50, nil), wantPort: "out", wantValue: float64(.5)},
+		{name: "set tag uses configured value", nodeType: "core.set-tag", config: `{"tagPath":"Pump.Speed","source":"configured","value":12}`, message: messageWith(base, 5, nil), wantPort: "out", wantValue: 5, wantAction: true},
+		{name: "send control uses message value", nodeType: "core.send-control", config: `{"deviceName":"Pump","tagPath":"Speed","timeout":10}`, message: messageWith(base, 5, nil), wantPort: "out", wantValue: 5, wantAction: true},
+		{name: "send notification publishes", nodeType: "core.send-notification", config: `{"profile":"Operators","severity":"WARN","message":"Alarm"}`, message: messageWith(base, 5, nil), wantPort: "out", wantValue: 5, wantAction: true},
+		{name: "log event publishes", nodeType: "core.log-event", config: `{"severity":"INFO","message":"Checkpoint"}`, message: messageWith(base, 5, nil), wantPort: "out", wantValue: 5, wantAction: true},
 		{name: "debug records an action", nodeType: "core.debug", config: `{"label":"checkpoint"}`, message: messageWith(base, "seen", nil), wantPort: "out", wantValue: "seen", wantAction: true},
 	}
 	covered := make(map[string]bool)
@@ -59,6 +89,11 @@ func TestEveryCatalogNodeHasWorkingExecutionLogic(t *testing.T) {
 	for _, definition := range engine.Registry().Catalog() {
 		if !covered[definition.Type] {
 			t.Errorf("catalog node %s has no execution test", definition.Type)
+		}
+	}
+	for _, action := range []string{"set-tag", "send-control", "send-notification", "log-event"} {
+		if actionCalls[action] != 1 {
+			t.Errorf("%s calls = %d, want 1", action, actionCalls[action])
 		}
 	}
 }
@@ -151,6 +186,35 @@ func TestDebugTraceSnapshotsInputMessage(t *testing.T) {
 	}
 }
 
+func TestDebugTraceFormatsConfiguredTimesWithoutChangingRawPayload(t *testing.T) {
+	engine := New(newRuntimeTestStore(Script{}, Revision{}))
+	defer engine.Close()
+	timestamp := int64(1786797000123)
+	debug := GraphNode{ID: "debug", Type: "core.debug", TypeVersion: 1, Config: json.RawMessage(`{"timeDisplay":"utc","timeFields":["$value","device.lastSeen"]}`)}
+	plan := compile(NormalizeGraph(GraphDocument{Nodes: []GraphNode{debug}}))
+	run := &Run{}
+	input := Message{Value: timestamp, Fields: map[string]any{"device": map[string]any{"lastSeen": timestamp}}}
+	if err := engine.execute(context.Background(), plan, debug, input, run); err != nil {
+		t.Fatal(err)
+	}
+	if len(run.Trace) != 1 || run.Trace[0].Value != timestamp {
+		t.Fatalf("raw trace value changed: %#v", run.Trace)
+	}
+	if run.Trace[0].FormattedTimes["$value"] != "2026-08-15T12:30:00.123Z" || run.Trace[0].FormattedTimes["device.lastSeen"] != "2026-08-15T12:30:00.123Z" {
+		t.Fatalf("formatted times = %#v", run.Trace[0].FormattedTimes)
+	}
+}
+
+func TestTimestampMillisRejectsSecondsAndAcceptsISO8601(t *testing.T) {
+	if _, err := timestampMillis(int64(1786797000)); err == nil || !strings.Contains(err.Error(), "seconds") {
+		t.Fatalf("Unix seconds error = %v", err)
+	}
+	want := time.Date(2026, time.August, 15, 12, 30, 0, 123_000_000, time.UTC).UnixMilli()
+	if got, err := timestampMillis("2026-08-15T12:30:00.123Z"); err != nil || got != want {
+		t.Fatalf("ISO timestamp = %d, %v; want %d", got, err, want)
+	}
+}
+
 func testContextNodes(t *testing.T, engine *Engine, base Message) []string {
 	t.Helper()
 	set := testNode("core.set-context", `{"scope":"script","key":"threshold","source":"configured","value":{"level":4}}`)
@@ -176,7 +240,20 @@ func testContextNodes(t *testing.T, engine *Engine, base Message) []string {
 	if _, _, _, err = engine.handleNode(context.Background(), get, base); err == nil {
 		t.Fatal("deleted context remained readable")
 	}
-	return []string{"core.set-context", "core.get-context", "core.increment-context", "core.delete-context"}
+	setTime := testNode("core.set-time-context", `{"key":"lastSeen","source":"configured","time":"2026-08-15T12:30:00.123Z"}`)
+	if _, _, _, err = engine.handleNode(context.Background(), setTime, base); err != nil {
+		t.Fatal(err)
+	}
+	getTime := testNode("core.get-time-context", `{"key":"lastSeen","outputField":"timing.lastSeen"}`)
+	_, message, _, err = engine.handleNode(context.Background(), getTime, base)
+	wantTime := time.Date(2026, time.August, 15, 12, 30, 0, 123_000_000, time.UTC).UnixMilli()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := getField(message.Fields, "timing.lastSeen"); got != wantTime {
+		t.Fatalf("get time variable = %#v, want %d", got, wantTime)
+	}
+	return []string{"core.set-context", "core.get-context", "core.increment-context", "core.delete-context", "core.set-time-context", "core.get-time-context"}
 }
 
 func testNode(nodeType, config string) GraphNode {

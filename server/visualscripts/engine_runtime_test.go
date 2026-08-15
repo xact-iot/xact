@@ -146,6 +146,79 @@ func TestStartCurrentClearsPreviousRunTrace(t *testing.T) {
 	}
 }
 
+func TestStartupAndTagTriggersRunAutomaticallyAndStopCleanly(t *testing.T) {
+	router := NewTagChangeRouter(10, 10)
+	revision := 1
+	graph := NormalizeGraph(GraphDocument{Nodes: []GraphNode{
+		{ID: "startup", Type: "core.startup", TypeVersion: 1, Config: json.RawMessage(`{"delay":"0s"}`)},
+		{ID: "changed", Type: "core.tag-changed", TypeVersion: 1, Config: json.RawMessage(`{"pathPattern":"SITE.*.Status.Running"}`)},
+		{ID: "rising", Type: "core.rising-edge", TypeVersion: 1, Config: json.RawMessage(`{"pathPattern":"SITE.*.Status.Running","coercion":"strict","debounce":"0s"}`)},
+	}})
+	store := newRuntimeTestStore(Script{ID: "script", OrgName: "org", DesiredState: "stopped", LatestRevision: revision}, Revision{ScriptID: "script", OrgName: "org", Revision: revision, Graph: graph})
+	engine := NewWithServices(store, RuntimeServices{TagRouter: router})
+	defer engine.Close()
+	if _, err := engine.StartCurrent(context.Background(), "org", "script"); err != nil {
+		t.Fatal(err)
+	}
+	waitForRunCount(t, store, 1) // Startup
+
+	change := TagChange{OrgName: "org", TagPath: "SITE.Pump01.Status.Running", Value: false, Timestamp: time.Now().UTC()}
+	if matched := router.Dispatch(change); matched != 2 {
+		t.Fatalf("initial tag dispatch matched %d triggers, want 2", matched)
+	}
+	waitForRunCount(t, store, 2) // Tag Changed; edge establishes initial state.
+	change.Value = true
+	if matched := router.Dispatch(change); matched != 2 {
+		t.Fatalf("rising tag dispatch matched %d triggers, want 2", matched)
+	}
+	waitForRunCount(t, store, 4) // Tag Changed and Rising Edge.
+
+	if _, err := engine.SetDesiredState(context.Background(), "org", "script", "stopped"); err != nil {
+		t.Fatal(err)
+	}
+	change.Value = false
+	if matched := router.Dispatch(change); matched != 0 {
+		t.Fatalf("stopped script retained %d tag registrations", matched)
+	}
+}
+
+func TestTimerTriggerUsesBoundedLifecycle(t *testing.T) {
+	revision := 1
+	graph := NormalizeGraph(GraphDocument{Nodes: []GraphNode{{ID: "timer", Type: "core.timer", TypeVersion: 1, Config: json.RawMessage(`{"interval":"1s","initialDelay":"1ms","jitter":"0s"}`)}}})
+	store := newRuntimeTestStore(Script{ID: "script", OrgName: "org", DesiredState: "stopped", LatestRevision: revision}, Revision{ScriptID: "script", OrgName: "org", Revision: revision, Graph: graph})
+	engine := New(store)
+	defer engine.Close()
+	if _, err := engine.StartCurrent(context.Background(), "org", "script"); err != nil {
+		t.Fatal(err)
+	}
+	waitForRunCount(t, store, 1)
+	if _, err := engine.SetDesiredState(context.Background(), "org", "script", "paused"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	store.mu.Lock()
+	count := len(store.runs)
+	store.mu.Unlock()
+	if count != 1 {
+		t.Fatalf("paused timer produced %d runs, want 1", count)
+	}
+}
+
+func waitForRunCount(t *testing.T, store *runtimeTestStore, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		store.mu.Lock()
+		count := len(store.runs)
+		store.mu.Unlock()
+		if count >= want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("run count did not reach %d", want)
+}
+
 func waitForInstanceStart(t *testing.T, started <-chan string, want string) {
 	t.Helper()
 	select {
