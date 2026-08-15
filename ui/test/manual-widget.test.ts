@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import '../src/dashboards/widgets/manual-widget';
 
 async function waitFor(assertion: () => void): Promise<void> {
@@ -57,5 +58,21 @@ describe('manual-widget', () => {
     const urls = fetchMock.mock.calls.map(call => call[0]);
     expect(urls.filter(url => String(url).endsWith('/manifest.json'))).toHaveLength(1);
     expect(urls.filter(url => String(url).endsWith('/01-getting-started.md'))).toHaveLength(1);
+  });
+
+  it('lists Automation immediately after Scheduler with a complete chapter', () => {
+    const manifest = JSON.parse(readFileSync('public/manual/manifest.json', 'utf8'));
+    const schedulerIndex = manifest.chapters.findIndex((chapter: { id: string }) => chapter.id === 'scheduler');
+
+    expect(schedulerIndex).toBeGreaterThanOrEqual(0);
+    expect(manifest.chapters[schedulerIndex + 1]).toEqual({
+      id: 'automation', file: '13-automation.md', title: 'Automation',
+    });
+
+    const automation = readFileSync('public/manual/13-automation.md', 'utf8');
+    expect(automation).toContain('# Automation');
+    expect(automation).toContain('## Build and Test a First Script');
+    expect(automation).toContain('## Node Reference');
+    expect(automation).toContain('## Wildcard Tag Triggers and Script Instances');
   });
 });

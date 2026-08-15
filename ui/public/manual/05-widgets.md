@@ -9,7 +9,7 @@ Widgets are the building blocks of XACT dashboards. Each widget displays data or
 | **General** | Common display widgets | Text, Device List, Area Map |
 | **Metrics** | Data visualisation and charting | Big Number, Gauge, Sparkline, Time Series Chart, Status Table |
 | **Layout** | Organising content | Tabs, Array Layout |
-| **System** | Administration and configuration | Tags Manager, Users, Organisations, Permissions, Events Viewer, Tag Calcs, Notifications, PDF Reports, Help Manual |
+| **System** | Administration and configuration | Tags Manager, Users, Organisations, Permissions, Events Viewer, Tag Calcs, Notifications, PDF Reports, Scheduler, Visual Script, Help Manual |
 | **Custom** | Plugin-provided widgets | Varies - loaded dynamically from the server |
 
 ## Common Widget Features
@@ -414,6 +414,12 @@ Configure notification channels and profiles. See the [Notifications](#notificat
 ### PDF Reports Widget
 
 Design and generate PDF report templates. See the [PDF Reports](#reports) chapter for details.
+
+---
+
+### Visual Script Widget
+
+Build and operate event-driven automation as a connected graph of triggers, conditions, transforms, variables, and actions. A widget can create a new organisation-level script or attach an existing script so the same automation can be viewed from an appropriate dashboard. See [Automation](#automation) for the complete authoring, testing, and operating guide.
 
 ---
 
