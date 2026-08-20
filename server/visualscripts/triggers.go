@@ -71,7 +71,30 @@ func (e *Engine) startTriggers(org, scriptID string, revision int, plan *compile
 					unregister()
 				}
 			}
+			triggerOnStart, _ := config["triggerOnStart"].(bool)
+			if node.Type == "core.tag-changed" && triggerOnStart {
+				go e.runTagChangedOnStart(ctx, org, scriptID, node, pattern)
+			}
 		}
+	}
+}
+
+func (e *Engine) runTagChangedOnStart(ctx context.Context, org, scriptID string, node GraphNode, pattern string) {
+	if e.services.ReadTags == nil || ctx.Err() != nil {
+		return
+	}
+	changes, err := e.services.ReadTags(ctx, org, pattern)
+	if err != nil {
+		return
+	}
+	for _, change := range changes {
+		if ctx.Err() != nil {
+			return
+		}
+		if change.Value == nil {
+			continue
+		}
+		e.runAutonomous(ctx, org, scriptID, node, change.InstanceKey, change)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -179,6 +180,49 @@ func TestStartupAndTagTriggersRunAutomaticallyAndStopCleanly(t *testing.T) {
 	change.Value = false
 	if matched := router.Dispatch(change); matched != 0 {
 		t.Fatalf("stopped script retained %d tag registrations", matched)
+	}
+}
+
+func TestTagChangedTriggerOnStartOutputsOnlyDefinedSnapshots(t *testing.T) {
+	revision := 1
+	graph := NormalizeGraph(GraphDocument{
+		Nodes: []GraphNode{
+			{ID: "changed", Type: "core.tag-changed", TypeVersion: 1, Config: json.RawMessage(`{"pathPattern":"SITE.*.level","triggerOnStart":true}`)},
+			{ID: "debug", Type: "core.debug", TypeVersion: 1, Config: json.RawMessage(`{"label":"initial value"}`)},
+		},
+		Edges: []GraphEdge{{ID: "to-debug", From: EdgeEndpoint{NodeID: "changed", Port: "out"}, To: EdgeEndpoint{NodeID: "debug", Port: "in"}}},
+	})
+	store := newRuntimeTestStore(Script{ID: "script", OrgName: "org", DesiredState: "stopped", LatestRevision: revision}, Revision{ScriptID: "script", OrgName: "org", Revision: revision, Graph: graph})
+	var readCalls atomic.Int32
+	engine := NewWithServices(store, RuntimeServices{ReadTags: func(_ context.Context, org, pattern string) ([]TagChange, error) {
+		readCalls.Add(1)
+		if org != "org" || pattern != "SITE.*.level" {
+			return nil, errors.New("unexpected startup read scope")
+		}
+		return []TagChange{
+			{OrgName: org, InstanceKey: "Pump01", TagPath: "SITE.Pump01.level", Value: float64(0), Timestamp: time.Now().UTC(), Fields: map[string]any{"trigger": "start"}},
+			{OrgName: org, InstanceKey: "Pump02", TagPath: "SITE.Pump02.level", Value: nil, Timestamp: time.Now().UTC()},
+		}, nil
+	}})
+	defer engine.Close()
+	if _, err := engine.StartCurrent(context.Background(), "org", "script"); err != nil {
+		t.Fatal(err)
+	}
+	waitForRunCount(t, store, 1)
+
+	store.mu.Lock()
+	var run Run
+	for _, item := range store.runs {
+		run = item
+	}
+	store.mu.Unlock()
+	waitForRunStatus(t, store, run.RunID, "ok")
+	stored, err := store.GetVisualScriptRun(context.Background(), "org", "script", run.RunID)
+	if err != nil || stored == nil {
+		t.Fatalf("startup run = %#v, %v", stored, err)
+	}
+	if readCalls.Load() != 1 || stored.InstanceKey != "Pump01" || len(stored.Trace) != 1 || stored.Trace[0].Value != float64(0) || stored.Trace[0].Fields["trigger"] != "start" {
+		t.Fatalf("startup snapshot run = %#v; reads = %d", stored, readCalls.Load())
 	}
 }
 

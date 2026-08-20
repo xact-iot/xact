@@ -12,6 +12,7 @@ type RuntimeServices struct {
 	TagRouter        *TagChangeRouter
 	CanExecute       func() bool
 	Now              func() time.Time
+	ReadTags         func(context.Context, string, string) ([]TagChange, error)
 	SetTag           func(context.Context, Message, string, string, any) error
 	SendControl      func(context.Context, Message, string, string, string, any, time.Duration) error
 	SendNotification func(context.Context, Message, string, string, string, string, string) error

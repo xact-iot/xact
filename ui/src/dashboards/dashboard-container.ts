@@ -31,6 +31,13 @@ export interface WidgetData {
   config: Record<string, any>;
 }
 
+interface DashboardTransientState {
+  mode: DashboardMode;
+  dirty: boolean;
+  widgets: WidgetData[];
+  savedWidgets: WidgetData[];
+}
+
 function inLayoutOrder(widgets: WidgetData[]): WidgetData[] {
   return widgets
     .map((widget, index) => ({ widget, index }))
@@ -98,12 +105,16 @@ export class DashboardContainer extends BaseComponent {
   private dropdownHideTimer: ReturnType<typeof setTimeout> | null = null;
   private saving = false;
   private visualScriptFocused = false;
+  private transientWidgetState = new Map<string, unknown>();
+  private transientDashboardState: DashboardTransientState | null = null;
+  private loadGeneration = 0;
 
   private isInteractiveMode(): boolean {
     return this.mode !== 'view';
   }
 
   async loadDashboard(dashboardRef: string): Promise<void> {
+    const loadGeneration = ++this.loadGeneration;
     this.dashboardName = dashboardRef;
     try {
       const id = Number(dashboardRef);
@@ -118,11 +129,14 @@ export class DashboardContainer extends BaseComponent {
       if (err?.message?.includes('404')) {
         this.dashboardData = { id: 0, name: dashboardRef, description: '', icon: '', variation: '', deviceType: '', permission: '', isCategory: false, sortOrder: 0, widgets: [] as any };
       } else {
-        console.error('Failed to load dashboard:', err);
-        this.innerHTML = `<div class="p-4 text-sm opacity-60">Failed to load dashboard "${dashboardRef}".</div>`;
+        if (loadGeneration === this.loadGeneration && this.isConnected) {
+          console.error('Failed to load dashboard:', err);
+          this.innerHTML = `<div class="p-4 text-sm opacity-60">Failed to load dashboard "${dashboardRef}".</div>`;
+        }
         return;
       }
     }
+    if (loadGeneration !== this.loadGeneration || !this.isConnected) return;
     this.widgets = Array.isArray(this.dashboardData!.widgets) ? cloneWidgets(this.dashboardData!.widgets as WidgetData[]) : [];
     this.savedWidgets = cloneWidgets(this.widgets);
     const [canEditDashboard, canInspectDashboard, canConfigureWidgets] = await Promise.all([
@@ -130,11 +144,23 @@ export class DashboardContainer extends BaseComponent {
       can('dashboard-container.inspect'),
       can('widget-default.configure'),
     ]);
+    if (loadGeneration !== this.loadGeneration || !this.isConnected) return;
     this.canEditDashboard = canEditDashboard;
     this.canInspectDashboard = canEditDashboard || canInspectDashboard || canConfigureWidgets;
-    // Auto-enter edit mode for an empty editable dashboard.
-    this.mode = this.widgets.length === 0 && this.canEditDashboard ? 'edit' : 'view';
-    this.dirty = false;
+    const transientState = this.transientDashboardState;
+    this.transientDashboardState = null;
+    if (transientState) {
+      this.widgets = cloneWidgets(transientState.widgets);
+      this.savedWidgets = cloneWidgets(transientState.savedWidgets);
+      this.mode = transientState.mode === 'edit' && this.canEditDashboard
+        ? 'edit'
+        : transientState.mode === 'inspect' && this.canInspectDashboard ? 'inspect' : 'view';
+      this.dirty = transientState.dirty && this.mode === 'edit';
+    } else {
+      // Auto-enter edit mode for an empty editable dashboard.
+      this.mode = this.widgets.length === 0 && this.canEditDashboard ? 'edit' : 'view';
+      this.dirty = false;
+    }
     this.rerender();
     await this.initGrid();
     this.emitCapabilities();
@@ -143,6 +169,26 @@ export class DashboardContainer extends BaseComponent {
 
   hasUnsavedChanges(): boolean {
     return this.dirty || this.hasDirtyComplexWidget();
+  }
+
+  captureTransientState(): void {
+    this.transientDashboardState = {
+      mode: this.mode,
+      dirty: this.dirty,
+      widgets: cloneWidgets(this.grid ? this.collectWidgetsFromGrid() : this.widgets),
+      savedWidgets: cloneWidgets(this.savedWidgets),
+    };
+    for (const card of Array.from(this.querySelectorAll<WidgetCard>('widget-card'))) {
+      const widgetId = card.getWidgetId();
+      const widget = card.querySelector<any>('.widget-body > *');
+      if (!widgetId || typeof widget?.getTransientState !== 'function') continue;
+      this.transientWidgetState.set(widgetId, widget.getTransientState());
+    }
+  }
+
+  clearTransientState(): void {
+    this.transientDashboardState = null;
+    this.transientWidgetState.clear();
   }
 
   private hasDirtyComplexWidget(): boolean {
@@ -228,7 +274,7 @@ export class DashboardContainer extends BaseComponent {
   private async initGrid(): Promise<void> {
     const gridEl = this.querySelector('#pc-grid') as HTMLElement;
     if (!gridEl) return;
-    this.grid = GridStack.init({
+    const grid = GridStack.init({
       column: GRID_COLUMNS,
       cellHeight: 20,
       margin: 8,
@@ -241,17 +287,20 @@ export class DashboardContainer extends BaseComponent {
       removable: false,
       copyDragIn: true,
     } as any, gridEl);
+    this.grid = grid;
 
     // Add existing widgets to the grid before listening for 'change' / 'added',
     // so that loading saved widgets doesn't mark the dashboard as dirty.
     await ensureWidgetTypesLoaded(collectReferencedWidgetTypes(this.widgets));
+    if (!this.isConnected || this.grid !== grid) return;
     for (const w of inLayoutOrder(this.widgets)) {
       await this.addWidgetToGrid(w);
+      if (!this.isConnected || this.grid !== grid) return;
     }
 
     // Listen for grid changes - registered AFTER initial load to avoid
     // false dirty flags from GridStack position adjustments during load.
-    this.grid.on('change', () => {
+    grid.on('change', () => {
       if (!this.isInteractiveMode()) return;
       if (this.mode === 'edit') {
         this.dirty = true;
@@ -259,7 +308,7 @@ export class DashboardContainer extends BaseComponent {
       }
     });
 
-    this.grid.on('added', () => {
+    grid.on('added', () => {
       if (!this.isInteractiveMode()) return;
       if (this.mode === 'edit') {
         this.dirty = true;
@@ -268,7 +317,7 @@ export class DashboardContainer extends BaseComponent {
     });
 
     // Always register dropped handler - fires only when acceptWidgets is true
-    this.grid.on('dropped', (_event: Event, _prevNode: any, newNode: any) => {
+    grid.on('dropped', (_event: Event, _prevNode: any, newNode: any) => {
       if (!newNode) return;
 
       // Cancel the deferred hide and close immediately on drop.
@@ -313,6 +362,7 @@ export class DashboardContainer extends BaseComponent {
 
   private async addWidgetToGrid(data: WidgetData): Promise<void> {
     if (!this.grid) return;
+    const grid = this.grid;
 
     const meta = getWidgetMeta(data.type);
     const displayName = meta?.name || data.type;
@@ -321,9 +371,10 @@ export class DashboardContainer extends BaseComponent {
     } catch (err) {
       console.error('Failed to load widget type:', data.type, err);
     }
+    if (!this.isConnected || this.grid !== grid) return;
 
     // Use addWidget with a placeholder, then inject our DOM elements
-    const gsEl = this.grid.addWidget({
+    const gsEl = grid.addWidget({
       x: data.x,
       y: data.y,
       w: data.w,
@@ -378,6 +429,12 @@ export class DashboardContainer extends BaseComponent {
       card.setHasProperties(hasProperties);
 
       body.appendChild(widgetEl);
+
+      const transientState = this.transientWidgetState.get(data.id);
+      if (transientState !== undefined && typeof (widgetEl as any).setTransientState === 'function') {
+        (widgetEl as any).setTransientState(transientState);
+        this.transientWidgetState.delete(data.id);
+      }
 
       // Inspect is intentionally interactive like edit; only server persistence
       // is blocked. Prefer forwarding the full dashboard mode when supported.
@@ -962,6 +1019,7 @@ export class DashboardContainer extends BaseComponent {
   }
 
   disconnectedCallback(): void {
+    this.loadGeneration++;
     if (this.grid) {
       this.grid.destroy(false);
       this.grid = null;

@@ -1096,6 +1096,7 @@ func configFiniteFloat(config map[string]any, key string, defaultValue float64) 
 }
 
 func selectedValue(msg Message, field string) (any, error) {
+	field = resolvedMessageField(msg, field)
 	if field == "" {
 		return msg.Value, nil
 	}
@@ -1107,6 +1108,7 @@ func selectedValue(msg Message, field string) (any, error) {
 }
 
 func setSelectedValue(msg *Message, field string, value any) {
+	field = resolvedMessageField(*msg, field)
 	if field == "" {
 		msg.Value = value
 		return
@@ -1115,6 +1117,21 @@ func setSelectedValue(msg *Message, field string, value any) {
 		msg.Fields = make(map[string]any)
 	}
 	setField(msg.Fields, field, value)
+}
+
+func resolvedMessageField(msg Message, field string) string {
+	field = strings.TrimSpace(field)
+	if field == "" || field == "$value" {
+		return ""
+	}
+	// The trace and API expose the primary payload as "value", so accept that
+	// intuitive spelling when the message does not contain a named value field.
+	if field == "value" {
+		if _, exists := getField(msg.Fields, field); !exists {
+			return ""
+		}
+	}
+	return field
 }
 
 func getField(fields map[string]any, path string) (any, bool) {

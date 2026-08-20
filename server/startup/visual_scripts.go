@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,6 +22,9 @@ func visualScriptServices(database sqldb.DB, treeOps *tree.TreeWithOperations, n
 	services := visualscripts.RuntimeServices{
 		TagRouter:  router,
 		CanExecute: xactnats.MayExecuteVisualScripts,
+		ReadTags: func(ctx context.Context, org, pattern string) ([]visualscripts.TagChange, error) {
+			return visualScriptTagSnapshots(ctx, treeOps, org, pattern)
+		},
 		SetTag: func(_ context.Context, msg visualscripts.Message, _ string, path string, value any) error {
 			path, err := tenantTagPath(msg.OrgName, path)
 			if err != nil {
@@ -88,6 +92,51 @@ func visualScriptServices(database sqldb.DB, treeOps *tree.TreeWithOperations, n
 		dispatchVisualScriptTag(router, message.Subject, message.Data)
 	})
 	return services, subscription, err
+}
+
+func visualScriptTagSnapshots(ctx context.Context, treeOps *tree.TreeWithOperations, org, pattern string) ([]visualscripts.TagChange, error) {
+	matcher, err := visualscripts.CompilePathPattern(pattern)
+	if err != nil {
+		return nil, err
+	}
+	org = visualscripts.NormalizePathPattern(org)
+	if org == "" {
+		return nil, errors.New("organisation is required")
+	}
+	prefix := org + "."
+	changes := make([]visualscripts.TagChange, 0)
+	treeOps.WalkLeaves(func(path string, leaf tree.Leaf) {
+		if ctx.Err() != nil {
+			return
+		}
+		fullPath := visualscripts.NormalizePathPattern(path)
+		if !strings.HasPrefix(fullPath, prefix) {
+			return
+		}
+		tagPath := strings.TrimPrefix(fullPath, prefix)
+		instanceKey, matched := matcher.MatchInstance(tagPath)
+		if !matched {
+			return
+		}
+		value := leaf.GetAnyValue()
+		status := leaf.GetState()
+		timestamp := leaf.GetUpdatedTime()
+		if value == nil || timestamp.IsZero() || strings.Contains(status, tree.StatusUndefined) {
+			return
+		}
+		devicePath, _, _ := strings.Cut(tagPath, ".")
+		changes = append(changes, visualscripts.TagChange{
+			OrgName: org, InstanceKey: instanceKey, DevicePath: devicePath, TagPath: tagPath,
+			Value: value, Timestamp: timestamp.UTC(), Fields: map[string]any{
+				"status": status, "sourceTimestamp": timestamp.UTC().Format(time.RFC3339Nano), "trigger": "start",
+			},
+		})
+	})
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(changes, func(i, j int) bool { return changes[i].TagPath < changes[j].TagPath })
+	return changes, nil
 }
 
 func tenantTagPath(org, path string) (string, error) {

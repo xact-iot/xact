@@ -226,7 +226,7 @@ func validateNodeConfig(result *ValidationResult, node GraphNode, definition Nod
 	for _, parameter := range definition.Parameters {
 		value, exists := config[parameter.Name]
 		missing := !exists || (value == nil && parameter.Type != "json")
-		if parameter.Required && (missing || (parameter.Type == "string" && strings.TrimSpace(fmt.Sprint(value)) == "")) {
+		if parameter.Required && (missing || ((parameter.Type == "string" || parameter.Type == "tag-path") && strings.TrimSpace(fmt.Sprint(value)) == "")) {
 			result.Diagnostics = append(result.Diagnostics, diagnostic("error", "missing_required_config", node.ID, "", "config."+parameter.Name, parameter.Label+" is required"))
 			continue
 		}
@@ -238,7 +238,7 @@ func validateNodeConfig(result *ValidationResult, node GraphNode, definition Nod
 				result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_number", node.ID, "", "config."+parameter.Name, parameter.Label+" must be a finite number"))
 			}
 		}
-		if parameter.Type == "string" {
+		if parameter.Type == "string" || parameter.Type == "tag-path" {
 			if _, ok := value.(string); !ok {
 				result.Diagnostics = append(result.Diagnostics, diagnostic("error", "invalid_string", node.ID, "", "config."+parameter.Name, parameter.Label+" must be text"))
 			}

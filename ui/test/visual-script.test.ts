@@ -4,6 +4,7 @@ import { emptyGraph } from '../src/visual-scripts/types';
 import type { NodeDefinition } from '../src/visual-scripts/types';
 import '../src/visual-scripts/canvas';
 import '../src/visual-scripts/editor';
+import '../src/components/app-content';
 import '../src/dashboards/dashboard-container';
 import '../src/dashboards/widgets/visual-script-widget';
 
@@ -281,7 +282,7 @@ describe('visual script draft and canvas', () => {
     const graph = emptyGraph();
     graph.nodes = [
       { id: 'manual-secondary', type: 'core.manual', typeVersion: 1, position: { x: 24, y: 70 }, config: {} },
-      { id: 'debug', type: 'core.debug', typeVersion: 1, position: { x: 240, y: 70 }, config: {} },
+      { id: 'debug', type: 'core.debug', typeVersion: 1, position: { x: 240, y: 70 }, config: { label: 'Pump status' } },
     ];
     const manual: NodeDefinition = {
       type: 'core.manual', typeVersion: 1, name: 'Manual', description: 'Starts a controlled editor run', category: 'Triggers', icon: '▶',
@@ -325,7 +326,7 @@ describe('visual script draft and canvas', () => {
     expect(editor.textContent).toContain('Run in progress…');
     await vi.waitFor(() => expect(editor.runs.find((item: any) => item.runId === 'run-1')?.status).toBe('ok'));
     expect(fetchMock.mock.calls[1][0]).toBe('/xact/api/v1/visual-scripts/script-1/runs/run-1');
-    expect(editor.querySelector('.vse-trace-header')?.textContent).toContain('Debug· ok');
+    expect(editor.querySelector('.vse-trace-header')?.textContent).toContain('Debug · Pump status· ok');
     expect(editor.querySelector('.vse-trace-header time')?.textContent).toMatch(/^\d{2}:\d{2}:\d{2}\.045$/);
     expect(editor.querySelector('.vse-trace-json')?.textContent).toBe('{"value":23,"fields":{"source":"context"},"formattedTimes":{"$value":"2026-08-15T12:30:00.123Z"}}');
     expect(editor.querySelectorAll('.vse-trace-event')).toHaveLength(1);
@@ -560,4 +561,101 @@ describe('visual script draft and canvas', () => {
     dashboard.handleVisualScriptFocus(new CustomEvent('visual-script-focus-changed', { detail: { active: false } }));
     expect(toolbar.style.display).toBe('');
   });
+
+  it('renders a tag picker for every tag-path node parameter', () => {
+    const graph = emptyGraph();
+    graph.nodes = [
+      { id: 'changed', type: 'core.tag-changed', typeVersion: 1, position: { x: 20, y: 20 }, config: { pathPattern: 'Plant.Pump.Status' } },
+      { id: 'set', type: 'core.set-tag', typeVersion: 1, position: { x: 20, y: 120 }, config: { tagPath: 'Plant.Pump.Setpoint' } },
+      { id: 'control', type: 'core.send-control', typeVersion: 1, position: { x: 20, y: 220 }, config: { tagPath: 'Plant.Pump.Enable' } },
+    ];
+    const node = (type: string, name: string, parameter: string, label: string): NodeDefinition => ({
+      type, typeVersion: 1, name, description: '', category: 'Test', icon: '•', inputs: [], outputs: [], available: true,
+      parameters: [{ name: parameter, label, type: 'string', required: true }],
+    });
+    const editor = document.createElement('visual-script-editor') as any;
+    editor.initialize({ id: 'script-1', name: 'Test script', description: '', desiredState: 'stopped', latestRevision: 1, createdAt: '', updatedAt: '', outOfDate: false }, graph, [
+      node('core.tag-changed', 'Tag Changed', 'pathPattern', 'Tag path'),
+      node('core.set-tag', 'Set Tag', 'tagPath', 'Tag path'),
+      node('core.send-control', 'Send Control', 'tagPath', 'Control path'),
+    ]);
+    document.body.appendChild(editor);
+
+    for (const id of ['changed', 'set', 'control']) {
+      (editor.querySelector(`[data-node-id="${id}"]`) as HTMLElement).click();
+      expect(editor.querySelector<HTMLButtonElement>('[data-tag-picker]')?.getAttribute('aria-label')).toBe('Browse tags');
+    }
+
+    editor.remove();
+  });
+
+  it('shows compact, meaningful configuration summaries on nodes', () => {
+    const graph = emptyGraph();
+    graph.nodes = [
+      { id: 'changed', type: 'core.tag-changed', typeVersion: 1, position: { x: 20, y: 20 }, config: { pathPattern: 'Plant.Pump.Status.Running', triggerOnStart: true } },
+      { id: 'debug', type: 'core.debug', typeVersion: 1, position: { x: 220, y: 20 }, config: { label: 'Pump state received' } },
+      { id: 'compare', type: 'core.compare', typeVersion: 1, position: { x: 420, y: 20 }, config: { field: 'pressure', operator: '>', compareTo: 100 } },
+    ];
+    const definitions: NodeDefinition[] = [
+      { type: 'core.tag-changed', typeVersion: 1, name: 'Tag Changed', description: '', category: 'Triggers', icon: '⌁', inputs: [], outputs: [], parameters: [], available: true },
+      { type: 'core.debug', typeVersion: 1, name: 'Debug', description: '', category: 'Actions', icon: '◎', inputs: [], outputs: [], parameters: [], available: true },
+      { type: 'core.compare', typeVersion: 1, name: 'Compare', description: '', category: 'Conditions', icon: '≷', inputs: [], outputs: [], parameters: [], available: true },
+    ];
+    const canvas = document.createElement('visual-script-canvas') as any;
+    document.body.appendChild(canvas);
+    canvas.setData(graph, definitions);
+
+    expect(canvas.querySelector('[data-node-id="changed"] .vsc-summary')?.textContent).toBe('Running · on start');
+    expect(canvas.querySelector('[data-node-id="debug"] .vsc-summary')?.textContent).toBe('Pump state received');
+    expect(canvas.querySelector('[data-node-id="compare"] .vsc-summary')?.textContent).toBe('pressure > 100');
+    expect(canvas.querySelector('style')?.textContent).toContain('font-size:12px');
+    expect(canvas.querySelector('style')?.textContent).toContain('white-space:nowrap');
+    canvas.remove();
+  });
+
+  it('restores an unsaved visual-script draft after its dashboard is rebuilt', () => {
+    const script = { id: 'script-1', name: 'Test script', description: '', desiredState: 'stopped', latestRevision: 1, createdAt: '', updatedAt: '', outOfDate: false };
+    const original = emptyGraph();
+    const changed = emptyGraph();
+    changed.nodes.push({ id: 'debug', type: 'core.debug', typeVersion: 1, position: { x: 20, y: 20 }, config: { label: 'Retained draft' } });
+    const first = document.createElement('visual-script-editor') as any;
+    first.initialize(script, original, []);
+    first.draft.update(changed);
+    const state = first.getTransientState();
+
+    const restored = document.createElement('visual-script-editor') as any;
+    restored.initialize(script, original, []);
+    restored.restoreTransientState(state);
+
+    expect(restored.hasUnsavedChanges()).toBe(true);
+    expect(restored.getTransientState().graph.nodes[0].config.label).toBe('Retained draft');
+  });
+
+  it('snapshots the current dashboard before reconstructing a dashboard tab', async () => {
+    const content = document.createElement('app-content') as any;
+    const first = document.createElement('dashboard-container') as any;
+    const second = document.createElement('dashboard-container') as any;
+    first.captureTransientState = vi.fn();
+    second.loadDashboard = vi.fn();
+    content.replaceChildren(first);
+    content.dashboards = new Map([['one', first], ['two', second]]);
+    content.activeDashboard = 'one';
+
+    await content.switchToDashboard('two', true);
+
+    expect(first.captureTransientState).toHaveBeenCalledOnce();
+    expect(content.firstElementChild).toBe(second);
+    expect(second.loadDashboard).toHaveBeenCalledWith('two');
+  });
+
+  it('destroys the dashboard grid when a tab is detached so it can rebuild cleanly', () => {
+    const dashboard = document.createElement('dashboard-container') as any;
+    const grid = { destroy: vi.fn() };
+    dashboard.grid = grid;
+
+    dashboard.disconnectedCallback();
+    expect(grid.destroy).toHaveBeenCalledWith(false);
+    expect(dashboard.grid).toBeNull();
+  });
+
 });

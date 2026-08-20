@@ -28,7 +28,7 @@ export class AppContent extends BaseComponent {
     this.showDashboard(this.activeDashboard);
   }
 
-  private showDashboard(dashboardId: string): void {
+  private showDashboard(dashboardId: string, preservePrevious = false): void {
     let dashboardElement = this.dashboards.get(dashboardId);
 
     if (!dashboardElement) {
@@ -53,6 +53,14 @@ export class AppContent extends BaseComponent {
     const title = this.getDashboardTitle(dashboardId);
     this.emit('dashboard-shown', { dashboardId, title });
 
+    const previous = this.dashboards.get(this.activeDashboard) as DashboardContainer | undefined;
+    if (previous && previous !== dashboardElement && previous.tagName === 'DASHBOARD-CONTAINER') {
+      if (preservePrevious) previous.captureTransientState();
+      else previous.clearTransientState();
+    }
+    if (!preservePrevious && dashboardElement.tagName === 'DASHBOARD-CONTAINER') {
+      (dashboardElement as DashboardContainer).clearTransientState();
+    }
     this.innerHTML = '';
     this.appendChild(dashboardElement);
     this.activeDashboard = dashboardId;
@@ -92,11 +100,11 @@ export class AppContent extends BaseComponent {
     this.getActiveDashboardContainer()?.setDashboardMode(mode);
   }
 
-  async switchToDashboard(dashboardId: string): Promise<boolean> {
+  async switchToDashboard(dashboardId: string, preserveCurrent = false): Promise<boolean> {
     if (dashboardId === this.activeDashboard && !isBlankDashboard(dashboardId)) return true;
 
     const current = this.dashboards.get(this.activeDashboard);
-    if (current && current.tagName === 'DASHBOARD-CONTAINER') {
+    if (!preserveCurrent && current && current.tagName === 'DASHBOARD-CONTAINER') {
       const container = current as DashboardContainer;
       if (container.hasUnsavedChanges()) {
         const shouldDiscard = await showConfirm('You have unsaved changes. Discard and switch dashboards?', {
@@ -109,7 +117,7 @@ export class AppContent extends BaseComponent {
       }
     }
 
-    this.showDashboard(dashboardId);
+    this.showDashboard(dashboardId, preserveCurrent);
     return true;
   }
 }

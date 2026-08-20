@@ -5,9 +5,18 @@ import { DraftStore } from './draft-store';
 import { backupScript, clearRuns, getRun, lifecycle, restoreScript, runManual, saveRevision, updateScript, validateGraph } from './api';
 import type { Diagnostic, GraphDocument, GraphEdge, GraphNode, NodeDefinition, RuntimeStatus, TraceEvent, VisualScript, VisualScriptRun } from './types';
 import { showConfirm } from '../components/app-dialog';
+import { getTreeBrowserDialog } from '../components/tree-browser-dialog';
 import { visualScriptCategoryStyle } from './category-colors';
 
 const paletteNodeMime = 'application/x-xact-visual-script-node';
+
+export interface VisualScriptEditorTransientState {
+  graph: GraphDocument;
+  dirty: boolean;
+  selected: string;
+  selectedEdge: string;
+  collapsedCategories: string[];
+}
 
 export class VisualScriptEditor extends HTMLElement {
   private script!: VisualScript;
@@ -29,6 +38,23 @@ export class VisualScriptEditor extends HTMLElement {
   }
   connectedCallback(): void { if (this.draft) this.render(); }
   hasUnsavedChanges(): boolean { return this.draft?.dirty || false; }
+  getTransientState(): VisualScriptEditorTransientState {
+    return {
+      graph: this.draft.value,
+      dirty: this.draft.dirty,
+      selected: this.selected,
+      selectedEdge: this.selectedEdge,
+      collapsedCategories: [...this.collapsedCategories],
+    };
+  }
+  restoreTransientState(state: VisualScriptEditorTransientState): void {
+    if (state.dirty) this.draft.update(state.graph);
+    else this.draft.markSaved(state.graph);
+    this.selected = state.selected || '';
+    this.selectedEdge = state.selectedEdge || '';
+    this.collapsedCategories = new Set(state.collapsedCategories || []);
+    this.render();
+  }
   async requestClose(): Promise<boolean> {
     return !this.hasUnsavedChanges() || await this.save();
   }
@@ -88,6 +114,7 @@ export class VisualScriptEditor extends HTMLElement {
     if (!node || !definition) return '<h3>Inspector</h3><div class="vse-empty" style="opacity:.55">Select a node to configure it.</div>';
     return `<h3>${esc(definition.name)}</h3>${definition.description ? `<div class="vse-node-description" style="opacity:.65">${esc(definition.description)}</div>` : ''}${(definition.parameters || []).map(p => {
       const value = node.config[p.name] ?? p.default;
+      const isTagPath = p.type === 'tag-path' || p.name === 'tagPath' || p.name === 'pathPattern';
       if (p.type === 'boolean') return `<label class="vse-field"><span>${esc(p.label)}</span><input type="checkbox" data-param="${esc(p.name)}" data-type="boolean" ${value?'checked':''}></label>`;
       if (p.type === 'select') return `<label class="vse-field"><span>${esc(p.label)}</span><select data-param="${esc(p.name)}" data-type="select">${(p.options||[]).map(o=>`<option ${value===o?'selected':''}>${esc(o)}</option>`).join('')}</select></label>`;
       if (p.type === 'json') return `<label class="vse-field"><span>${esc(p.label)}</span><textarea data-param="${esc(p.name)}" data-type="json">${esc(value === undefined ? '' : JSON.stringify(value, null, 2))}</textarea></label>`;
@@ -95,6 +122,7 @@ export class VisualScriptEditor extends HTMLElement {
         const keys = this.contextKeyOptions(node);
         return `<label class="vse-field"><span>${esc(p.label)}</span><input data-param="key" data-type="string" type="text" value="${esc(value ?? '')}" list="vse-context-key-options"><datalist id="vse-context-key-options">${keys.map(key=>`<option value="${esc(key)}"></option>`).join('')}</datalist><small style="opacity:.5">Choose a key written by a variable node in this scope, or enter a new key.</small></label>`;
       }
+      if (isTagPath) return `<label class="vse-field"><span>${esc(p.label)}</span><div style="display:flex;gap:4px"><input data-param="${esc(p.name)}" data-type="tag-path" type="text" value="${esc(value ?? '')}" style="flex:1"><button type="button" data-tag-picker="${esc(p.name)}" data-tag-picker-label="${esc(p.label)}" title="Browse tags" aria-label="Browse tags">…</button></div>${p.description?`<small style="opacity:.5">${esc(p.description)}</small>`:''}</label>`;
       return `<label class="vse-field"><span>${esc(p.label)}</span><input data-param="${esc(p.name)}" data-type="${esc(p.type)}" type="${p.type==='number'?'number':'text'}" value="${esc(value ?? '')}">${p.description?`<small style="opacity:.5">${esc(p.description)}</small>`:''}</label>`;
     }).join('')}<button id="vse-delete-node" class="error">Delete node</button>`;
   }
@@ -116,8 +144,9 @@ export class VisualScriptEditor extends HTMLElement {
     return `<div class="vse-trace">${toolbar}${entries.map(({ key, event }) => {
       const node = this.draft.value.nodes.find(item => item.id === event.nodeId);
       const name = this.catalog.find(item => item.type === node?.type)?.name || event.nodeType;
+      const label = node?.type === 'core.debug' ? String(node.config.label ?? '').trim() : '';
       const payload = JSON.stringify({ value: event.value ?? null, fields: event.fields ?? {}, ...(event.formattedTimes?{formattedTimes:event.formattedTimes}:{}) });
-      return `<div class="vse-trace-event"><div class="vse-trace-header"><time datetime="${esc(event.timestamp)}">${esc(formatTraceTime(event.timestamp))}</time><b>${esc(name)}</b><span>· ${esc(event.status)}${event.message?` · ${esc(event.message)}`:''}</span><button data-format-trace="${esc(key)}" title="Show formatted JSON">Format JSON</button></div><code class="vse-trace-json" title="${esc(payload)}">${esc(payload)}</code></div>`;
+      return `<div class="vse-trace-event"><div class="vse-trace-header"><time datetime="${esc(event.timestamp)}">${esc(formatTraceTime(event.timestamp))}</time><b>${esc(name)}${label ? ` · ${esc(label)}` : ''}</b><span>· ${esc(event.status)}${event.message?` · ${esc(event.message)}`:''}</span><button data-format-trace="${esc(key)}" title="Show formatted JSON">Format JSON</button></div><code class="vse-trace-json" title="${esc(payload)}">${esc(payload)}</code></div>`;
     }).join('')}${running?'<div class="vse-empty-message" style="opacity:.6">Run in progress…</div>':''}</div>`;
   }
 
@@ -166,6 +195,7 @@ export class VisualScriptEditor extends HTMLElement {
     this.querySelector('#vse-json-close')?.addEventListener('click',()=>{this.formattedTraceKey=null;this.render()});
     this.querySelector('#vse-json-popup')?.addEventListener('click',event=>{if(event.target===event.currentTarget){this.formattedTraceKey=null;this.render()}});
     this.querySelectorAll<HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement>('[data-param]').forEach(input=>input.addEventListener('change',()=>this.updateParameter(input)));
+    this.querySelectorAll<HTMLButtonElement>('[data-tag-picker]').forEach(button=>button.addEventListener('click',()=>this.openTagPicker(button)));
     this.querySelector('#vse-delete-node')?.addEventListener('click',()=>this.deleteSelected());
   }
 
@@ -208,6 +238,7 @@ export class VisualScriptEditor extends HTMLElement {
   private async triggerManual(triggerNodeId:string):Promise<void>{if(this.busy||this.script.desiredState!=='running'||!triggerNodeId)return;try{this.busy='trigger';this.notice='Queuing manual trigger…';this.render();const run=await runManual(this.script.id,triggerNodeId);this.runs=[run,...this.runs.filter(item=>item.runId!==run.runId)];this.formattedTraceKey=null;this.busy='';this.notice='Manual trigger queued';this.render();void this.pollRun(run.runId,this.traceGeneration)}catch(error){this.failed(error)}}
   private async clearTrace():Promise<void>{if(!this.runs.length)return;const previousRuns=this.runs;this.traceGeneration++;this.runs=[];this.formattedTraceKey=null;this.busy='clear-trace';this.notice='Clearing trace…';this.render();try{await clearRuns(this.script.id);this.busy='';this.notice='Trace cleared';this.render()}catch(error){this.runs=previousRuns;this.failed(error)}}
   private async pollRun(runId:string,generation:number):Promise<void>{for(const delay of [100,200,400,800,1500,2500]){await new Promise(resolve=>setTimeout(resolve,delay));if(!this.isConnected||generation!==this.traceGeneration)return;try{const run=await getRun(this.script.id,runId);if(generation!==this.traceGeneration)return;this.runs=[run,...this.runs.filter(item=>item.runId!==runId)];this.notice=run.status==='queued'||run.status==='running'?'Manual trigger running':`Manual run ${run.status}`;this.render();if(run.status!=='queued'&&run.status!=='running')return}catch{return}}}
+  private openTagPicker(button: HTMLButtonElement): void { const parameter=button.dataset.tagPicker;const input=[...this.querySelectorAll<HTMLInputElement>('[data-param]')].find(candidate=>candidate.dataset.param===parameter);if(!parameter||!input)return;const selectedPath=input.value.trim();getTreeBrowserDialog().open('', `Select ${button.dataset.tagPickerLabel || 'tag'}`, path=>{input.value=path;this.updateParameter(input)}, true, selectedPath, selectedPath) }
   private updateParameter(input: HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement): void { const graph=this.draft.value;const node=graph.nodes.find(n=>n.id===this.selected);if(!node)return;const type=input.dataset.type;let value:any=input.value;try{if(type==='number')value=Number(value);else if(type==='boolean')value=(input as HTMLInputElement).checked;else if(type==='json')value=value.trim()===''?null:JSON.parse(value)}catch{this.notice='Error: invalid JSON value';this.render();return}node.config={...node.config,[input.dataset.param!]:value};this.draft.update(graph);this.render() }
   private deleteSelected():void{const graph=this.draft.value;graph.nodes=graph.nodes.filter(n=>n.id!==this.selected);graph.edges=graph.edges.filter(e=>e.from.nodeId!==this.selected&&e.to.nodeId!==this.selected);this.selected='';this.selectedEdge='';this.draft.update(graph);this.render()}
   private async validate():Promise<boolean>{try{this.busy='validate';this.notice='Validating…';this.render();const result=await validateGraph(this.script.id,this.draft.value);const diagnostics=result.diagnostics??[];this.diagnostics=diagnostics;this.notice=result.valid?'Graph is valid':`${diagnostics.filter(d=>d.severity==='error').length} error(s)`;this.busy='';this.render();return result.valid}catch(error){this.failed(error);return false}}

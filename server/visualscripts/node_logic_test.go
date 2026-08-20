@@ -48,6 +48,8 @@ func TestEveryCatalogNodeHasWorkingExecutionLogic(t *testing.T) {
 		{name: "falling edge passes its accepted trigger", nodeType: "core.falling-edge", config: `{"pathPattern":"SITE.Pump.Status","coercion":"strict"}`, message: messageWith(base, false, nil), wantPort: "out", wantValue: false},
 		{name: "startup passes its trigger message", nodeType: "core.startup", config: `{}`, message: messageWith(base, nil, nil), wantPort: "out"},
 		{name: "compare routes numeric fields", nodeType: "core.compare", config: `{"field":"temperature","operator":">=","compareTo":20}`, message: messageWith(base, nil, map[string]any{"temperature": 21}), wantPort: "true", wantFields: map[string]any{"temperature": 21}},
+		{name: "compare accepts the visible value alias", nodeType: "core.compare", config: `{"field":"value","operator":"<","compareTo":30}`, message: messageWith(base, 20, nil), wantPort: "true", wantValue: 20},
+		{name: "compare preserves an explicit field named value", nodeType: "core.compare", config: `{"field":"value","operator":">","compareTo":30}`, message: messageWith(base, 20, map[string]any{"value": 40}), wantPort: "true", wantValue: 20, wantFields: map[string]any{"value": 40}},
 		{name: "in range includes boundaries by default", nodeType: "core.in-range", config: `{"minimum":0,"maximum":10}`, message: messageWith(base, 0, nil), wantPort: "true", wantValue: 0},
 		{name: "not negates a boolean", nodeType: "core.not", config: `{}`, message: messageWith(base, false, nil), wantPort: "true", wantValue: false},
 		{name: "and requires every field", nodeType: "core.and", config: `{"fields":["ready","enabled"]}`, message: messageWith(base, nil, map[string]any{"ready": true, "enabled": false}), wantPort: "false", wantFields: map[string]any{"ready": true, "enabled": false}},
@@ -183,6 +185,45 @@ func TestDebugTraceSnapshotsInputMessage(t *testing.T) {
 	}
 	if len(run.Trace) != 1 || run.Trace[0].Value != float64(23) || run.Trace[0].Fields["stage"] != "input" {
 		t.Fatalf("debug trace did not snapshot its input: %#v", run.Trace)
+	}
+}
+
+func TestCompareBranchesTraceDebugNodesForChangedTagValues(t *testing.T) {
+	engine := New(newRuntimeTestStore(Script{}, Revision{}))
+	defer engine.Close()
+	graph := NormalizeGraph(GraphDocument{
+		Nodes: []GraphNode{
+			{ID: "changed", Type: "core.tag-changed", TypeVersion: 1, Config: json.RawMessage(`{"pathPattern":"Plant.Tank.level"}`)},
+			{ID: "initial", Type: "core.debug", TypeVersion: 1, Config: json.RawMessage(`{"label":"input"}`)},
+			{ID: "low", Type: "core.compare", TypeVersion: 1, Config: json.RawMessage(`{"field":"value","operator":"<","compareTo":30}`)},
+			{ID: "high", Type: "core.compare", TypeVersion: 1, Config: json.RawMessage(`{"field":"value","operator":">","compareTo":35}`)},
+			{ID: "low-debug", Type: "core.debug", TypeVersion: 1, Config: json.RawMessage(`{"label":"low"}`)},
+			{ID: "high-debug", Type: "core.debug", TypeVersion: 1, Config: json.RawMessage(`{"label":"high"}`)},
+		},
+		Edges: []GraphEdge{
+			{ID: "changed-initial", From: EdgeEndpoint{NodeID: "changed", Port: "out"}, To: EdgeEndpoint{NodeID: "initial", Port: "in"}},
+			{ID: "changed-high", From: EdgeEndpoint{NodeID: "changed", Port: "out"}, To: EdgeEndpoint{NodeID: "high", Port: "in"}},
+			{ID: "initial-low", From: EdgeEndpoint{NodeID: "initial", Port: "out"}, To: EdgeEndpoint{NodeID: "low", Port: "in"}},
+			{ID: "low-debug", From: EdgeEndpoint{NodeID: "low", Port: "true"}, To: EdgeEndpoint{NodeID: "low-debug", Port: "in"}},
+			{ID: "high-debug", From: EdgeEndpoint{NodeID: "high", Port: "true"}, To: EdgeEndpoint{NodeID: "high-debug", Port: "in"}},
+		},
+	})
+	plan := compile(graph)
+
+	for _, test := range []struct {
+		value     float64
+		wantDebug string
+	}{
+		{value: 20, wantDebug: "low-debug"},
+		{value: 40, wantDebug: "high-debug"},
+	} {
+		run := &Run{}
+		if err := engine.execute(context.Background(), plan, plan.nodes["changed"], Message{Value: test.value}, run); err != nil {
+			t.Fatalf("value %v: %v", test.value, err)
+		}
+		if len(run.Trace) != 2 || run.Trace[0].NodeID != "initial" || run.Trace[1].NodeID != test.wantDebug {
+			t.Fatalf("value %v traces = %#v, want initial then %s", test.value, run.Trace, test.wantDebug)
+		}
 	}
 }
 

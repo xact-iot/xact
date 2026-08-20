@@ -469,4 +469,27 @@ describe('tags-manager-widget search', () => {
     expect(dialogMock.showAlert).toHaveBeenCalledWith(expect.stringContaining('Failed to delete'), expect.objectContaining({ title: 'Delete failed' }));
 
   });
+
+  it('restores the expanded tree, filters, and scroll position after reconstruction', async () => {
+    seedTree();
+    const widget = document.createElement('tags-manager-widget') as any;
+    document.body.appendChild(widget);
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    widget.setTransientState({
+      expandedNodes: ['default.Area', 'default.Area.Device'],
+      searchQuery: 'temp',
+      statusFilter: 'A',
+      scrollTop: 47,
+    });
+    await flushMicrotasks();
+
+    const state = widget.getTransientState();
+    expect(state.expandedNodes).toEqual(['default.Area', 'default.Area.Device']);
+    expect(state.searchQuery).toBe('temp');
+    expect(state.statusFilter).toBe('A');
+    expect(state.scrollTop).toBe(47);
+    expect(widget.querySelector<HTMLInputElement>('#tv-search')?.value).toBe('temp');
+  });
 });

@@ -17,7 +17,7 @@ export interface VisualScript {
 }
 export interface VisualScriptRevision { scriptId: string; revision: number; schemaVersion: number; graph: GraphDocument; graphHash: string; validationStatus: string; diagnostics: Diagnostic[]; createdAt: string }
 export interface PortDefinition { name: string; label: string; dataType: string }
-export interface ParameterDefinition { name: string; label: string; type: 'string'|'number'|'boolean'|'select'|'json'; description?: string; required?: boolean; options?: string[]; default?: any }
+export interface ParameterDefinition { name: string; label: string; type: 'string'|'number'|'boolean'|'select'|'json'|'tag-path'; description?: string; required?: boolean; options?: string[]; default?: any }
 export interface NodeDefinition { type: string; typeVersion: number; name: string; description: string; category: string; icon: string; inputs: PortDefinition[]; outputs: PortDefinition[]; parameters: ParameterDefinition[]; available: boolean; unavailableReason?: string; outputNode?: boolean; simulationSafe?: boolean }
 export interface RuntimeStatus { scriptId: string; desiredState: string; runtimeState: string; activeRevision?: number; latestRevision: number; queueDepth: number; sequence: number; lastTriggerAt?: string; lastCompletionAt?: string; errorSummary?: string }
 export interface TraceEvent { sequence: number; timestamp: string; nodeId: string; nodeType: string; port?: string; status: string; value?: any; fields?: Record<string, any>; message?: string; formattedTimes?: Record<string, string> }

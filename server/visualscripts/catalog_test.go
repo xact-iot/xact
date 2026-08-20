@@ -37,3 +37,19 @@ func TestContextNodeTypesUseVariableLabels(t *testing.T) {
 		t.Fatalf("variable nodes missing from catalog: %#v", want)
 	}
 }
+
+func TestTagChangedOffersTriggerOnStart(t *testing.T) {
+	definition, ok := NewRegistry().Definition("core.tag-changed")
+	if !ok {
+		t.Fatal("Tag Changed definition is missing")
+	}
+	for _, parameter := range definition.Parameters {
+		if parameter.Name == "triggerOnStart" {
+			if parameter.Type != "boolean" || parameter.Default != false {
+				t.Fatalf("Trigger on start parameter = %#v", parameter)
+			}
+			return
+		}
+	}
+	t.Fatal("Tag Changed is missing Trigger on start")
+}

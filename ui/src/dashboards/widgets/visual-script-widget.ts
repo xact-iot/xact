@@ -5,7 +5,7 @@ import { createScript, getCatalog, getRevision, getRuns, getScript, getStatus, l
 import { emptyGraph } from '../../visual-scripts/types';
 import type { GraphDocument, NodeDefinition, RuntimeStatus, VisualScript, VisualScriptRun } from '../../visual-scripts/types';
 import type { VisualScriptCanvas } from '../../visual-scripts/canvas';
-import type { VisualScriptEditor } from '../../visual-scripts/editor';
+import type { VisualScriptEditor, VisualScriptEditorTransientState } from '../../visual-scripts/editor';
 import '../../visual-scripts/canvas';
 import '../../visual-scripts/editor';
 import { registerWidgetType } from './widget-registry';
@@ -17,6 +17,7 @@ registerPermissions('visual-scripts', 'Visual Scripts', [
 registerWidgetType({ type: 'visual-script-widget', name: 'Visual Script', icon: '⌘', category: 'System', defaultW: 24, defaultH: 28, minW: 12, minH: 16 });
 
 interface Config { scriptId: string; display: 'editor'|'overview'; showRuntimeStatus: boolean }
+interface VisualScriptWidgetTransientState { editing: boolean; editor?: VisualScriptEditorTransientState }
 
 export class VisualScriptWidget extends BaseComponent {
   private config: Config = { scriptId: '', display: 'editor', showRuntimeStatus: true };
@@ -34,6 +35,8 @@ export class VisualScriptWidget extends BaseComponent {
   private editor: VisualScriptEditor | null = null;
   private statusTimer: ReturnType<typeof setInterval> | null = null;
   private triggerBusy = false;
+  private pendingTransientState: VisualScriptWidgetTransientState | null = null;
+  private loadGeneration = 0;
 
   setConfig(value: Partial<Config>): void { this.config = { ...this.config, ...value }; if (this.isConnected) void this.load(); }
   getConfig(): Config { return { ...this.config }; }
@@ -48,22 +51,44 @@ export class VisualScriptWidget extends BaseComponent {
   }
 
   connectedCallback(): void { super.connectedCallback(); void this.load(); }
-  disconnectedCallback(): void { this.clearStatusTimer(); this.closeEditor(false); super.disconnectedCallback(); }
+  disconnectedCallback(): void { this.loadGeneration++; this.clearStatusTimer(); this.closeEditor(false); super.disconnectedCallback(); }
+
+  getTransientState(): VisualScriptWidgetTransientState {
+    return { editing: !!this.editor, ...(this.editor ? { editor: this.editor.getTransientState() } : {}) };
+  }
+
+  setTransientState(state: VisualScriptWidgetTransientState): void {
+    this.pendingTransientState = state;
+    this.restoreEditorState();
+  }
 
   private async load(): Promise<void> {
+    const generation = ++this.loadGeneration;
     this.loading = true; this.error = ''; this.notice = ''; this.forbidden = false; this.render();
     const [canView, canEdit] = await Promise.all([can('visual-scripts.view'), can('visual-scripts.edit')]); this.canEdit = canEdit;
+    if (!this.isCurrentLoad(generation)) return;
     if (!canView && !canEdit) { this.loading = false; this.forbidden = true; this.render(); return; }
     try {
       this.catalog = await getCatalog();
-      if (!this.config.scriptId) { this.scripts = await listScripts(); this.script = null; this.loading = false; this.render(); return; }
+      if (!this.isCurrentLoad(generation)) return;
+      if (!this.config.scriptId) {
+        this.scripts = await listScripts();
+        if (!this.isCurrentLoad(generation)) return;
+        this.script = null; this.loading = false; this.render(); return;
+      }
       this.script = await getScript(this.config.scriptId);
+      if (!this.isCurrentLoad(generation)) return;
       this.graph = this.script.latestRevision > 0 ? (await getRevision(this.script.id, this.script.latestRevision)).graph : emptyGraph();
+      if (!this.isCurrentLoad(generation)) return;
       [this.runs, this.status] = await Promise.all([getRuns(this.script.id), getStatus(this.script.id)]);
+      if (!this.isCurrentLoad(generation)) return;
       this.updateTitle(); this.startStatusTimer();
     } catch (error: any) { this.error = error?.status === 404 ? 'missing' : (error?.message || 'Backend unavailable'); }
-    this.loading = false; this.render();
+    if (!this.isCurrentLoad(generation)) return;
+    this.loading = false; this.render(); this.restoreEditorState();
   }
+
+  private isCurrentLoad(generation: number): boolean { return generation === this.loadGeneration && this.isConnected; }
 
   protected render(): void {
     this.innerHTML = `<style>
@@ -102,7 +127,8 @@ export class VisualScriptWidget extends BaseComponent {
   private async create(): Promise<void> { const input=this.querySelector<HTMLInputElement>('#vsw-new-name');const name=input?.value.trim();if(!name)return;try{const script=await createScript(name);this.attachScript(script.id)}catch(error:any){this.error=error?.message||'Create failed';this.render()} }
   private attachExisting(): void { const id=this.querySelector<HTMLSelectElement>('#vsw-existing')?.value;if(id)this.attachScript(id) }
   private attachScript(id:string):void{this.config.scriptId=id;this.emit('widget-config-save',{config:this.getConfig(),forceDirty:true});void this.load()}
-  private openEditor():void{if(!this.script||this.editor)return;this.editor=document.createElement('visual-script-editor') as VisualScriptEditor;this.editor.initialize(this.script,this.graph,this.catalog,this.runs);this.editor.addEventListener('visual-script-editor-close',()=>this.closeEditor(true));this.editor.addEventListener('visual-script-updated',(event:Event)=>{this.script=(event as CustomEvent).detail.script});document.body.appendChild(this.editor);this.emit('visual-script-focus-changed',{active:true})}
+  private openEditor(transientState?:VisualScriptEditorTransientState):void{if(!this.script||this.editor)return;this.editor=document.createElement('visual-script-editor') as VisualScriptEditor;this.editor.initialize(this.script,this.graph,this.catalog,this.runs);if(transientState)this.editor.restoreTransientState(transientState);this.editor.addEventListener('visual-script-editor-close',()=>this.closeEditor(true));this.editor.addEventListener('visual-script-updated',(event:Event)=>{this.script=(event as CustomEvent).detail.script});document.body.appendChild(this.editor);this.emit('visual-script-focus-changed',{active:true})}
+  private restoreEditorState():void{const state=this.pendingTransientState;if(!state||this.loading)return;this.pendingTransientState=null;if(state.editing&&this.script&&this.canEdit)this.openEditor(state.editor)}
   private closeEditor(reload:boolean):void{if(!this.editor)return;this.editor.remove();this.editor=null;this.emit('visual-script-focus-changed',{active:false});if(reload)void this.load()}
   private async toggleRuntime():Promise<void>{const state=this.status?.runtimeState||this.script?.runtimeState;if(state==='running')await this.control('stop');else if(state==='paused')await this.control('resume');else await this.control('start')}
   private async control(action:'start'|'pause'|'resume'|'stop'):Promise<void>{if(!this.script)return;this.notice='';try{this.status=await lifecycle(this.script.id,action);this.notice=action==='start'||action==='resume'?'Script started':action==='pause'?'Script paused':'Script stopped';this.render()}catch(error:any){this.notice=error?.message||'Command failed';this.render()}}

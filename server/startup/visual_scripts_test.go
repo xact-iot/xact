@@ -1,11 +1,17 @@
 package main
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	"github.com/xact-iot/xact/rtdb/tree"
 	"github.com/xact-iot/xact/visualscripts"
 )
+
+type visualScriptSnapshotPublisher struct{}
+
+func (visualScriptSnapshotPublisher) TagValuePublish(string, []byte) error { return nil }
 
 func TestDispatchVisualScriptTagDecodesBroadcastValue(t *testing.T) {
 	router := visualscripts.NewTagChangeRouter(10, 10)
@@ -35,5 +41,46 @@ func TestTenantTagPathAlwaysUsesMessageOrganisation(t *testing.T) {
 	}
 	if _, err := tenantTagPath("acme", "SITE.*.Speed"); err == nil {
 		t.Fatal("Set Tag accepted a wildcard path")
+	}
+}
+
+func TestVisualScriptTagSnapshotsReturnsDefinedMatchingValues(t *testing.T) {
+	previousPublisher := tree.TagValuePublisher
+	tree.TagValuePublisher = visualScriptSnapshotPublisher{}
+	t.Cleanup(func() { tree.TagValuePublisher = previousPublisher })
+	treeOps := tree.NewTreeWithOperations(nil)
+	if err := treeOps.CreateNode("/acme/SITE/Pump01", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := treeOps.UnlockNode("/acme/SITE/Pump01"); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"level", "unset", "undefined"} {
+		if err := treeOps.CreateTag("/acme/SITE/Pump01/"+name, tree.TypeFloat, tree.TagConfig{Name: name, Type: tree.TypeFloat}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := treeOps.SetLeafValue("acme.SITE.Pump01.level", float64(0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := treeOps.SetLeafValue("acme.SITE.Pump01.undefined", float64(12)); err != nil {
+		t.Fatal(err)
+	}
+	undefined, err := treeOps.FindLeaf("acme.SITE.Pump01.undefined")
+	if err != nil {
+		t.Fatal(err)
+	}
+	undefined.SetState(tree.StatusUndefined)
+
+	changes, err := visualScriptTagSnapshots(context.Background(), treeOps, "acme", "SITE.*.*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("snapshots = %#v, want one defined value", changes)
+	}
+	change := changes[0]
+	if change.TagPath != "SITE.Pump01.level" || change.InstanceKey != "Pump01/level" || change.Value != float64(0) || change.Fields["trigger"] != "start" {
+		t.Fatalf("snapshot = %#v", change)
 	}
 }

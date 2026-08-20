@@ -3,6 +3,7 @@ import { visualScriptCategoryStyle } from './category-colors';
 
 const nodeWidth = 150;
 const headerHeight = 32;
+const summaryHeight = 26;
 const portStep = 22;
 type Endpoint = { nodeId: string; port: string };
 type Point = { x: number; y: number };
@@ -55,7 +56,7 @@ export class VisualScriptCanvas extends HTMLElement {
         visual-script-canvas .vsc-node{z-index:1;position:absolute;width:${nodeWidth}px;min-height:58px;overflow:hidden;border:1px solid #b8aa93;border-radius:6px;background:#ede6d9;color:#3d3428;box-shadow:0 4px 12px rgba(61,52,40,.22);font:12px var(--widget-font-family);user-select:none}
         visual-script-canvas .vsc-node.selected{border-color:var(--accent-color);outline:2px solid var(--accent-color);outline-offset:1px;box-shadow:0 0 0 3px color-mix(in srgb,var(--accent-color) 32%,transparent),0 6px 16px rgba(61,52,40,.3)}
         visual-script-canvas .vsc-head{box-sizing:border-box;height:${headerHeight}px;padding:5px 8px;cursor:${this.readonly ? 'default' : 'grab'};display:flex;align-items:center;gap:6px;background:var(--vs-category-bg);color:var(--vs-category-text);border-bottom:1px solid var(--vs-category-border)}
-        visual-script-canvas .vsc-head>span:last-child{min-width:0;flex:1}.vsc-icon{font-size:14px}.vsc-title{font-size:13px;line-height:1.2;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        visual-script-canvas .vsc-head>span:last-child{min-width:0;flex:1}.vsc-icon{font-size:14px}.vsc-title{font-size:13px;line-height:1.2;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vsc-summary{box-sizing:border-box;height:${summaryHeight}px;padding:5px 7px;border-bottom:1px solid color-mix(in srgb,#3d3428 18%,transparent);font-size:12px;line-height:15px;color:#665a49;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         visual-script-canvas .vsc-ports{display:flex;justify-content:space-between;align-items:flex-start;padding:5px 3px;gap:4px}
         visual-script-canvas .vsc-port-col{display:flex;flex-direction:column;gap:2px;max-width:50%}
         visual-script-canvas .vsc-port{border:0;background:none;color:inherit;font:12px var(--widget-font-family);padding:2px;display:flex;align-items:center;gap:3px;cursor:${this.readonly ? 'default' : 'crosshair'};white-space:nowrap}
@@ -84,11 +85,13 @@ export class VisualScriptCanvas extends HTMLElement {
 
   private nodeMarkup(node: GraphNode): string {
     const definition = this.definitions.get(node.type);
+    const summary = this.nodeSummary(node);
     const inputs = (definition?.inputs || []).map(port => `<button class="vsc-port vsc-in" data-node="${esc(node.id)}" data-port="${esc(port.name)}" data-kind="in" aria-label="Connect to ${esc(definition?.name || node.type)} ${esc(port.label)}">${esc(port.label)}</button>`).join('');
     const outputs = (definition?.outputs || []).map(port => `<button class="vsc-port vsc-out ${this.pendingOutput?.nodeId === node.id && this.pendingOutput.port === port.name ? 'pending' : ''}" data-node="${esc(node.id)}" data-port="${esc(port.name)}" data-kind="out" aria-label="Connect from ${esc(definition?.name || node.type)} ${esc(port.label)}">${esc(port.label)}</button>`).join('');
     const manualTrigger = node.type === 'core.manual' && this.options.showManualTrigger ? `<div class="vsc-manual-action"><button class="vsc-manual-trigger" data-trigger-node="${esc(node.id)}" ${this.options.manualTriggerEnabled ? '' : 'disabled'} title="${this.options.manualTriggerEnabled ? 'Run the script from this Manual trigger' : 'Start the script to enable this trigger'}">Trigger</button></div>` : '';
     return `<section class="vsc-node ${this.selected === node.id ? 'selected' : ''}" tabindex="0" data-node-id="${esc(node.id)}" style="left:${node.position.x}px;top:${node.position.y}px;${visualScriptCategoryStyle(definition?.category)}" aria-label="${esc(definition?.name || node.type)} node">
       <div class="vsc-head"><span class="vsc-icon">${esc(definition?.icon || '◇')}</span><span><div class="vsc-title">${esc(definition?.name || node.type)}</div></span></div>
+      ${summary ? `<div class="vsc-summary" title="${esc(summary)}">${esc(summary)}</div>` : ''}
       <div class="vsc-ports"><div class="vsc-port-col">${inputs}</div><div class="vsc-port-col">${outputs}</div></div>
       ${manualTrigger}
     </section>`;
@@ -117,7 +120,43 @@ export class VisualScriptCanvas extends HTMLElement {
     const node = this.graph?.nodes.find(item => item.id === endpoint.nodeId); if (!node) return null;
     const definition = this.definitions.get(node.type); const ports = kind === 'out' ? definition?.outputs : definition?.inputs;
     const index = Math.max(0, (ports || []).findIndex(port => port.name === endpoint.port));
-    return { x: node.position.x + (kind === 'out' ? nodeWidth : 0), y: node.position.y + headerHeight + 18 + index * portStep };
+    return { x: node.position.x + (kind === 'out' ? nodeWidth : 0), y: node.position.y + headerHeight + (this.nodeSummary(node) ? summaryHeight : 0) + 18 + index * portStep };
+  }
+
+  private nodeSummary(node: GraphNode): string {
+    const value = (key: string) => node.config[key];
+    const field = String(value('field') || '$value');
+    const source = value('source') === 'configured' ? compactValue(value('value')) : value('source') === 'field' ? String(value('field') || '$value') : '$value';
+    switch (node.type) {
+      case 'core.tag-changed': return `${tagName(value('pathPattern')) || 'tag path'}${value('triggerOnStart') ? ' · on start' : ''}`;
+      case 'core.rising-edge': case 'core.falling-edge': return tagName(value('pathPattern')) || 'tag path';
+      case 'core.timer': return `Every ${value('interval') || 'interval'}`;
+      case 'core.startup': return value('delay') && value('delay') !== '0s' ? `After ${value('delay')}` : 'When script starts';
+      case 'core.compare': return `${field} ${value('operator') || '=='} ${compactValue(value('compareTo'))}`;
+      case 'core.in-range': return `${field} ∈ ${compactValue(value('minimum'))}…${compactValue(value('maximum'))}`;
+      case 'core.not': return `NOT ${field}`;
+      case 'core.and': case 'core.or': return compactValue(value('fields')) || 'Message fields';
+      case 'core.compare-times': return `${value('leftField') || '$value'} ${value('operator') || 'before'} ${value('rightSource') || 'now'}`;
+      case 'core.set-field': return `${value('field') || '$value'} ← ${compactValue(value('value'))}`;
+      case 'core.select-field': return `Use ${field}`;
+      case 'core.current-time': return `→ ${value('outputField') || '$value'}`;
+      case 'core.time-since': return `${field} → ${value('unit') || 'milliseconds'}`;
+      case 'core.multiply': return `${field} × ${compactValue(value('factor'))}`;
+      case 'core.divide': return `${field} ÷ ${compactValue(value('divisor'))}`;
+      case 'core.average': return compactValue(value('fields')) || 'Message value';
+      case 'core.clamp': return `${field}: ${compactValue(value('minimum'))}…${compactValue(value('maximum'))}`;
+      case 'core.scale': return `${compactValue(value('inputMin'))}…${compactValue(value('inputMax'))} → ${compactValue(value('outputMin'))}…${compactValue(value('outputMax'))}`;
+      case 'core.get-context': case 'core.delete-context': return `${value('scope') || 'script'} · ${value('key') || 'key'}`;
+      case 'core.set-context': case 'core.increment-context': return `${value('scope') || 'script'} · ${value('key') || 'key'} ← ${source}`;
+      case 'core.set-time-context': return `${value('key') || 'key'} ← ${value('source') || 'now'}`;
+      case 'core.get-time-context': return `${value('key') || 'key'} → ${value('outputField') || '$value'}`;
+      case 'core.set-tag': return `${tagName(value('tagPath')) || 'tag path'} ← ${source}`;
+      case 'core.send-control': return `${value('deviceName') ? `${value('deviceName')}.` : ''}${tagName(value('tagPath')) || 'control path'} ← ${source}`;
+      case 'core.send-notification': return `${value('severity') || 'INFO'} · ${value('profile') || 'profile'}`;
+      case 'core.log-event': return `${value('severity') || 'INFO'} · ${value('message') || 'message'}`;
+      case 'core.debug': return String(value('label') || 'Message trace');
+      default: return '';
+    }
   }
 
   private nodeLabel(id: string): string {
@@ -324,6 +363,15 @@ export class VisualScriptCanvas extends HTMLElement {
 }
 
 export function uid(prefix: string): string { return `${prefix}_${crypto.randomUUID?.() || Math.random().toString(36).slice(2)}`.replace(/-/g, '').slice(0, 36); }
+function compactValue(value: any): string {
+  if (value === undefined || value === null || value === '') return '';
+  if (typeof value === 'string') return value;
+  try { return JSON.stringify(value); } catch { return String(value); }
+}
+function tagName(path: any): string {
+  const normalized = String(path ?? '').replace(/:[^.]+$/, '');
+  return normalized.split(/[./]/).filter(Boolean).at(-1) || '';
+}
 function curvePath(from: Point, to: Point): string { const bend = Math.max(55, Math.abs(to.x - from.x) * .45); return `M ${from.x} ${from.y} C ${from.x + bend} ${from.y}, ${to.x - bend} ${to.y}, ${to.x} ${to.y}`; }
 function isDeleteKey(event: KeyboardEvent): boolean { return event.key === 'Delete' || event.key === 'Backspace' || event.key === 'Decimal' || event.code === 'NumpadDecimal' || event.code === 'NumpadDelete'; }
 function esc(value: any): string { return String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]!)); }
