@@ -1,0 +1,40 @@
+{
+  "name": "example-max-two",
+  "version": "1.0.0",
+  "nodes": [
+    {
+      "type": "example.max-two",
+      "typeVersion": 1,
+      "name": "Max of Two",
+      "description": "Waits for a numeric value on each input and outputs the larger value.",
+      "category": "Transforms",
+      "icon": "max",
+      "inputs": [
+        {
+          "name": "first",
+          "label": "First",
+          "dataType": "message"
+        },
+        {
+          "name": "second",
+          "label": "Second",
+          "dataType": "message"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out",
+          "label": "Maximum",
+          "dataType": "message"
+        }
+      ],
+      "parameterSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "requiredServices": [],
+      "simulationSafe": true
+    }
+  ]
+}

@@ -1340,6 +1340,70 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		return fmt.Errorf("running scheduler migration: %w", err)
 	}
 
+	visualScriptsMigration := `
+		CREATE TABLE IF NOT EXISTS visual_scripts (
+			id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			org_name        TEXT NOT NULL REFERENCES organisations(name) ON DELETE CASCADE,
+			name            TEXT NOT NULL,
+			description     TEXT NOT NULL DEFAULT '',
+			desired_state   TEXT NOT NULL DEFAULT 'stopped',
+			latest_revision INTEGER NOT NULL DEFAULT 0,
+			active_revision INTEGER,
+			backup_revision INTEGER,
+			simulation      BOOLEAN NOT NULL DEFAULT FALSE,
+			activate        BOOLEAN NOT NULL DEFAULT FALSE,
+			created_by      INTEGER NOT NULL DEFAULT 0,
+			updated_by      INTEGER NOT NULL DEFAULT 0,
+			created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE(org_name, name),
+			CHECK (desired_state IN ('stopped', 'running', 'paused'))
+		);
+		ALTER TABLE visual_scripts ADD COLUMN IF NOT EXISTS backup_revision INTEGER;
+		ALTER TABLE visual_scripts ADD COLUMN IF NOT EXISTS simulation BOOLEAN NOT NULL DEFAULT FALSE;
+		ALTER TABLE visual_scripts ADD COLUMN IF NOT EXISTS activate BOOLEAN NOT NULL DEFAULT FALSE;
+		CREATE INDEX IF NOT EXISTS idx_visual_scripts_org ON visual_scripts(org_name, updated_at DESC);
+		CREATE TABLE IF NOT EXISTS visual_script_revisions (
+			script_id         UUID NOT NULL REFERENCES visual_scripts(id) ON DELETE CASCADE,
+			org_name          TEXT NOT NULL REFERENCES organisations(name) ON DELETE CASCADE,
+			revision          INTEGER NOT NULL,
+			schema_version    INTEGER NOT NULL,
+			graph_json        JSONB NOT NULL,
+			graph_hash        TEXT NOT NULL,
+			validation_status TEXT NOT NULL,
+			diagnostics_json  JSONB NOT NULL DEFAULT '[]',
+			capabilities_json JSONB NOT NULL DEFAULT '[]',
+			created_by        INTEGER NOT NULL DEFAULT 0,
+			created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY(script_id, revision)
+		);
+		CREATE INDEX IF NOT EXISTS idx_visual_script_revisions_org ON visual_script_revisions(org_name, script_id, revision DESC);
+		CREATE TABLE IF NOT EXISTS visual_script_runs (
+			run_id              TEXT PRIMARY KEY,
+			org_name            TEXT NOT NULL REFERENCES organisations(name) ON DELETE CASCADE,
+			script_id           UUID NOT NULL REFERENCES visual_scripts(id) ON DELETE CASCADE,
+			active_revision     INTEGER NOT NULL,
+			trigger_node_id     TEXT NOT NULL,
+			instance_key        TEXT NOT NULL DEFAULT 'manual',
+			started_at          TIMESTAMPTZ NOT NULL,
+			completed_at        TIMESTAMPTZ,
+			status              TEXT NOT NULL,
+			duration_ms         BIGINT NOT NULL DEFAULT 0,
+			first_error_node_id TEXT NOT NULL DEFAULT '',
+			message             TEXT NOT NULL DEFAULT '',
+			nodes_executed      INTEGER NOT NULL DEFAULT 0,
+			actions_attempted   INTEGER NOT NULL DEFAULT 0,
+			warnings            INTEGER NOT NULL DEFAULT 0,
+			dropped_traces      INTEGER NOT NULL DEFAULT 0,
+			trace_json          JSONB NOT NULL DEFAULT '[]'
+		);
+		ALTER TABLE visual_script_runs ADD COLUMN IF NOT EXISTS instance_key TEXT NOT NULL DEFAULT 'manual';
+		CREATE INDEX IF NOT EXISTS idx_visual_script_runs_lookup ON visual_script_runs(org_name, script_id, started_at DESC);
+	`
+	if _, err := db.pool.Exec(ctx, visualScriptsMigration); err != nil {
+		return fmt.Errorf("running visual scripts migration: %w", err)
+	}
+
 	return nil
 }
 
@@ -1404,6 +1468,7 @@ func (db *PostgresDB) seedStarterDashboards(ctx context.Context, orgID int) erro
 		widgets     string
 	}{
 		{sqldb.StarterWelcomeName, "Start here", "mdi:hand-wave", 0, sqldb.StarterWelcomeWidgetsJSON},
+		{sqldb.StarterAutomationName, "Visual automation scripts", "mdi:source-branch", 7, sqldb.StarterAutomationWidgetsJSON},
 		{sqldb.StarterHelpName, "XACT user manual", "mdi:book-open-page-variant", 8, sqldb.StarterHelpWidgetsJSON},
 	}
 	if orgName == "default" {

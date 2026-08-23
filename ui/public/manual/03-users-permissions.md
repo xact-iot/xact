@@ -79,6 +79,8 @@ The **Permissions** widget (System category) displays the full permission matrix
 | `reports.manage` | Create and manage PDF report templates | Manager and above |
 | `notifications.manage` | Configure notification channels and profiles | Manager and above |
 | `tagcalcs.manage` | Create and manage tag calculations | Manager and above |
+| `visual-scripts.view` | View visual script graphs, status, and run summaries | As assigned |
+| `visual-scripts.edit` | Create, edit, test, back up, and control visual scripts | As assigned |
 | `logs.read` | View system event logs | Operator and above |
 
 ### Editing Permissions

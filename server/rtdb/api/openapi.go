@@ -84,6 +84,10 @@ func (r apiRoutes) Put(pattern string, handler any) {
 	r.register(http.MethodPut, pattern, handler)
 }
 
+func (r apiRoutes) Patch(pattern string, handler any) {
+	r.register(http.MethodPatch, pattern, handler)
+}
+
 func (r apiRoutes) Delete(pattern string, handler any) {
 	r.register(http.MethodDelete, pattern, handler)
 }

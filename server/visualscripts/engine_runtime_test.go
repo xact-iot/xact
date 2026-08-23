@@ -1,0 +1,418 @@
+package visualscripts
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+func TestInstanceQueuesEnforceLimitsAndIsolateWildcardDevices(t *testing.T) {
+	graph := NormalizeGraph(GraphDocument{
+		Settings: GraphSettings{MaxConcurrency: 1, QueueLimit: 1, ErrorPolicy: "stop-message", TraceLevel: "errors"},
+		Nodes:    []GraphNode{{ID: "manual", Type: "core.manual", TypeVersion: 1, Config: json.RawMessage(`{}`)}},
+	})
+	revision := 1
+	store := newRuntimeTestStore(Script{ID: "script", OrgName: "org", DesiredState: "running", LatestRevision: revision, ActiveRevision: &revision}, Revision{ScriptID: "script", OrgName: "org", Revision: revision, Graph: graph})
+	engine := New(store)
+	defer engine.Close()
+
+	started := make(chan string, 4)
+	engine.nodeHandler = func(ctx context.Context, node GraphNode, message Message) (string, Message, bool, error) {
+		started <- message.InstanceKey
+		<-ctx.Done()
+		return "", message, false, ctx.Err()
+	}
+
+	first, err := engine.RunManual(context.Background(), "org", "script", RunRequest{InstanceKey: "Pump01"})
+	if err != nil || first.Status != "queued" {
+		t.Fatalf("first trigger = %#v, %v", first, err)
+	}
+	waitForInstanceStart(t, started, "Pump01")
+	second, err := engine.RunManual(context.Background(), "org", "script", RunRequest{InstanceKey: "Pump01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = engine.RunManual(context.Background(), "org", "script", RunRequest{InstanceKey: "Pump01"}); !errors.Is(err, ErrQueueFull) {
+		t.Fatalf("third Pump01 trigger error = %v, want queue full", err)
+	}
+	other, err := engine.RunManual(context.Background(), "org", "script", RunRequest{InstanceKey: "Pump02"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForInstanceStart(t, started, "Pump02")
+
+	status, err := engine.Status(context.Background(), "org", "script")
+	if err != nil || status.QueueDepth != 1 {
+		t.Fatalf("queued status = %#v, %v", status, err)
+	}
+	if _, err = engine.SetDesiredState(context.Background(), "org", "script", "stopped"); err != nil {
+		t.Fatal(err)
+	}
+	waitForRunStatus(t, store, first.RunID, "cancelled")
+	waitForRunStatus(t, store, second.RunID, "cancelled")
+	waitForRunStatus(t, store, other.RunID, "cancelled")
+	status, err = engine.Status(context.Background(), "org", "script")
+	if err != nil || status.QueueDepth != 0 {
+		t.Fatalf("stopped status = %#v, %v", status, err)
+	}
+}
+
+func TestScriptContextIsScopedToWildcardInstance(t *testing.T) {
+	engine := New(newRuntimeTestStore(Script{}, Revision{}))
+	defer engine.Close()
+	first := Message{OrgName: "org", ScriptID: "script", ActiveRevision: 1, InstanceKey: "Pump01"}
+	second := Message{OrgName: "org", ScriptID: "script", ActiveRevision: 1, InstanceKey: "Pump02"}
+	engine.setContext(first, "node", "script", "attempts", 3.0)
+	if value, ok := engine.getContext(first, "node", "script", "attempts"); !ok || value != 3.0 {
+		t.Fatalf("first instance context = %#v, %v", value, ok)
+	}
+	if value, ok := engine.getContext(second, "node", "script", "attempts"); ok {
+		t.Fatalf("second instance leaked context %#v", value)
+	}
+}
+
+func TestTagChangeRunPropagatesResolvedInstanceContext(t *testing.T) {
+	graph := NormalizeGraph(GraphDocument{
+		Settings: GraphSettings{MaxConcurrency: 1, QueueLimit: 1, ErrorPolicy: "stop-message", TraceLevel: "errors"},
+		Nodes:    []GraphNode{{ID: "trigger", Type: "core.manual", TypeVersion: 1, Config: json.RawMessage(`{}`)}},
+	})
+	revision := 1
+	store := newRuntimeTestStore(Script{ID: "script", OrgName: "org", DesiredState: "running", LatestRevision: revision, ActiveRevision: &revision}, Revision{ScriptID: "script", OrgName: "org", Revision: revision, Graph: graph})
+	engine := New(store)
+	defer engine.Close()
+
+	received := make(chan Message, 1)
+	engine.nodeHandler = func(_ context.Context, _ GraphNode, message Message) (string, Message, bool, error) {
+		received <- message
+		return "out", message, false, nil
+	}
+	triggeredAt := time.Now().Add(-time.Second).UTC()
+	run, err := engine.RunTagChange(context.Background(), "org", "script", "trigger", TagChange{
+		InstanceKey: "AreaWest/Pump01",
+		DevicePath:  "SITE.AreaWest.Pump01",
+		TagPath:     "SITE.AreaWest.Pump01.Status.Running",
+		Value:       true,
+		Fields:      map[string]any{"quality": "good"},
+		Timestamp:   triggeredAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case message := <-received:
+		if message.InstanceKey != "AreaWest/Pump01" || message.DevicePath != "SITE.AreaWest.Pump01" || message.TagPath != "SITE.AreaWest.Pump01.Status.Running" {
+			t.Fatalf("trigger context = %#v", message)
+		}
+		if !message.TriggerTimestamp.Equal(triggeredAt) || message.Value != true || message.Fields["quality"] != "good" {
+			t.Fatalf("trigger payload = %#v", message)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("tag-change run did not start")
+	}
+	waitForRunStatus(t, store, run.RunID, "ok")
+}
+
+func TestClosedEngineRejectsNewTriggers(t *testing.T) {
+	revision := 1
+	graph := NormalizeGraph(GraphDocument{Nodes: []GraphNode{{ID: "manual", Type: "core.manual", TypeVersion: 1, Config: json.RawMessage(`{}`)}}})
+	store := newRuntimeTestStore(Script{ID: "script", OrgName: "org", DesiredState: "running", LatestRevision: revision, ActiveRevision: &revision}, Revision{ScriptID: "script", OrgName: "org", Revision: revision, Graph: graph})
+	engine := New(store)
+	engine.Close()
+	if _, err := engine.RunManual(context.Background(), "org", "script", RunRequest{}); !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("closed engine trigger error = %v, want ErrNotRunning", err)
+	}
+}
+
+func TestStartCurrentClearsPreviousRunTrace(t *testing.T) {
+	revision := 1
+	graph := NormalizeGraph(GraphDocument{Nodes: []GraphNode{{ID: "manual", Type: "core.manual", TypeVersion: 1, Config: json.RawMessage(`{}`)}}})
+	store := newRuntimeTestStore(Script{ID: "script", OrgName: "org", DesiredState: "stopped", LatestRevision: revision}, Revision{ScriptID: "script", OrgName: "org", Revision: revision, Graph: graph})
+	store.runs["old-run"] = Run{RunID: "old-run", OrgName: "org", ScriptID: "script", ActiveRevision: revision, Status: "ok"}
+	engine := New(store)
+	defer engine.Close()
+
+	status, err := engine.StartCurrent(context.Background(), "org", "script")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.RuntimeState != "running" {
+		t.Fatalf("runtime state = %q, want running", status.RuntimeState)
+	}
+	if len(store.runs) != 0 {
+		t.Fatalf("previous run trace was not cleared: %#v", store.runs)
+	}
+}
+
+type activatedRuntimeTestStore struct{ *runtimeTestStore }
+
+func (s activatedRuntimeTestStore) ListActivatedVisualScripts(context.Context) ([]Script, error) {
+	return []Script{s.script}, nil
+}
+
+func TestStartActivatedMarksMissingPluginRevisionAsError(t *testing.T) {
+	graph := NormalizeGraph(GraphDocument{Nodes: []GraphNode{{ID: "missing", Type: "vendor.missing", TypeVersion: 1, Config: json.RawMessage(`{}`)}}})
+	script := Script{ID: "script", OrgName: "org", Name: "Plugin script", DesiredState: "running", LatestRevision: 1, ActiveRevision: intPointer(1)}
+	store := activatedRuntimeTestStore{newRuntimeTestStore(script, Revision{ScriptID: "script", OrgName: "org", Revision: 1, Graph: graph})}
+	engine := New(store)
+	defer engine.Close()
+	errorsFound := engine.StartActivated(context.Background())
+	if len(errorsFound) != 1 || !strings.Contains(errorsFound[0].Error(), "invalid") {
+		t.Fatalf("activation errors = %#v", errorsFound)
+	}
+	status, err := engine.Status(context.Background(), "org", "script")
+	if err != nil || status.RuntimeState != "error" || !strings.Contains(status.ErrorSummary, "invalid") {
+		t.Fatalf("status = %#v, %v", status, err)
+	}
+}
+
+func intPointer(value int) *int { return &value }
+
+func TestStartupAndTagTriggersRunAutomaticallyAndStopCleanly(t *testing.T) {
+	router := NewTagChangeRouter(10, 10)
+	revision := 1
+	graph := NormalizeGraph(GraphDocument{Nodes: []GraphNode{
+		{ID: "startup", Type: "core.startup", TypeVersion: 1, Config: json.RawMessage(`{"delay":"0s"}`)},
+		{ID: "changed", Type: "core.tag-changed", TypeVersion: 1, Config: json.RawMessage(`{"pathPattern":"SITE.*.Status.Running"}`)},
+		{ID: "rising", Type: "core.rising-edge", TypeVersion: 1, Config: json.RawMessage(`{"pathPattern":"SITE.*.Status.Running","coercion":"strict","debounce":"0s"}`)},
+	}})
+	store := newRuntimeTestStore(Script{ID: "script", OrgName: "org", DesiredState: "stopped", LatestRevision: revision}, Revision{ScriptID: "script", OrgName: "org", Revision: revision, Graph: graph})
+	engine := NewWithServices(store, RuntimeServices{TagRouter: router})
+	defer engine.Close()
+	if _, err := engine.StartCurrent(context.Background(), "org", "script"); err != nil {
+		t.Fatal(err)
+	}
+	waitForRunCount(t, store, 1) // Startup
+
+	change := TagChange{OrgName: "org", TagPath: "SITE.Pump01.Status.Running", Value: false, Timestamp: time.Now().UTC()}
+	if matched := router.Dispatch(change); matched != 2 {
+		t.Fatalf("initial tag dispatch matched %d triggers, want 2", matched)
+	}
+	waitForRunCount(t, store, 2) // Tag Changed; edge establishes initial state.
+	change.Value = true
+	if matched := router.Dispatch(change); matched != 2 {
+		t.Fatalf("rising tag dispatch matched %d triggers, want 2", matched)
+	}
+	waitForRunCount(t, store, 4) // Tag Changed and Rising Edge.
+
+	if _, err := engine.SetDesiredState(context.Background(), "org", "script", "stopped"); err != nil {
+		t.Fatal(err)
+	}
+	change.Value = false
+	if matched := router.Dispatch(change); matched != 0 {
+		t.Fatalf("stopped script retained %d tag registrations", matched)
+	}
+}
+
+func TestTagChangedTriggerOnStartOutputsOnlyDefinedSnapshots(t *testing.T) {
+	revision := 1
+	graph := NormalizeGraph(GraphDocument{
+		Nodes: []GraphNode{
+			{ID: "changed", Type: "core.tag-changed", TypeVersion: 1, Config: json.RawMessage(`{"pathPattern":"SITE.*.level","triggerOnStart":true}`)},
+			{ID: "debug", Type: "core.debug", TypeVersion: 1, Config: json.RawMessage(`{"label":"initial value"}`)},
+		},
+		Edges: []GraphEdge{{ID: "to-debug", From: EdgeEndpoint{NodeID: "changed", Port: "out"}, To: EdgeEndpoint{NodeID: "debug", Port: "in"}}},
+	})
+	store := newRuntimeTestStore(Script{ID: "script", OrgName: "org", DesiredState: "stopped", LatestRevision: revision}, Revision{ScriptID: "script", OrgName: "org", Revision: revision, Graph: graph})
+	var readCalls atomic.Int32
+	engine := NewWithServices(store, RuntimeServices{ReadTags: func(_ context.Context, org, pattern string) ([]TagChange, error) {
+		readCalls.Add(1)
+		if org != "org" || pattern != "SITE.*.level" {
+			return nil, errors.New("unexpected startup read scope")
+		}
+		return []TagChange{
+			{OrgName: org, InstanceKey: "Pump01", TagPath: "SITE.Pump01.level", Value: float64(0), Timestamp: time.Now().UTC(), Fields: map[string]any{"trigger": "start"}},
+			{OrgName: org, InstanceKey: "Pump02", TagPath: "SITE.Pump02.level", Value: nil, Timestamp: time.Now().UTC()},
+		}, nil
+	}})
+	defer engine.Close()
+	if _, err := engine.StartCurrent(context.Background(), "org", "script"); err != nil {
+		t.Fatal(err)
+	}
+	waitForRunCount(t, store, 1)
+
+	store.mu.Lock()
+	var run Run
+	for _, item := range store.runs {
+		run = item
+	}
+	store.mu.Unlock()
+	waitForRunStatus(t, store, run.RunID, "ok")
+	stored, err := store.GetVisualScriptRun(context.Background(), "org", "script", run.RunID)
+	if err != nil || stored == nil {
+		t.Fatalf("startup run = %#v, %v", stored, err)
+	}
+	if readCalls.Load() != 1 || stored.InstanceKey != "Pump01" || len(stored.Trace) != 1 || stored.Trace[0].Value != float64(0) || stored.Trace[0].Fields["trigger"] != "start" {
+		t.Fatalf("startup snapshot run = %#v; reads = %d", stored, readCalls.Load())
+	}
+}
+
+func TestTimerTriggerUsesBoundedLifecycle(t *testing.T) {
+	revision := 1
+	graph := NormalizeGraph(GraphDocument{Nodes: []GraphNode{{ID: "timer", Type: "core.timer", TypeVersion: 1, Config: json.RawMessage(`{"interval":"1s","initialDelay":"1ms","jitter":"0s"}`)}}})
+	store := newRuntimeTestStore(Script{ID: "script", OrgName: "org", DesiredState: "stopped", LatestRevision: revision}, Revision{ScriptID: "script", OrgName: "org", Revision: revision, Graph: graph})
+	engine := New(store)
+	defer engine.Close()
+	if _, err := engine.StartCurrent(context.Background(), "org", "script"); err != nil {
+		t.Fatal(err)
+	}
+	waitForRunCount(t, store, 1)
+	if _, err := engine.SetDesiredState(context.Background(), "org", "script", "paused"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	store.mu.Lock()
+	count := len(store.runs)
+	store.mu.Unlock()
+	if count != 1 {
+		t.Fatalf("paused timer produced %d runs, want 1", count)
+	}
+}
+
+func waitForRunCount(t *testing.T, store *runtimeTestStore, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		store.mu.Lock()
+		count := len(store.runs)
+		store.mu.Unlock()
+		if count >= want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("run count did not reach %d", want)
+}
+
+func waitForInstanceStart(t *testing.T, started <-chan string, want string) {
+	t.Helper()
+	select {
+	case got := <-started:
+		if got != want {
+			t.Fatalf("started instance %q, want %q", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("instance %q did not start", want)
+	}
+}
+
+func waitForRunStatus(t *testing.T, store *runtimeTestStore, runID, want string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		store.mu.Lock()
+		status := store.runs[runID].Status
+		store.mu.Unlock()
+		if status == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("run %s did not reach %s", runID, want)
+}
+
+type runtimeTestStore struct {
+	mu       sync.Mutex
+	script   Script
+	revision Revision
+	runs     map[string]Run
+}
+
+func newRuntimeTestStore(script Script, revision Revision) *runtimeTestStore {
+	return &runtimeTestStore{script: script, revision: revision, runs: make(map[string]Run)}
+}
+
+func (s *runtimeTestStore) ListVisualScripts(context.Context, string) ([]Script, error) {
+	return []Script{s.script}, nil
+}
+func (s *runtimeTestStore) ListActivatedVisualScripts(context.Context) ([]Script, error) {
+	return nil, nil
+}
+func (s *runtimeTestStore) GetVisualScript(_ context.Context, org, id string) (*Script, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.script.OrgName != org || s.script.ID != id {
+		return nil, nil
+	}
+	copy := s.script
+	return &copy, nil
+}
+func (s *runtimeTestStore) CreateVisualScript(context.Context, string, *Script) error { return nil }
+func (s *runtimeTestStore) UpdateVisualScript(context.Context, string, string, string, string, int) error {
+	return nil
+}
+func (s *runtimeTestStore) DeleteVisualScript(context.Context, string, string) error { return nil }
+func (s *runtimeTestStore) ListVisualScriptRevisions(context.Context, string, string) ([]Revision, error) {
+	return []Revision{s.revision}, nil
+}
+func (s *runtimeTestStore) GetVisualScriptRevision(_ context.Context, org, id string, revision int) (*Revision, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.revision.OrgName != org || s.revision.ScriptID != id || s.revision.Revision != revision {
+		return nil, nil
+	}
+	copy := s.revision
+	return &copy, nil
+}
+func (s *runtimeTestStore) CreateVisualScriptRevision(context.Context, string, string, int, *Revision) error {
+	return nil
+}
+func (s *runtimeTestStore) SetVisualScriptActiveRevision(_ context.Context, org, id string, revision *int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.script.ActiveRevision = revision
+	return nil
+}
+func (s *runtimeTestStore) SetVisualScriptDesiredState(_ context.Context, org, id, state string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.script.DesiredState = state
+	return nil
+}
+func (s *runtimeTestStore) SetVisualScriptOptions(context.Context, string, string, bool, bool, int) error {
+	return nil
+}
+func (s *runtimeTestStore) SetVisualScriptBackupRevision(context.Context, string, string, *int, int) error {
+	return nil
+}
+func (s *runtimeTestStore) AppendVisualScriptRun(_ context.Context, run *Run) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.runs[run.RunID] = *run
+	return nil
+}
+func (s *runtimeTestStore) CompleteVisualScriptRun(_ context.Context, run *Run) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.runs[run.RunID] = *run
+	return nil
+}
+func (s *runtimeTestStore) CancelIncompleteVisualScriptRuns(context.Context, time.Time, string) error {
+	return nil
+}
+func (s *runtimeTestStore) ClearVisualScriptRuns(_ context.Context, org, scriptID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for runID, run := range s.runs {
+		if run.OrgName == org && run.ScriptID == scriptID {
+			delete(s.runs, runID)
+		}
+	}
+	return nil
+}
+func (s *runtimeTestStore) ListVisualScriptRuns(context.Context, string, string, int) ([]Run, error) {
+	return nil, nil
+}
+func (s *runtimeTestStore) GetVisualScriptRun(_ context.Context, _, _, runID string) (*Run, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, ok := s.runs[runID]
+	if !ok {
+		return nil, nil
+	}
+	return &run, nil
+}

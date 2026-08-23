@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BaseComponent } from '../src/components/base-component';
 import '../src/components/app-dialog';
-import { showAlert, showChoice, showConfirm } from '../src/components/app-dialog';
+import { showAlert, showChoice, showConfirm, showPrompt } from '../src/components/app-dialog';
 
 class TestBaseComponent extends BaseComponent {
   renders = 0;
@@ -111,5 +111,23 @@ describe('AppDialog', () => {
     });
     document.querySelectorAll<HTMLButtonElement>('.dialog-choice')[1]?.click();
     await expect(choice).resolves.toBe('second');
+  });
+
+  it('collects prompt input and resolves cancellation as null', async () => {
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      cb(0);
+      return 1;
+    });
+
+    const submitted = showPrompt('Provide JSON', { title: 'Run/Test script', inputLabel: 'Input value (JSON)', value: 'null', multiline: true, confirmLabel: 'Run test' });
+    const input = document.querySelector<HTMLTextAreaElement>('#dialog-input')!;
+    expect(input.value).toBe('null');
+    input.value = '{"enabled":true}';
+    document.querySelector<HTMLButtonElement>('#dialog-confirm')?.click();
+    await expect(submitted).resolves.toBe('{"enabled":true}');
+
+    const cancelled = showPrompt('Provide JSON');
+    document.querySelector<HTMLButtonElement>('#dialog-cancel')?.click();
+    await expect(cancelled).resolves.toBeNull();
   });
 });

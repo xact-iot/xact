@@ -41,6 +41,11 @@ registerPermissions('tagcalcs', 'Tag Calcs', [
   { name: 'manage', description: 'Create, edit, and delete tag calcs' },
 ], 'Controls access to Tag Calcs - roles with view can inspect computed tag expressions; roles with manage can create, edit, and delete them.');
 
+registerPermissions('visual-scripts', 'Visual Scripts', [
+  { name: 'view', description: 'View visual script graphs, status, and run summaries' },
+  { name: 'edit', description: 'Create, edit, deploy, control, debug, and delete visual scripts' },
+], 'Controls tenant-scoped visual automation. Edit grants the complete authoring and runtime lifecycle.');
+
 registerPermissions('users', 'User Accounts', [
   { name: 'view', description: 'View user accounts' },
   { name: 'manage', description: 'Manage user accounts' },
@@ -337,6 +342,17 @@ registerWidgetTypes([
     minW: 12,
     minH: 8,
     load: () => import('./scheduler-widget'),
+  },
+  {
+    type: 'visual-script-widget',
+    name: 'Visual Script',
+    icon: '\u2318',
+    category: 'System',
+    defaultW: 24,
+    defaultH: 28,
+    minW: 12,
+    minH: 16,
+    load: () => import('./visual-script-widget'),
   },
   {
     type: 'svg-diagram-widget',

@@ -107,6 +107,40 @@ func (s *Server) handleServeThemePlugin(w http.ResponseWriter, r *http.Request) 
 	s.servePluginScript(w, r, "themes")
 }
 
+// handleServeVisualScriptNodeEditor serves only frontend modules whose matching
+// backend node type was successfully registered at startup. Failed or
+// manifest-only plugins cannot expose browser code.
+func (s *Server) handleServeVisualScriptNodeEditor(w http.ResponseWriter, r *http.Request) {
+	if s.pluginDir == "" || s.visualScriptHandlers == nil {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		return
+	}
+	pluginName := chi.URLParam(r, "plugin")
+	filename := chi.URLParam(r, "filename")
+	if !safePluginPathPart(pluginName) || !safePluginPathPart(filename) || !strings.HasSuffix(filename, ".js") {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		return
+	}
+	modulePath := "/plugins/visual-script-nodes/" + pluginName + "/" + filename
+	if !s.visualScriptHandlers.Engine.Registry().AllowsEditorModule(pluginName, modulePath) {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(s.pluginDir, "visual-script-nodes", pluginName, filename))
+	if err != nil {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	w.Write(data) //nolint:errcheck
+}
+
+func safePluginPathPart(value string) bool {
+	return value != "" && !strings.ContainsAny(value, `/\`) && !strings.Contains(value, "..")
+}
+
 // servePluginScript is the shared implementation for serving plugin JS files
 // from a subdirectory of the plugin directory.
 func (s *Server) servePluginScript(w http.ResponseWriter, r *http.Request, subdir string) {

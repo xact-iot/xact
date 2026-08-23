@@ -231,3 +231,5 @@ The scheduler uses the `scheduler` permission group. The single permission key i
 | `scheduler.manage` | Manager, Admin, SystemAdmin | Create, edit, delete, and manually trigger scheduled tasks |
 
 Roles below Manager (Technician, Operator, User) cannot see or interact with the Scheduler widget.
+
+For event-driven workflows that respond to live tag changes, evaluate conditions, retain temporary state, or combine several actions, see [Automation](#automation).

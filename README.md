@@ -3,8 +3,6 @@
 [![UI tests](https://img.shields.io/github/actions/workflow/status/xact-iot/xact/ci.yml?branch=main&label=UI%20tests)](https://github.com/xact-iot/xact/actions/workflows/ci.yml)
 [![Server tests](https://img.shields.io/github/actions/workflow/status/xact-iot/xact/ci.yml?branch=main&label=Server%20tests)](https://github.com/xact-iot/xact/actions/workflows/ci.yml)
 
-![XACT Features](screenshots/xact-features.png)
-
 XACT is an industrial IoT platform designed for real-time monitoring, data acquisition, and process automation. XACT handles everything from hobby projects to lab deployments to installations with hundreds or even thousands of devices. Its self-hosted Android mobile app gives operators secure access to devices, events, dashboards, reports, and push notifications away from the web dashboards.
 
 > **Note:**  While XACT has many features, installation is as easy as unzipping the release file and executing the run script. Thereafter simply use the sub-set of features applicable to your project.
@@ -37,6 +35,7 @@ XACT is an industrial IoT platform designed for real-time monitoring, data acqui
   - [4.3. Processing Pipelines](#43-processing-pipelines)
   - [4.4. Tag Calculations](#44-tag-calculations)
   - [4.5. Historical Data](#45-historical-data)
+  - [4.6. Automation](#46-automation)
 - [5. Alerting & Reports](#5-alerting--reports)
   - [5.1. Events & Notifications](#51-events--notifications)
   - [5.2. PDF Reports](#52-pdf-reports)
@@ -48,9 +47,7 @@ XACT is an industrial IoT platform designed for real-time monitoring, data acqui
 - [7. Deployment Options](#7-deployment-options)
   - [7.1. Small - Evaluation, Lab, Demo](#71-small---evaluation-lab-demo)
   - [7.2. Medium - Production Workloads](#72-medium---production-workloads)
-  - [7.3. Large - Redundant Server Cluster (coming soon)](#73-large---redundant-server-cluster-coming-soon))
-- [8. Roadmap](#8-roadmap)
-- [9. Learn More](#9-learn-more)
+- [8. Learn More](#9-learn-more)
 
 ---
 
@@ -225,6 +222,9 @@ Define computed values derived from raw sensor data. Create calculated tags that
 ### 4.5. Historical Data
 Long-term storage with efficient compression enables trend analysis across months or years of operational data. Query historical ranges for root cause analysis and performance reporting.
 
+### 4.6. Automation
+Build event-driven workflows with visual scripts. Connect triggers, conditions, transforms, variables, and actions in a graph to respond to live tag changes, timers, startup events, or manual runs—without writing code. Use simulation and debug nodes to validate a workflow before it changes tags, sends device controls, creates events, or notifies people.
+
 ---
 
 ## 5. Alerting & Reports
@@ -268,9 +268,6 @@ Interactive control widgets enable operator actions directly from dashboards. Co
 - Separate PostgreSQL database with TSDB extension
 - Scalable storage with superior query performance
 - Docker Compose deployment with Caddy and TimescaleDB is available in `deploy/docker/`
-
-### 7.3. Large - Redundant server cluster (coming soon)
-- Clustered servers for high availability
 
 ---
 

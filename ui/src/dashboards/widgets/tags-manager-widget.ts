@@ -162,6 +162,7 @@ export class TagsManagerWidget extends BaseComponent {
   private valueCache: Map<string, CachedValue> = new Map();
   private tagCountCache: Map<string, number> = new Map();
   private matchingTagCountCache: Map<string, number> = new Map();
+  private treeScrollTop = 0;
   private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private treeUnsubscribe: (() => void) | null = null;
 
@@ -275,6 +276,27 @@ export class TagsManagerWidget extends BaseComponent {
     if (this.isConnected) {
       this.rerender();
     }
+  }
+
+  getTransientState(): Record<string, unknown> {
+    const treeBody = this.querySelector<HTMLElement>('#tv-tree-body');
+    return {
+      expandedNodes: [...this.expandedNodes],
+      searchQuery: this.searchQuery,
+      statusFilter: this.statusFilter,
+      scrollTop: treeBody?.scrollTop ?? this.treeScrollTop,
+    };
+  }
+
+  setTransientState(state: any): void {
+    this.expandedNodes = new Set(Array.isArray(state?.expandedNodes) ? state.expandedNodes : []);
+    this.searchQuery = typeof state?.searchQuery === 'string' ? state.searchQuery : '';
+    this.statusFilter = typeof state?.statusFilter === 'string' ? state.statusFilter : null;
+    const scrollTop = Number.isFinite(state?.scrollTop) ? state.scrollTop : 0;
+    this.rerender();
+    // render() first records the old DOM's scroll position. Apply the restored
+    // value afterwards so its queued update uses the snapshot from this tab.
+    this.treeScrollTop = scrollTop;
   }
 
   getConfig(): Record<string, any> {
@@ -1082,6 +1104,8 @@ export class TagsManagerWidget extends BaseComponent {
   // ─── Main Render ─────────────────────────────────────────────────────────────
 
   protected render(): void {
+    const currentTreeBody = this.querySelector<HTMLElement>('#tv-tree-body');
+    if (currentTreeBody) this.treeScrollTop = currentTreeBody.scrollTop;
     this.tagCountCache.clear();
     this.matchingTagCountCache.clear();
 
@@ -1125,7 +1149,7 @@ export class TagsManagerWidget extends BaseComponent {
         </div>
 
         <!-- Tree body -->
-        <div class="flex-1 overflow-auto">${treeHtml}</div>
+        <div id="tv-tree-body" class="flex-1 overflow-auto">${treeHtml}</div>
       </div>
 
       ${this.renderModal()}
@@ -1133,6 +1157,10 @@ export class TagsManagerWidget extends BaseComponent {
       ${this.renderDeleteConfirm()}
       ${this.renderDebugger()}
       ${this.renderValueEditModal()}`;
+    queueMicrotask(() => {
+      const treeBody = this.querySelector<HTMLElement>('#tv-tree-body');
+      if (treeBody) treeBody.scrollTop = this.treeScrollTop;
+    });
   }
 
   // ─── Event Wiring ────────────────────────────────────────────────────────────

@@ -616,9 +616,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  async function navigateToDashboard(dashboardId: string, mode: DashboardHistoryMode = 'push'): Promise<boolean> {
+  async function navigateToDashboard(dashboardId: string, mode: DashboardHistoryMode = 'push', preserveCurrent = false): Promise<boolean> {
     if (!content) return false;
-    const switched = await content.switchToDashboard(dashboardId);
+    const switched = await content.switchToDashboard(dashboardId, preserveCurrent);
     if (!switched) return false;
     syncActiveDashboardState(dashboardId);
     writeDashboardHistory(dashboardId, mode);
@@ -631,7 +631,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const previousTabId = activeTabId;
     activeTabId = tabId;
     const dashboardId = resolveDashboardSelection(tab.dashboardId);
-    const switched = await navigateToDashboard(dashboardId, mode);
+    const switched = await navigateToDashboard(dashboardId, mode, true);
     if (!switched) {
       activeTabId = previousTabId;
       syncTabsToHeader();

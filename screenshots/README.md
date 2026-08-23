@@ -74,6 +74,12 @@ Showing the data data processing pipeline at the bottom.
 
 Example for counting the total number of incidents currently active.
 
+### Visual Script Automation
+
+![Placeholder Title 9](automation.png)
+
+Example that starts and stops a pump depending on a tank level.
+
 ### Online User Manual
 
 ![Placeholder Title 10](10-user-manual.png)
