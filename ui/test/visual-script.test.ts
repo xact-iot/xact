@@ -55,6 +55,27 @@ describe('visual script draft and canvas', () => {
     canvas.remove();
   });
 
+  it('renders every declared input port for a plugin node', () => {
+    const graph = emptyGraph();
+    graph.nodes = [{ id: 'max', type: 'example.max-two', typeVersion: 1, position: { x: 20, y: 20 }, config: {} }];
+    const definition: NodeDefinition = {
+      type: 'example.max-two', typeVersion: 1, name: 'Max of Two', description: '', category: 'Transforms', icon: 'max',
+      inputs: [
+        { name: 'first', label: 'First', dataType: 'message' },
+        { name: 'second', label: 'Second', dataType: 'message' },
+      ],
+      outputs: [{ name: 'out', label: 'Maximum', dataType: 'message' }], parameters: [], available: true,
+    };
+    const canvas = document.createElement('visual-script-canvas') as any;
+    document.body.appendChild(canvas); canvas.setData(graph, [definition], false);
+
+    const inputs = [...canvas.querySelectorAll<HTMLButtonElement>('[data-node="max"][data-kind="in"]')];
+    expect(inputs).toHaveLength(2);
+    expect(inputs.map(port => port.dataset.port)).toEqual(['first', 'second']);
+    expect(inputs.map(port => port.textContent)).toEqual(['First', 'Second']);
+    canvas.remove();
+  });
+
   it('previews and creates a connection by dragging an output onto an input', () => {
     const graph = emptyGraph();
     graph.nodes = [

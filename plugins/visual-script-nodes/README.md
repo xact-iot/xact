@@ -38,9 +38,9 @@ values.
 package visualscriptplugin
 
 func Register() string
-func Compile(nodeType string, typeVersion int, configJSON string) (compiledJSON, errorMessage string)
-func Handle(executionID, nodeType string, typeVersion int, compiledJSON, messageJSON string) (outputsJSON, errorMessage string)
-func Close(nodeType string, typeVersion int, compiledJSON string) (errorMessage string) // optional
+func Compile(instanceID, nodeType string, typeVersion int, configJSON string) (compiledJSON, errorMessage string)
+func Handle(executionID, instanceID, inputPort, nodeType string, typeVersion int, compiledJSON, messageJSON string) (outputsJSON, errorMessage string)
+func Close(instanceID, nodeType string, typeVersion int, compiledJSON string) (errorMessage string) // optional
 ```
 
 `Register` returns a JSON array such as:
@@ -57,6 +57,11 @@ func Close(nodeType string, typeVersion int, compiledJSON string) (errorMessage 
 
 The engine restores message identity, tenant, script, revision, trigger, and
 timestamp fields after every plugin call.
+
+`instanceID` is stable for one compiled graph-node instance and lets a backend
+isolate resources or state belonging to different instances of the same type.
+`inputPort` is the destination port named by the graph edge that delivered the
+message. `executionID` is short-lived and is used only with the service bridge.
 
 The current plugin ABI covers nodes that process an incoming message. Custom
 `Triggers` are rejected because autonomous trigger plugins require a separate

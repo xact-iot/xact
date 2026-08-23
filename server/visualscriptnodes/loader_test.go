@@ -24,7 +24,7 @@ func Register() string {
 	return ` + "`" + `[{"Type":"acme.uppercase","TypeVersion":1}]` + "`" + `
 }
 
-func Compile(_ string, _ int, config string) (string, string) {
+func Compile(_, _ string, _ int, config string) (string, string) {
 	var settings struct { Prefix string ` + "`json:\"prefix\"`" + ` }
 	if err := json.Unmarshal([]byte(config), &settings); err != nil { return "", err.Error() }
 	encoded, err := json.Marshal(settings)
@@ -32,7 +32,7 @@ func Compile(_ string, _ int, config string) (string, string) {
 	return string(encoded), ""
 }
 
-func Handle(executionID, _ string, _ int, config, message string) (string, string) {
+func Handle(executionID, _, _, _ string, _ int, config, message string) (string, string) {
 	if visualscripts.Cancelled(executionID) { return "", "cancelled" }
 	var settings struct { Prefix string ` + "`json:\"prefix\"`" + ` }
 	if err := json.Unmarshal([]byte(config), &settings); err != nil { return "", err.Error() }
@@ -76,7 +76,7 @@ func TestLoadRegistersExecutableNodeAndEditorMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outputs, err := compiled.Handle(context.Background(), visualscripts.Message{Value: "ready"})
+	outputs, err := compiled.Handle(context.Background(), visualscripts.NodeInput{Port: "in", Message: visualscripts.Message{Value: "ready"}})
 	if err != nil || len(outputs) != 1 || outputs[0].Port != "out" || outputs[0].Message.Value != "# READY" {
 		t.Fatalf("plugin output = %#v, %v", outputs, err)
 	}
@@ -144,7 +144,11 @@ func TestExampleMaxTwoPluginLifecycle(t *testing.T) {
 	if !ok {
 		t.Fatal("example.max-two@1 was not registered")
 	}
-	compiled, err := implementation.Compile(json.RawMessage(`{"firstField":"left","secondField":"right"}`), visualscripts.CompileServices{})
+	definition := implementation.Definition()
+	if len(definition.Inputs) != 2 || definition.Inputs[0].Name != "first" || definition.Inputs[1].Name != "second" {
+		t.Fatalf("example inputs = %#v", definition.Inputs)
+	}
+	compiled, err := implementation.Compile(json.RawMessage(`{}`), visualscripts.CompileServices{})
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
@@ -155,16 +159,32 @@ func TestExampleMaxTwoPluginLifecycle(t *testing.T) {
 	}()
 
 	for _, test := range []struct {
-		name   string
-		fields map[string]any
-		want   float64
+		name      string
+		first     float64
+		second    float64
+		want      float64
+		reverseIn bool
 	}{
-		{name: "right is larger", fields: map[string]any{"left": -4.0, "right": 12.5}, want: 12.5},
-		{name: "left is larger", fields: map[string]any{"left": 8.0, "right": 3.0}, want: 8},
-		{name: "equal values", fields: map[string]any{"left": 7.0, "right": 7.0}, want: 7},
+		{name: "second is larger", first: -4, second: 12.5, want: 12.5},
+		{name: "first is larger and arrives last", first: 8, second: 3, want: 8, reverseIn: true},
+		{name: "equal values", first: 7, second: 7, want: 7},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			outputs, err := compiled.Handle(context.Background(), visualscripts.Message{Fields: test.fields})
+			inputs := []visualscripts.NodeInput{
+				{Port: "first", Message: visualscripts.Message{ID: test.name, Value: test.first}},
+				{Port: "second", Message: visualscripts.Message{ID: test.name, Value: test.second}},
+			}
+			if test.reverseIn {
+				inputs[0], inputs[1] = inputs[1], inputs[0]
+			}
+			outputs, err := compiled.Handle(context.Background(), inputs[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(outputs) != 0 {
+				t.Fatalf("first input emitted early: %#v", outputs)
+			}
+			outputs, err = compiled.Handle(context.Background(), inputs[1])
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -174,8 +194,8 @@ func TestExampleMaxTwoPluginLifecycle(t *testing.T) {
 		})
 	}
 
-	if _, err := compiled.Handle(context.Background(), visualscripts.Message{Fields: map[string]any{"left": 1.0}}); err == nil || !strings.Contains(err.Error(), `input field "right" is missing`) {
-		t.Fatalf("missing input error = %v", err)
+	if _, err := compiled.Handle(context.Background(), visualscripts.NodeInput{Port: "first", Message: visualscripts.Message{ID: "bad", Value: "not a number"}}); err == nil || !strings.Contains(err.Error(), "must be a number") {
+		t.Fatalf("non-numeric input error = %v", err)
 	}
 }
 

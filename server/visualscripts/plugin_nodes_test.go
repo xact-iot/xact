@@ -10,10 +10,13 @@ import (
 func TestCompiledPluginNodeRunsThroughEngineAndPreservesAuthority(t *testing.T) {
 	engine := New(newRuntimeTestStore(Script{}, Revision{}))
 	defer engine.Close()
+	gotInputPort := ""
 	plugin := PluginNode{
 		DefinitionValue: NodeDefinition{Type: "acme.replace", TypeVersion: 1, Name: "Replace", Category: "Custom", Inputs: []PortDefinition{{Name: "in", Label: "Input", DataType: "message"}}, Outputs: []PortDefinition{{Name: "out", Label: "Output", DataType: "message"}}, Available: true},
 		CompileFunc: func(json.RawMessage, CompileServices) (PluginHandler, error) {
-			return PluginHandler{HandleFunc: func(_ context.Context, msg Message) ([]Output, error) {
+			return PluginHandler{HandleFunc: func(_ context.Context, input NodeInput) ([]Output, error) {
+				gotInputPort = input.Port
+				msg := input.Message
 				msg.OrgName = "attacker"
 				msg.Value = "changed"
 				return []Output{{Port: "out", Message: msg}}, nil
@@ -43,6 +46,9 @@ func TestCompiledPluginNodeRunsThroughEngineAndPreservesAuthority(t *testing.T) 
 	}
 	if len(run.Trace) != 1 || run.Trace[0].Value != "changed" {
 		t.Fatalf("trace = %#v", run.Trace)
+	}
+	if gotInputPort != "in" {
+		t.Fatalf("plugin input port = %q, want in", gotInputPort)
 	}
 	output := preserveAuthoritativeMessage(input, Message{OrgName: "attacker"})
 	if output.OrgName != "acme" || output.ID != "message" {

@@ -171,9 +171,9 @@ func loadOne(directory, directoryName string, registry *visualscripts.Registry) 
 
 type interpretedBackend struct {
 	registrations []visualscripts.PluginRegistration
-	compile       func(string, int, string) (string, string)
-	handle        func(string, string, int, string, string) (string, string)
-	close         func(string, int, string) string
+	compile       func(string, string, int, string) (string, string)
+	handle        func(string, string, string, string, int, string, string) (string, string)
+	close         func(string, string, int, string) string
 	bridge        *runtimeBridge
 	gate          chan struct{}
 }
@@ -190,29 +190,31 @@ func (n interpretedNodeType) Definition() visualscripts.NodeDefinition {
 func (n interpretedNodeType) Compile(config json.RawMessage, services visualscripts.CompileServices) (visualscripts.CompiledNode, error) {
 	n.backend.gate <- struct{}{}
 	defer func() { <-n.backend.gate }()
-	compiledConfig, errorText := n.backend.compile(n.registration.Type, n.registration.TypeVersion, string(config))
+	instanceID := "node-" + strconv.FormatUint(n.backend.bridge.sequence.Add(1), 36)
+	compiledConfig, errorText := n.backend.compile(instanceID, n.registration.Type, n.registration.TypeVersion, string(config))
 	if errorText != "" {
 		return nil, errors.New(errorText)
 	}
 	if !json.Valid([]byte(compiledConfig)) {
 		return nil, fmt.Errorf("Compile returned invalid JSON")
 	}
-	return interpretedCompiledNode{registration: n.registration, backend: n.backend, config: compiledConfig, services: services}, nil
+	return interpretedCompiledNode{instanceID: instanceID, registration: n.registration, backend: n.backend, config: compiledConfig, services: services}, nil
 }
 
 type interpretedCompiledNode struct {
+	instanceID   string
 	registration visualscripts.PluginRegistration
 	backend      interpretedBackend
 	config       string
 	services     visualscripts.CompileServices
 }
 
-func (n interpretedCompiledNode) Handle(ctx context.Context, msg visualscripts.Message) ([]visualscripts.Output, error) {
-	messageJSON, err := json.Marshal(msg)
+func (n interpretedCompiledNode) Handle(ctx context.Context, input visualscripts.NodeInput) ([]visualscripts.Output, error) {
+	messageJSON, err := json.Marshal(input.Message)
 	if err != nil {
 		return nil, fmt.Errorf("encoding plugin message: %w", err)
 	}
-	token := n.backend.bridge.add(ctx, n.services, msg)
+	token := n.backend.bridge.add(ctx, n.services, input.Message)
 	defer n.backend.bridge.remove(token)
 	select {
 	case n.backend.gate <- struct{}{}:
@@ -220,7 +222,7 @@ func (n interpretedCompiledNode) Handle(ctx context.Context, msg visualscripts.M
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	encoded, errorText := n.backend.handle(token, n.registration.Type, n.registration.TypeVersion, n.config, string(messageJSON))
+	encoded, errorText := n.backend.handle(token, n.instanceID, input.Port, n.registration.Type, n.registration.TypeVersion, n.config, string(messageJSON))
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -250,7 +252,7 @@ func (n interpretedCompiledNode) Close(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	if errorText := n.backend.close(n.registration.Type, n.registration.TypeVersion, n.config); errorText != "" {
+	if errorText := n.backend.close(n.instanceID, n.registration.Type, n.registration.TypeVersion, n.config); errorText != "" {
 		return errors.New(errorText)
 	}
 	return nil
@@ -403,7 +405,7 @@ func evaluateBackend(source []byte) (interpretedBackend, error) {
 	if err != nil {
 		return interpretedBackend{}, fmt.Errorf("resolving Compile: %w", err)
 	}
-	compile, ok := compileValue.Interface().(func(string, int, string) (string, string))
+	compile, ok := compileValue.Interface().(func(string, string, int, string) (string, string))
 	if !ok {
 		return interpretedBackend{}, fmt.Errorf("Compile has an incompatible signature")
 	}
@@ -411,13 +413,13 @@ func evaluateBackend(source []byte) (interpretedBackend, error) {
 	if err != nil {
 		return interpretedBackend{}, fmt.Errorf("resolving Handle: %w", err)
 	}
-	handle, ok := handleValue.Interface().(func(string, string, int, string, string) (string, string))
+	handle, ok := handleValue.Interface().(func(string, string, string, string, int, string, string) (string, string))
 	if !ok {
 		return interpretedBackend{}, fmt.Errorf("Handle has an incompatible signature")
 	}
-	var closeFn func(string, int, string) string
+	var closeFn func(string, string, int, string) string
 	if closeValue, closeErr := i.Eval("visualscriptplugin.Close"); closeErr == nil {
-		closeFn, ok = closeValue.Interface().(func(string, int, string) string)
+		closeFn, ok = closeValue.Interface().(func(string, string, int, string) string)
 		if !ok {
 			return interpretedBackend{}, fmt.Errorf("Close has an incompatible signature")
 		}

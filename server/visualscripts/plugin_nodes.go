@@ -15,10 +15,18 @@ type NodeType interface {
 	Compile(config json.RawMessage, services CompileServices) (CompiledNode, error)
 }
 
-// CompiledNode handles messages for one configured graph node. Implementations
+// NodeInput identifies the destination port that received a routed message.
+// Keeping the port separate from Message prevents routing metadata from leaking
+// into or colliding with the user's message fields.
+type NodeInput struct {
+	Port    string
+	Message Message
+}
+
+// CompiledNode handles inputs for one configured graph node. Implementations
 // must honor cancellation. Close is called during engine shutdown.
 type CompiledNode interface {
-	Handle(context.Context, Message) ([]Output, error)
+	Handle(context.Context, NodeInput) ([]Output, error)
 	Close(context.Context) error
 }
 
@@ -76,15 +84,15 @@ func (n PluginNode) Compile(config json.RawMessage, services CompileServices) (C
 // PluginHandler is the Yaegi-friendly concrete CompiledNode returned by a
 // PluginNode compile callback.
 type PluginHandler struct {
-	HandleFunc func(context.Context, Message) ([]Output, error)
+	HandleFunc func(context.Context, NodeInput) ([]Output, error)
 	CloseFunc  func(context.Context) error
 }
 
-func (h PluginHandler) Handle(ctx context.Context, msg Message) ([]Output, error) {
+func (h PluginHandler) Handle(ctx context.Context, input NodeInput) ([]Output, error) {
 	if h.HandleFunc == nil {
 		return nil, errors.New("plugin node has no handle function")
 	}
-	return h.HandleFunc(ctx, msg)
+	return h.HandleFunc(ctx, input)
 }
 
 func (h PluginHandler) Close(ctx context.Context) error {

@@ -727,8 +727,9 @@ func (p *compiledPlan) close(ctx context.Context) {
 }
 
 type queuedNode struct {
-	node GraphNode
-	msg  Message
+	node      GraphNode
+	inputPort string
+	msg       Message
 }
 
 func (e *Engine) execute(ctx context.Context, plan *compiledPlan, trigger GraphNode, message Message, run *Run) error {
@@ -762,7 +763,7 @@ func (e *Engine) execute(ctx context.Context, plan *compiledPlan, trigger GraphN
 			port, nextMessage, action = "out", item.msg, true
 			outputs = []Output{{Port: port, Message: nextMessage}}
 		} else if compiled := plan.compiledNodes[item.node.ID]; compiled != nil {
-			outputs, err = compiled.Handle(ctx, cloneMessage(item.msg))
+			outputs, err = compiled.Handle(ctx, NodeInput{Port: item.inputPort, Message: cloneMessage(item.msg)})
 			action = definition.OutputNode
 			if len(outputs) > 100 {
 				err = fmt.Errorf("plugin node returned %d outputs; maximum is 100", len(outputs))
@@ -821,7 +822,7 @@ func (e *Engine) execute(ctx context.Context, plan *compiledPlan, trigger GraphN
 			for _, edge := range plan.outgoing[item.node.ID][output.Port] {
 				next, ok := plan.nodes[edge.To.NodeID]
 				if ok {
-					queue = append(queue, queuedNode{node: next, msg: cloneMessage(output.Message)})
+					queue = append(queue, queuedNode{node: next, inputPort: edge.To.Port, msg: cloneMessage(output.Message)})
 				}
 			}
 		}
