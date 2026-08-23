@@ -18,6 +18,7 @@ func TestSQLiteOpenPathAddsConcurrencyPragmas(t *testing.T) {
 		t.Fatalf("open path lost existing query params: %s", path)
 	}
 	for _, want := range []string{
+		"_txlock=immediate",
 		"_pragma=busy_timeout%3D10000",
 		"_pragma=foreign_keys%28ON%29",
 		"_pragma=journal_mode%28WAL%29",

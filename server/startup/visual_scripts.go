@@ -75,9 +75,9 @@ func visualScriptServices(database sqldb.DB, treeOps *tree.TreeWithOperations, n
 			return nil
 		},
 		SendNotification: func(ctx context.Context, msg visualscripts.Message, nodeID, profile, severity, message, device string) error {
-			profileID, err := database.ResolveNotificationID(ctx, msg.OrgName, strings.TrimSpace(profile))
+			profileID, err := resolveVisualScriptNotificationID(ctx, database, msg.OrgName, profile)
 			if err != nil {
-				return fmt.Errorf("notification profile: %w", err)
+				return err
 			}
 			return publishVisualScriptEvent(publisher, msg, nodeID, severity, message, device, profileID)
 		},
@@ -92,6 +92,22 @@ func visualScriptServices(database sqldb.DB, treeOps *tree.TreeWithOperations, n
 		dispatchVisualScriptTag(router, message.Subject, message.Data)
 	})
 	return services, subscription, err
+}
+
+type notificationProfileResolver interface {
+	ResolveNotificationID(context.Context, string, string) (int, error)
+}
+
+func resolveVisualScriptNotificationID(ctx context.Context, resolver notificationProfileResolver, org, profile string) (int, error) {
+	profile = strings.TrimSpace(profile)
+	profileID, err := resolver.ResolveNotificationID(ctx, org, profile)
+	if err != nil {
+		return 0, fmt.Errorf("notification profile: %w", err)
+	}
+	if profileID == 0 {
+		return 0, fmt.Errorf("notification profile %q was not found", profile)
+	}
+	return profileID, nil
 }
 
 func visualScriptTagSnapshots(ctx context.Context, treeOps *tree.TreeWithOperations, org, pattern string) ([]visualscripts.TagChange, error) {

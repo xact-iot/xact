@@ -51,6 +51,12 @@ func sqliteOpenPath(path string) string {
 		sep = "&"
 	}
 	q := url.Values{}
+	// Acquire the write reservation when a transaction begins. With the
+	// driver's default deferred transactions, two pooled connections can both
+	// read and then race to upgrade to a writer; SQLite rejects one upgrade with
+	// SQLITE_BUSY immediately even when busy_timeout is configured. Immediate
+	// transactions serialize that upgrade while WAL still permits readers.
+	q.Set("_txlock", "immediate")
 	q.Add("_pragma", "busy_timeout=10000")
 	q.Add("_pragma", "foreign_keys(ON)")
 	q.Add("_pragma", "journal_mode(WAL)")

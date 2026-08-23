@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -12,6 +13,37 @@ import (
 type visualScriptSnapshotPublisher struct{}
 
 func (visualScriptSnapshotPublisher) TagValuePublish(string, []byte) error { return nil }
+
+type visualScriptNotificationResolver struct {
+	id  int
+	err error
+}
+
+func (r visualScriptNotificationResolver) ResolveNotificationID(context.Context, string, string) (int, error) {
+	return r.id, r.err
+}
+
+func TestResolveVisualScriptNotificationIDRejectsUnknownProfile(t *testing.T) {
+	id, err := resolveVisualScriptNotificationID(context.Background(), visualScriptNotificationResolver{}, "acme", " Missing ")
+	if id != 0 || err == nil || err.Error() != `notification profile "Missing" was not found` {
+		t.Fatalf("resolve result = %d, %v", id, err)
+	}
+}
+
+func TestResolveVisualScriptNotificationIDPropagatesLookupError(t *testing.T) {
+	want := errors.New("database unavailable")
+	id, err := resolveVisualScriptNotificationID(context.Background(), visualScriptNotificationResolver{err: want}, "acme", "Ops")
+	if id != 0 || !errors.Is(err, want) {
+		t.Fatalf("resolve result = %d, %v", id, err)
+	}
+}
+
+func TestResolveVisualScriptNotificationIDReturnsExistingProfile(t *testing.T) {
+	id, err := resolveVisualScriptNotificationID(context.Background(), visualScriptNotificationResolver{id: 42}, "acme", " Ops ")
+	if id != 42 || err != nil {
+		t.Fatalf("resolve result = %d, %v", id, err)
+	}
+}
 
 func TestDispatchVisualScriptTagDecodesBroadcastValue(t *testing.T) {
 	router := visualscripts.NewTagChangeRouter(10, 10)
