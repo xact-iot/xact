@@ -37,6 +37,7 @@ import (
 	"github.com/xact-iot/xact/sqldb/psql"
 	"github.com/xact-iot/xact/sqldb/sqlite"
 	"github.com/xact-iot/xact/tagcalcs"
+	visualscriptplugins "github.com/xact-iot/xact/visualscriptnodes"
 	"github.com/xact-iot/xact/visualscripts"
 	webapi "github.com/xact-iot/xact/web/api"
 )
@@ -69,7 +70,7 @@ func main() {
 	}
 
 	// Ensure the plugin directory tree exists
-	for _, sub := range []string{"authentication", "widgets", "map-layer", "themes"} {
+	for _, sub := range []string{"authentication", "widgets", "map-layer", "themes", "visual-script-nodes"} {
 		if err := os.MkdirAll(filepath.Join(pluginDir, sub), 0o755); err != nil {
 			log.Printf("Warning: could not create plugin dir %s/%s: %v", pluginDir, sub, err)
 		}
@@ -512,6 +513,13 @@ func main() {
 			}
 			visualEngine := visualscripts.NewWithServices(visualStore, visualServices)
 			defer visualEngine.Close()
+			loadedNodePlugins, nodePluginErrors := visualscriptplugins.Load(pluginDir, visualEngine.Registry())
+			for _, plugin := range loadedNodePlugins {
+				log.Printf("visual-script node plugin: loaded name=%s version=%s hash=%s nodes=%s", plugin.Name, plugin.Version, plugin.Hash, strings.Join(plugin.NodeTypes, ","))
+			}
+			for _, err := range nodePluginErrors {
+				log.Printf("Warning: visual-script node plugin failed: %v", err)
+			}
 			for _, err := range visualEngine.StartActivated(context.Background()) {
 				log.Printf("Warning: visual script activation failed: %v", err)
 			}

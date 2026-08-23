@@ -1,0 +1,51 @@
+{
+  "name": "example-max-two",
+  "version": "1.0.0",
+  "nodes": [
+    {
+      "type": "example.max-two",
+      "typeVersion": 1,
+      "name": "Max of Two",
+      "description": "Reads two numeric message fields and outputs the larger value.",
+      "category": "Transforms",
+      "icon": "max",
+      "inputs": [
+        {
+          "name": "in",
+          "label": "Input",
+          "dataType": "message"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out",
+          "label": "Maximum",
+          "dataType": "message"
+        }
+      ],
+      "parameterSchema": {
+        "type": "object",
+        "properties": {
+          "firstField": {
+            "type": "string",
+            "title": "First input field",
+            "description": "Name of the message field containing the first number.",
+            "default": "inputA"
+          },
+          "secondField": {
+            "type": "string",
+            "title": "Second input field",
+            "description": "Name of the message field containing the second number.",
+            "default": "inputB"
+          }
+        },
+        "required": [
+          "firstField",
+          "secondField"
+        ]
+      },
+      "requiredServices": [],
+      "simulationSafe": true
+    }
+  ]
+}

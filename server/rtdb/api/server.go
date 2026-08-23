@@ -362,6 +362,7 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 		r.Get("/plugins/map-layer/{filename}", s.handleServeMapLayerPlugin)
 		api.Get("/api/v1/plugins/themes", s.handleListThemePluginsWithSchema())
 		r.Get("/plugins/themes/{filename}", s.handleServeThemePlugin)
+		r.Get("/plugins/visual-script-nodes/{plugin}/{filename}", s.handleServeVisualScriptNodeEditor)
 		// Device data ingest - authenticated via API key, not JWT
 		if s.ingestHandler != nil {
 			api.Post("/api/v1/ingest/{tenant}/{devicetype}/{devicename}", s.ingestHandler.HandleIngestWithSchema())

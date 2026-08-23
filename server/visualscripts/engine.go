@@ -15,10 +15,11 @@ import (
 )
 
 type compiledPlan struct {
-	graph      GraphDocument
-	nodes      map[string]GraphNode
-	outgoing   map[string]map[string][]GraphEdge
-	simulation bool
+	graph         GraphDocument
+	nodes         map[string]GraphNode
+	outgoing      map[string]map[string][]GraphEdge
+	compiledNodes map[string]CompiledNode
+	simulation    bool
 }
 
 type queuedRun struct {
@@ -44,25 +45,26 @@ type instanceRuntime struct {
 }
 
 type Engine struct {
-	store       Store
-	registry    *Registry
-	mu          sync.RWMutex
-	plans       map[string]*compiledPlan
-	statuses    map[string]RuntimeStatus
-	context     map[string]any
-	instances   map[string]*instanceRuntime
-	rootCtx     context.Context
-	rootCancel  context.CancelFunc
-	lifecycleMu sync.Mutex
-	stateMu     sync.RWMutex
-	closed      bool
-	runs        sync.WaitGroup
-	sequence    uint64
-	services    RuntimeServices
-	triggerMu   sync.Mutex
-	triggers    map[string]*triggerSession
-	edgeStates  map[string]edgeState
-	nodeHandler func(context.Context, GraphNode, Message) (string, Message, bool, error)
+	store        Store
+	registry     *Registry
+	mu           sync.RWMutex
+	plans        map[string]*compiledPlan
+	retiredPlans []*compiledPlan
+	statuses     map[string]RuntimeStatus
+	context      map[string]any
+	instances    map[string]*instanceRuntime
+	rootCtx      context.Context
+	rootCancel   context.CancelFunc
+	lifecycleMu  sync.Mutex
+	stateMu      sync.RWMutex
+	closed       bool
+	runs         sync.WaitGroup
+	sequence     uint64
+	services     RuntimeServices
+	triggerMu    sync.Mutex
+	triggers     map[string]*triggerSession
+	edgeStates   map[string]edgeState
+	nodeHandler  func(context.Context, GraphNode, Message) (string, Message, bool, error)
 }
 
 func New(store Store) *Engine {
@@ -95,6 +97,20 @@ func (e *Engine) Close() {
 	e.lifecycleMu.Unlock()
 	e.cancelInstances("", "", "Engine stopped")
 	e.runs.Wait()
+	e.mu.Lock()
+	plans := make([]*compiledPlan, 0, len(e.plans)+len(e.retiredPlans))
+	for _, plan := range e.plans {
+		plans = append(plans, plan)
+	}
+	plans = append(plans, e.retiredPlans...)
+	e.plans = make(map[string]*compiledPlan)
+	e.retiredPlans = nil
+	e.mu.Unlock()
+	closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, plan := range plans {
+		plan.close(closeCtx)
+	}
 }
 
 func (e *Engine) Registry() *Registry { return e.registry }
@@ -128,14 +144,22 @@ func (e *Engine) deploy(ctx context.Context, org, scriptID string, revision int,
 	if script == nil {
 		return nil, ErrNotFound
 	}
-	plan := compile(validation.Graph, script.Simulation)
+	plan, err := compileWithRegistry(validation.Graph, script.Simulation, e.registry, e.services)
+	if err != nil {
+		return nil, fmt.Errorf("compiling revision %d: %w", revision, err)
+	}
 	if err := e.store.SetVisualScriptActiveRevision(ctx, org, scriptID, &revision); err != nil {
+		plan.close(ctx)
 		return nil, err
 	}
 	e.cancelInstances(org, scriptID, "Script revision changed")
 	e.stopTriggers(org, scriptID)
 	e.mu.Lock()
-	e.plans[scriptKey(org, scriptID)] = plan
+	key := scriptKey(org, scriptID)
+	if previous := e.plans[key]; previous != nil {
+		e.retiredPlans = append(e.retiredPlans, previous)
+	}
+	e.plans[key] = plan
 	e.clearContextLocked(org, scriptID)
 	e.sequence++
 	e.mu.Unlock()
@@ -187,6 +211,19 @@ func (e *Engine) StartActivated(ctx context.Context) []error {
 	}
 	for _, script := range scripts {
 		if _, err := e.StartCurrent(ctx, script.OrgName, script.ID); err != nil {
+			e.mu.Lock()
+			key := scriptKey(script.OrgName, script.ID)
+			status := e.statuses[key]
+			status.ScriptID = script.ID
+			status.DesiredState = script.DesiredState
+			status.ActiveRevision = script.ActiveRevision
+			status.LatestRevision = script.LatestRevision
+			status.RuntimeState = "error"
+			status.ErrorSummary = err.Error()
+			e.sequence++
+			status.Sequence = e.sequence
+			e.statuses[key] = status
+			e.mu.Unlock()
 			errorsFound = append(errorsFound, fmt.Errorf("starting activated script %s/%s: %w", script.OrgName, script.Name, err))
 		}
 	}
@@ -205,7 +242,11 @@ func (e *Engine) Undeploy(ctx context.Context, org, scriptID string) (*RuntimeSt
 	e.cancelInstances(org, scriptID, "Script stopped")
 	e.stopTriggers(org, scriptID)
 	e.mu.Lock()
-	delete(e.plans, scriptKey(org, scriptID))
+	key := scriptKey(org, scriptID)
+	if previous := e.plans[key]; previous != nil {
+		e.retiredPlans = append(e.retiredPlans, previous)
+	}
+	delete(e.plans, key)
 	e.clearContextLocked(org, scriptID)
 	e.sequence++
 	e.mu.Unlock()
@@ -267,7 +308,9 @@ func (e *Engine) Status(ctx context.Context, org, scriptID string) (RuntimeStatu
 	status.DesiredState = script.DesiredState
 	status.ActiveRevision = script.ActiveRevision
 	status.LatestRevision = script.LatestRevision
-	if script.ActiveRevision == nil {
+	if status.ErrorSummary != "" && script.DesiredState == "running" {
+		status.RuntimeState = "error"
+	} else if script.ActiveRevision == nil {
 		status.RuntimeState = "idle"
 	} else {
 		status.RuntimeState = script.DesiredState
@@ -332,7 +375,7 @@ func (e *Engine) enqueueTrigger(ctx context.Context, org, scriptID string, reque
 	triggerID := request.TriggerNodeID
 	if triggerID == "" {
 		for _, node := range plan.graph.Nodes {
-			definition, _ := e.registry.Definition(node.Type)
+			definition, _ := e.registry.DefinitionVersion(node.Type, node.TypeVersion)
 			if (requiredType == "" && definition.Category == "Triggers") || node.Type == requiredType {
 				triggerID = node.ID
 				break
@@ -340,7 +383,7 @@ func (e *Engine) enqueueTrigger(ctx context.Context, org, scriptID string, reque
 		}
 	}
 	trigger, ok := plan.nodes[triggerID]
-	definition, definitionOK := e.registry.Definition(trigger.Type)
+	definition, definitionOK := e.registry.DefinitionVersion(trigger.Type, trigger.TypeVersion)
 	if !ok || !definitionOK || definition.Category != "Triggers" || (requiredType != "" && trigger.Type != requiredType) {
 		if requiredType == "core.manual" {
 			return nil, errors.New("select a Manual trigger")
@@ -589,15 +632,21 @@ func (e *Engine) plan(ctx context.Context, org, scriptID string, revision int) (
 		}
 		return nil, err
 	}
-	plan = compile(validation.Graph, script.Simulation)
+	plan, err = compileWithRegistry(validation.Graph, script.Simulation, e.registry, e.services)
+	if err != nil {
+		return nil, fmt.Errorf("compiling active revision: %w", err)
+	}
 	e.mu.Lock()
+	if previous := e.plans[key]; previous != nil {
+		e.retiredPlans = append(e.retiredPlans, previous)
+	}
 	e.plans[key] = plan
 	e.mu.Unlock()
 	return plan, nil
 }
 
 func compile(graph GraphDocument, simulation ...bool) *compiledPlan {
-	plan := &compiledPlan{graph: graph, nodes: make(map[string]GraphNode), outgoing: make(map[string]map[string][]GraphEdge)}
+	plan := &compiledPlan{graph: graph, nodes: make(map[string]GraphNode), outgoing: make(map[string]map[string][]GraphEdge), compiledNodes: make(map[string]CompiledNode)}
 	if len(simulation) > 0 {
 		plan.simulation = simulation[0]
 	}
@@ -611,6 +660,70 @@ func compile(graph GraphDocument, simulation ...bool) *compiledPlan {
 		plan.outgoing[edge.From.NodeID][edge.From.Port] = append(plan.outgoing[edge.From.NodeID][edge.From.Port], edge)
 	}
 	return plan
+}
+
+func compileWithRegistry(graph GraphDocument, simulation bool, registry *Registry, services RuntimeServices) (*compiledPlan, error) {
+	plan := compile(graph, simulation)
+	for _, node := range graph.Nodes {
+		implementation, ok := registry.NodeType(node.Type, node.TypeVersion)
+		if !ok {
+			plan.close(context.Background())
+			return nil, fmt.Errorf("node type %s version %d is not installed", node.Type, node.TypeVersion)
+		}
+		if _, builtIn := implementation.(catalogOnlyNode); builtIn {
+			continue
+		}
+		definition := implementation.Definition()
+		if unavailable := missingPluginService(definition.RequiredCaps, services); unavailable != "" {
+			plan.close(context.Background())
+			return nil, fmt.Errorf("node %s requires unavailable service %q", node.ID, unavailable)
+		}
+		compiled, err := implementation.Compile(node.Config, compileServices(services))
+		if err != nil {
+			plan.close(context.Background())
+			return nil, fmt.Errorf("node %s: %w", node.ID, err)
+		}
+		if compiled == nil {
+			plan.close(context.Background())
+			return nil, fmt.Errorf("node %s compiled to nil", node.ID)
+		}
+		plan.compiledNodes[node.ID] = compiled
+	}
+	return plan, nil
+}
+
+func missingPluginService(required []string, services RuntimeServices) string {
+	for _, service := range required {
+		available := false
+		switch service {
+		case "clock":
+			available = services.Now != nil
+		case "tag-read":
+			available = services.ReadTags != nil
+		case "tag-write":
+			available = services.SetTag != nil
+		case "device-control":
+			available = services.SendControl != nil
+		case "notifications":
+			available = services.SendNotification != nil
+		case "event-log":
+			available = services.LogEvent != nil
+		}
+		if !available {
+			return service
+		}
+	}
+	return ""
+}
+
+func (p *compiledPlan) close(ctx context.Context) {
+	if p == nil {
+		return
+	}
+	for id, node := range p.compiledNodes {
+		_ = node.Close(ctx)
+		delete(p.compiledNodes, id)
+	}
 }
 
 type queuedNode struct {
@@ -631,7 +744,7 @@ func (e *Engine) execute(ctx context.Context, plan *compiledPlan, trigger GraphN
 		if hops > 1000 {
 			return errors.New("maximum execution hops exceeded")
 		}
-		definition, _ := e.registry.Definition(item.node.Type)
+		definition, _ := e.registry.DefinitionVersion(item.node.Type, item.node.TypeVersion)
 		if definition.OutputNode && !definition.SimulationSafe && e.services.CanExecute != nil && !e.services.CanExecute() {
 			return fmt.Errorf("node %s: %w", item.node.ID, ErrNotLeader)
 		}
@@ -642,16 +755,40 @@ func (e *Engine) execute(ctx context.Context, plan *compiledPlan, trigger GraphN
 		}
 		var port string
 		var nextMessage Message
+		var outputs []Output
 		var action bool
 		var err error
 		if simulatedOutput {
 			port, nextMessage, action = "out", item.msg, true
+			outputs = []Output{{Port: port, Message: nextMessage}}
+		} else if compiled := plan.compiledNodes[item.node.ID]; compiled != nil {
+			outputs, err = compiled.Handle(ctx, cloneMessage(item.msg))
+			action = definition.OutputNode
+			if len(outputs) > 100 {
+				err = fmt.Errorf("plugin node returned %d outputs; maximum is 100", len(outputs))
+			}
+			for index := range outputs {
+				outputs[index].Port = strings.TrimSpace(outputs[index].Port)
+				outputs[index].Message = preserveAuthoritativeMessage(item.msg, outputs[index].Message)
+				if outputs[index].Port == "" {
+					err = errors.New("plugin node returned an output without a port")
+					break
+				}
+				if _, ok := findPort(definition.Outputs, outputs[index].Port); !ok {
+					err = fmt.Errorf("plugin node returned unknown output port %q", outputs[index].Port)
+					break
+				}
+			}
+			if len(outputs) > 0 {
+				port, nextMessage = outputs[0].Port, outputs[0].Message
+			}
 		} else {
 			if e.nodeHandler != nil {
 				port, nextMessage, action, err = e.nodeHandler(ctx, item.node, item.msg)
 			} else {
 				port, nextMessage, action, err = e.handleNode(ctx, item.node, item.msg)
 			}
+			outputs = []Output{{Port: port, Message: nextMessage}}
 		}
 		run.NodesExecuted++
 		if action {
@@ -680,14 +817,28 @@ func (e *Engine) execute(ctx context.Context, plan *compiledPlan, trigger GraphN
 		if err != nil {
 			return fmt.Errorf("node %s: %w", item.node.ID, err)
 		}
-		for _, edge := range plan.outgoing[item.node.ID][port] {
-			next, ok := plan.nodes[edge.To.NodeID]
-			if ok {
-				queue = append(queue, queuedNode{node: next, msg: cloneMessage(nextMessage)})
+		for _, output := range outputs {
+			for _, edge := range plan.outgoing[item.node.ID][output.Port] {
+				next, ok := plan.nodes[edge.To.NodeID]
+				if ok {
+					queue = append(queue, queuedNode{node: next, msg: cloneMessage(output.Message)})
+				}
 			}
 		}
 	}
 	return nil
+}
+
+func preserveAuthoritativeMessage(input, output Message) Message {
+	output.ID = input.ID
+	output.CorrelationID = input.CorrelationID
+	output.OrgName = input.OrgName
+	output.ScriptID = input.ScriptID
+	output.ActiveRevision = input.ActiveRevision
+	output.TriggerNodeID = input.TriggerNodeID
+	output.InstanceKey = input.InstanceKey
+	output.TriggerTimestamp = input.TriggerTimestamp
+	return output
 }
 
 func (e *Engine) handleNode(ctx context.Context, node GraphNode, msg Message) (string, Message, bool, error) {

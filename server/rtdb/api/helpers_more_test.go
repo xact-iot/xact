@@ -13,6 +13,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/xact-iot/xact/sqldb"
+	"github.com/xact-iot/xact/visualscripts"
+	webapi "github.com/xact-iot/xact/web/api"
 	"github.com/xact-iot/xact/widgetcatalog"
 )
 
@@ -136,6 +138,50 @@ func TestPluginHandlersListAndServe(t *testing.T) {
 	s.handleServeWidgetPlugin(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("path traversal status = %d", rr.Code)
+	}
+}
+
+func TestVisualScriptEditorModuleRequiresRegisteredBackend(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "visual-script-nodes", "acme")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "editor.js"), []byte("export function mount() {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	engine := visualscripts.New(nil)
+	defer engine.Close()
+	definition := visualscripts.NodeDefinition{Type: "acme.echo", TypeVersion: 1, Name: "Echo", Category: "Custom", Available: true, PluginName: "acme", EditorModule: "/plugins/visual-script-nodes/acme/editor.js"}
+	node := visualscripts.PluginNode{DefinitionValue: definition, CompileFunc: func(json.RawMessage, visualscripts.CompileServices) (visualscripts.PluginHandler, error) {
+		return visualscripts.PluginHandler{}, nil
+	}}
+	if err := engine.Registry().Register(node); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{pluginDir: root, visualScriptHandlers: webapi.NewVisualScriptHandlers(nil, engine, nil, nil)}
+
+	request := func(plugin, filename string) *http.Request {
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("plugin", plugin)
+		rctx.URLParams.Add("filename", filename)
+		req := httptest.NewRequest(http.MethodGet, "/plugins/visual-script-nodes/"+plugin+"/"+filename, nil)
+		return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	}
+	rr := httptest.NewRecorder()
+	s.handleServeVisualScriptNodeEditor(rr, request("acme", "editor.js"))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "mount") || rr.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("registered editor response = %d %q headers=%v", rr.Code, rr.Body.String(), rr.Header())
+	}
+	rr = httptest.NewRecorder()
+	s.handleServeVisualScriptNodeEditor(rr, request("missing", "editor.js"))
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("unregistered editor status = %d", rr.Code)
+	}
+	rr = httptest.NewRecorder()
+	s.handleServeVisualScriptNodeEditor(rr, request("acme", "../editor.js"))
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("traversal editor status = %d", rr.Code)
 	}
 }
 

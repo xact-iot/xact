@@ -141,20 +141,32 @@ type ParameterDefinition struct {
 }
 
 type NodeDefinition struct {
-	Type           string                `json:"type"`
-	TypeVersion    int                   `json:"typeVersion"`
-	Name           string                `json:"name"`
-	Description    string                `json:"description"`
-	Category       string                `json:"category"`
-	Icon           string                `json:"icon"`
-	Inputs         []PortDefinition      `json:"inputs"`
-	Outputs        []PortDefinition      `json:"outputs"`
-	Parameters     []ParameterDefinition `json:"parameters"`
-	RequiredCaps   []string              `json:"requiredCapabilities,omitempty"`
-	Available      bool                  `json:"available"`
-	UnavailableWhy string                `json:"unavailableReason,omitempty"`
-	OutputNode     bool                  `json:"outputNode,omitempty"`
-	SimulationSafe bool                  `json:"simulationSafe,omitempty"`
+	Type            string                `json:"type"`
+	TypeVersion     int                   `json:"typeVersion"`
+	Name            string                `json:"name"`
+	Description     string                `json:"description"`
+	Category        string                `json:"category"`
+	Icon            string                `json:"icon"`
+	Inputs          []PortDefinition      `json:"inputs"`
+	Outputs         []PortDefinition      `json:"outputs"`
+	Parameters      []ParameterDefinition `json:"parameters"`
+	RequiredCaps    []string              `json:"requiredCapabilities,omitempty"`
+	Available       bool                  `json:"available"`
+	UnavailableWhy  string                `json:"unavailableReason,omitempty"`
+	OutputNode      bool                  `json:"outputNode,omitempty"`
+	SimulationSafe  bool                  `json:"simulationSafe,omitempty"`
+	ParameterSchema json.RawMessage       `json:"parameterSchema,omitempty"`
+	EditorModule    string                `json:"editorModule,omitempty"`
+	PluginName      string                `json:"pluginName,omitempty"`
+	PluginVersion   string                `json:"pluginVersion,omitempty"`
+	PluginHash      string                `json:"pluginHash,omitempty"`
+}
+
+// Output is one routed result produced by a compiled plugin node. The engine
+// restores authoritative message identity and tenancy fields before routing it.
+type Output struct {
+	Port    string  `json:"port"`
+	Message Message `json:"message"`
 }
 
 type Run struct {

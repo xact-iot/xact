@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -146,6 +147,30 @@ func TestStartCurrentClearsPreviousRunTrace(t *testing.T) {
 		t.Fatalf("previous run trace was not cleared: %#v", store.runs)
 	}
 }
+
+type activatedRuntimeTestStore struct{ *runtimeTestStore }
+
+func (s activatedRuntimeTestStore) ListActivatedVisualScripts(context.Context) ([]Script, error) {
+	return []Script{s.script}, nil
+}
+
+func TestStartActivatedMarksMissingPluginRevisionAsError(t *testing.T) {
+	graph := NormalizeGraph(GraphDocument{Nodes: []GraphNode{{ID: "missing", Type: "vendor.missing", TypeVersion: 1, Config: json.RawMessage(`{}`)}}})
+	script := Script{ID: "script", OrgName: "org", Name: "Plugin script", DesiredState: "running", LatestRevision: 1, ActiveRevision: intPointer(1)}
+	store := activatedRuntimeTestStore{newRuntimeTestStore(script, Revision{ScriptID: "script", OrgName: "org", Revision: 1, Graph: graph})}
+	engine := New(store)
+	defer engine.Close()
+	errorsFound := engine.StartActivated(context.Background())
+	if len(errorsFound) != 1 || !strings.Contains(errorsFound[0].Error(), "invalid") {
+		t.Fatalf("activation errors = %#v", errorsFound)
+	}
+	status, err := engine.Status(context.Background(), "org", "script")
+	if err != nil || status.RuntimeState != "error" || !strings.Contains(status.ErrorSummary, "invalid") {
+		t.Fatalf("status = %#v, %v", status, err)
+	}
+}
+
+func intPointer(value int) *int { return &value }
 
 func TestStartupAndTagTriggersRunAutomaticallyAndStopCleanly(t *testing.T) {
 	router := NewTagChangeRouter(10, 10)

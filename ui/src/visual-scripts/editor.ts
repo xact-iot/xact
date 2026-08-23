@@ -18,6 +18,17 @@ export interface VisualScriptEditorTransientState {
   collapsedCategories: string[];
 }
 
+interface PluginNodeEditorContext {
+  node: GraphNode;
+  definition: NodeDefinition;
+  updateConfig(patch: Record<string, any>): void;
+  replaceConfig(config: Record<string, any>): void;
+}
+
+interface PluginNodeEditorModule {
+  mount(container: HTMLElement, context: PluginNodeEditorContext): void | (() => void);
+}
+
 export class VisualScriptEditor extends HTMLElement {
   private script!: VisualScript;
   private catalog: NodeDefinition[] = [];
@@ -32,11 +43,15 @@ export class VisualScriptEditor extends HTMLElement {
   private notice = '';
   private paletteDragOffset = { x: 0, y: 0 };
   private collapsedCategories = new Set<string>();
+  private pluginEditors = new Map<string, PluginNodeEditorModule>();
+  private failedPluginEditors = new Set<string>();
+  private pluginEditorDispose?: () => void;
 
   initialize(script: VisualScript, graph: GraphDocument, catalog: NodeDefinition[], runs: VisualScriptRun[] = []): void {
-    this.script = script; this.catalog = catalog; this.runs = runs; this.draft = new DraftStore(graph); this.render();
+    this.script = script; this.catalog = catalog; this.runs = runs; this.draft = new DraftStore(graph); this.render(); void this.loadPluginEditors();
   }
   connectedCallback(): void { if (this.draft) this.render(); }
+  disconnectedCallback(): void { this.disposePluginEditor(); }
   hasUnsavedChanges(): boolean { return this.draft?.dirty || false; }
   getTransientState(): VisualScriptEditorTransientState {
     return {
@@ -61,6 +76,7 @@ export class VisualScriptEditor extends HTMLElement {
 
   private render(): void {
     if (!this.draft) return;
+    this.disposePluginEditor();
     const graph = this.draft.value; const selectedNode = graph.nodes.find(n => n.id === this.selected); const selectedConnection = graph.edges.find(edge => edge.id === this.selectedEdge); const definition = this.catalog.find(d => d.type === selectedNode?.type);
     const grouped = new Map<string, NodeDefinition[]>(); for (const item of this.catalog) { const list = grouped.get(item.category) || []; list.push(item); grouped.set(item.category, list); }
     this.innerHTML = `
@@ -102,7 +118,7 @@ export class VisualScriptEditor extends HTMLElement {
         <section><h3>Problems (${this.diagnostics.length})</h3>${this.diagnostics.length ? this.diagnostics.map(d => `<div class="vse-problem ${d.severity}" data-focus="${esc(d.nodeId || '')}"><b>${esc(d.severity.toUpperCase())}</b> ${esc(d.message)}</div>`).join('') : '<div class="vse-empty-message" style="opacity:.6">The script is validated automatically before it starts.</div>'}</section>
         <section>${this.traceMarkup()}</section>
       </div>${this.tracePopupMarkup()}`;
-    const canvas = this.querySelector<VisualScriptCanvas>('#vse-canvas'); canvas?.setData(graph, this.catalog, false, this.selected, this.selectedEdge, { showManualTrigger: true, manualTriggerEnabled: this.script.desiredState === 'running' && !this.busy }); this.bind();
+    const canvas = this.querySelector<VisualScriptCanvas>('#vse-canvas'); canvas?.setData(graph, this.catalog, false, this.selected, this.selectedEdge, { showManualTrigger: true, manualTriggerEnabled: this.script.desiredState === 'running' && !this.busy }); this.bind(); this.mountPluginEditor(selectedNode, definition);
   }
 
   private connectionInspectorMarkup(edge: GraphEdge, graph: GraphDocument): string {
@@ -112,6 +128,9 @@ export class VisualScriptEditor extends HTMLElement {
 
   private inspectorMarkup(node?: GraphNode, definition?: NodeDefinition): string {
     if (!node || !definition) return '<h3>Inspector</h3><div class="vse-empty" style="opacity:.55">Select a node to configure it.</div>';
+		if (definition.editorModule && this.pluginEditors.has(definition.editorModule)) {
+			return `<h3>${esc(definition.name)}</h3>${definition.description ? `<div class="vse-node-description" style="opacity:.65">${esc(definition.description)}</div>` : ''}<div data-plugin-node-editor="${esc(definition.type)}"></div><button id="vse-delete-node" class="error">Delete node</button>`;
+		}
     return `<h3>${esc(definition.name)}</h3>${definition.description ? `<div class="vse-node-description" style="opacity:.65">${esc(definition.description)}</div>` : ''}${(definition.parameters || []).map(p => {
       const value = node.config[p.name] ?? p.default;
       const isTagPath = p.type === 'tag-path' || p.name === 'tagPath' || p.name === 'pathPattern';
@@ -125,6 +144,49 @@ export class VisualScriptEditor extends HTMLElement {
       if (isTagPath) return `<label class="vse-field"><span>${esc(p.label)}</span><div style="display:flex;gap:4px"><input data-param="${esc(p.name)}" data-type="tag-path" type="text" value="${esc(value ?? '')}" style="flex:1"><button type="button" data-tag-picker="${esc(p.name)}" data-tag-picker-label="${esc(p.label)}" title="Browse tags" aria-label="Browse tags">…</button></div>${p.description?`<small style="opacity:.5">${esc(p.description)}</small>`:''}</label>`;
       return `<label class="vse-field"><span>${esc(p.label)}</span><input data-param="${esc(p.name)}" data-type="${esc(p.type)}" type="${p.type==='number'?'number':'text'}" value="${esc(value ?? '')}">${p.description?`<small style="opacity:.5">${esc(p.description)}</small>`:''}</label>`;
     }).join('')}<button id="vse-delete-node" class="error">Delete node</button>`;
+  }
+
+  private async loadPluginEditors(): Promise<void> {
+    const modules = [...new Set(this.catalog.map(item => item.editorModule).filter((value): value is string => !!value))];
+    await Promise.all(modules.map(async modulePath => {
+      if (this.pluginEditors.has(modulePath) || this.failedPluginEditors.has(modulePath)) return;
+      try {
+        const loaded = await import(/* @vite-ignore */ `/xact${modulePath}`) as Partial<PluginNodeEditorModule>;
+        if (typeof loaded.mount !== 'function') throw new Error('module must export mount(container, context)');
+        this.pluginEditors.set(modulePath, loaded as PluginNodeEditorModule);
+      } catch (error) {
+        this.failedPluginEditors.add(modulePath);
+        console.warn(`Visual-script node editor failed to load ${modulePath}:`, error);
+      }
+    }));
+    if (this.isConnected) this.render();
+  }
+
+  private disposePluginEditor(): void {
+    try { this.pluginEditorDispose?.(); }
+    catch (error) { console.warn('Visual-script node editor cleanup failed:', error); }
+    this.pluginEditorDispose = undefined;
+  }
+
+  private mountPluginEditor(node?: GraphNode, definition?: NodeDefinition): void {
+    if (!node || !definition?.editorModule) return;
+    const editor = this.pluginEditors.get(definition.editorModule);
+    const container = this.querySelector<HTMLElement>('[data-plugin-node-editor]');
+    if (!editor || !container) return;
+    const update = (config: Record<string, any>, replace: boolean) => {
+      const graph = this.draft.value;
+      const current = graph.nodes.find(candidate => candidate.id === node.id);
+      if (!current) return;
+      current.config = replace ? { ...config } : { ...current.config, ...config };
+      this.draft.update(graph);
+      this.render();
+    };
+    const dispose = editor.mount(container, {
+      node: structuredClone(node), definition,
+      updateConfig: patch => update(patch, false),
+      replaceConfig: config => update(config, true),
+    });
+    if (typeof dispose === 'function') this.pluginEditorDispose = dispose;
   }
 
   private contextKeyOptions(node: GraphNode): string[] {

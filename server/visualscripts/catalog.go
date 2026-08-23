@@ -1,27 +1,115 @@
 package visualscripts
 
-import "sort"
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+	"sync"
+)
 
 type Registry struct {
-	definitions map[string]NodeDefinition
+	mu     sync.RWMutex
+	nodes  map[string]map[int]NodeType
+	latest map[string]int
 }
 
 func NewRegistry() *Registry {
-	r := &Registry{definitions: make(map[string]NodeDefinition)}
+	r := &Registry{nodes: make(map[string]map[int]NodeType), latest: make(map[string]int)}
 	for _, definition := range coreDefinitions() {
-		r.definitions[definition.Type] = definition
+		r.registerDefinition(definition)
 	}
 	return r
 }
 
 func (r *Registry) Definition(nodeType string) (NodeDefinition, bool) {
-	d, ok := r.definitions[nodeType]
-	return d, ok
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	version, ok := r.latest[nodeType]
+	if !ok {
+		return NodeDefinition{}, false
+	}
+	return r.nodes[nodeType][version].Definition(), true
+}
+
+func (r *Registry) DefinitionVersion(nodeType string, version int) (NodeDefinition, bool) {
+	node, ok := r.NodeType(nodeType, version)
+	if !ok {
+		return NodeDefinition{}, false
+	}
+	return node.Definition(), true
+}
+
+func (r *Registry) NodeType(nodeType string, version int) (NodeType, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	versions, ok := r.nodes[nodeType]
+	if !ok {
+		return nil, false
+	}
+	node, ok := versions[version]
+	return node, ok
+}
+
+// Register adds an executable node implementation. Multiple versions of a
+// stable type may coexist, but an exact type/version pair is immutable.
+func (r *Registry) Register(node NodeType) error {
+	return r.RegisterBatch([]NodeType{node})
+}
+
+// RegisterBatch validates and installs a plugin atomically, so a duplicate in
+// a multi-node plugin cannot leave a partially registered package behind.
+func (r *Registry) RegisterBatch(nodes []NodeType) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	seen := make(map[string]struct{}, len(nodes))
+	for _, node := range nodes {
+		if node == nil {
+			return fmt.Errorf("register visual-script node: implementation is nil")
+		}
+		definition := node.Definition()
+		if definition.Type == "" || definition.TypeVersion < 1 {
+			return fmt.Errorf("register visual-script node: type and positive type version are required")
+		}
+		key := fmt.Sprintf("%s@%d", definition.Type, definition.TypeVersion)
+		if _, duplicate := seen[key]; duplicate {
+			return fmt.Errorf("visual-script node %s is registered more than once", key)
+		}
+		seen[key] = struct{}{}
+		if versions := r.nodes[definition.Type]; versions != nil {
+			if _, duplicate := versions[definition.TypeVersion]; duplicate {
+				return fmt.Errorf("visual-script node %s is already registered", key)
+			}
+		}
+	}
+	for _, node := range nodes {
+		definition := node.Definition()
+		if r.nodes[definition.Type] == nil {
+			r.nodes[definition.Type] = make(map[int]NodeType)
+		}
+		r.nodes[definition.Type][definition.TypeVersion] = node
+		if definition.TypeVersion > r.latest[definition.Type] {
+			r.latest[definition.Type] = definition.TypeVersion
+		}
+	}
+	return nil
+}
+
+func (r *Registry) registerDefinition(definition NodeDefinition) {
+	if r.nodes[definition.Type] == nil {
+		r.nodes[definition.Type] = make(map[int]NodeType)
+	}
+	r.nodes[definition.Type][definition.TypeVersion] = catalogOnlyNode{definition: definition}
+	if definition.TypeVersion > r.latest[definition.Type] {
+		r.latest[definition.Type] = definition.TypeVersion
+	}
 }
 
 func (r *Registry) Catalog() []NodeDefinition {
-	items := make([]NodeDefinition, 0, len(r.definitions))
-	for _, definition := range r.definitions {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	items := make([]NodeDefinition, 0, len(r.latest))
+	for nodeType, version := range r.latest {
+		definition := r.nodes[nodeType][version].Definition()
 		// Catalog collection fields are arrays in the API contract. Go's JSON
 		// encoder otherwise emits nil slices as null, which makes parameterless
 		// nodes such as the Manual trigger awkward for clients to consume.
@@ -43,6 +131,29 @@ func (r *Registry) Catalog() []NodeDefinition {
 		return items[i].Category < items[j].Category
 	})
 	return items
+}
+
+// AllowsEditorModule confirms that a requested frontend asset belongs to at
+// least one successfully registered backend node from the same plugin.
+func (r *Registry) AllowsEditorModule(pluginName, modulePath string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, versions := range r.nodes {
+		for _, node := range versions {
+			definition := node.Definition()
+			if definition.PluginName == pluginName && definition.EditorModule == modulePath {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type catalogOnlyNode struct{ definition NodeDefinition }
+
+func (n catalogOnlyNode) Definition() NodeDefinition { return n.definition }
+func (n catalogOnlyNode) Compile(json.RawMessage, CompileServices) (CompiledNode, error) {
+	return nil, nil
 }
 
 func coreDefinitions() []NodeDefinition {

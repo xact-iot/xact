@@ -215,6 +215,30 @@ describe('visual script draft and canvas', () => {
     editor.remove();
   });
 
+  it('mounts an operator plugin editor and applies configuration updates through the draft store', () => {
+    const graph = emptyGraph();
+    graph.nodes = [{ id: 'custom', type: 'acme.uppercase', typeVersion: 1, position: { x: 20, y: 20 }, config: { prefix: '> ' } }];
+    const modulePath = '/plugins/visual-script-nodes/acme/editor.js';
+    const definition: NodeDefinition = {
+      type: 'acme.uppercase', typeVersion: 1, name: 'Uppercase', description: '', category: 'Custom', icon: 'A',
+      inputs: [{ name: 'in', label: 'Input', dataType: 'message' }], outputs: [{ name: 'out', label: 'Output', dataType: 'message' }],
+      parameters: [{ name: 'prefix', label: 'Prefix', type: 'string' }], editorModule: modulePath, available: true,
+    };
+    const editor = document.createElement('visual-script-editor') as any;
+    const dispose = vi.fn(); let pluginContext: any;
+    editor.pluginEditors.set(modulePath, { mount(container: HTMLElement, context: any) { container.textContent = 'Custom editor mounted'; pluginContext = context; return dispose; } });
+    editor.initialize({ id: 'script-1', name: 'Plugin script', description: '', desiredState: 'stopped', latestRevision: 1, createdAt: '', updatedAt: '', outOfDate: false }, graph, [definition]);
+    document.body.appendChild(editor);
+    editor.selected = 'custom'; editor.render();
+
+    expect(editor.querySelector('[data-plugin-node-editor]')?.textContent).toBe('Custom editor mounted');
+    expect(pluginContext.node.config.prefix).toBe('> ');
+    pluginContext.updateConfig({ prefix: '# ' });
+    expect(editor.draft.value.nodes[0].config.prefix).toBe('# ');
+    expect(dispose).toHaveBeenCalled();
+    editor.remove();
+  });
+
   it('keeps the selected node highlighted after the inspector renders', () => {
     const editor = document.createElement('visual-script-editor') as any;
     const graph = emptyGraph();

@@ -122,13 +122,17 @@ func ValidateGraph(registry *Registry, graph GraphDocument) ValidationResult {
 			continue
 		}
 		nodes[node.ID] = node
-		definition, ok := registry.Definition(node.Type)
-		if !ok {
+		latestDefinition, typeInstalled := registry.Definition(node.Type)
+		if !typeInstalled {
 			result.Diagnostics = append(result.Diagnostics, diagnostic("error", "unknown_node_type", node.ID, "", "type", fmt.Sprintf("Node type %q is not installed", node.Type)))
 			continue
 		}
+		definition, versionInstalled := registry.DefinitionVersion(node.Type, node.TypeVersion)
+		if !versionInstalled {
+			definition = latestDefinition
+		}
 		definitions[node.ID] = definition
-		if node.TypeVersion != definition.TypeVersion {
+		if !versionInstalled {
 			result.Diagnostics = append(result.Diagnostics, diagnostic("error", "unsupported_node_version", node.ID, "", "typeVersion", fmt.Sprintf("%s version %d is not available", node.Type, node.TypeVersion)))
 		}
 		if !definition.Available {
