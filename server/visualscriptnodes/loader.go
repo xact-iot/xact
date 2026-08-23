@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,7 +78,10 @@ func Load(pluginRoot string, registry *visualscripts.Registry) ([]LoadedPlugin, 
 	if err != nil {
 		return []LoadedPlugin{}, []error{fmt.Errorf("checking visual-script node plugin root: %w", err)}
 	}
-	if !info.IsDir() || info.Mode().Perm()&0o002 != 0 {
+	// Windows synthesizes POSIX permission bits from file attributes and reports
+	// ordinary writable directories as 0777. The other-write bit therefore does
+	// not describe the directory's ACL and cannot be used for this check there.
+	if !info.IsDir() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o002 != 0) {
 		return []LoadedPlugin{}, []error{fmt.Errorf("visual-script node plugin root must be a directory and must not be world-writable")}
 	}
 	root := filepath.Join(pluginRoot, pluginSubdir)

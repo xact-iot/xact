@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -117,6 +118,20 @@ func TestLoadRejectsTrailingManifestDocument(t *testing.T) {
 	loaded, errorsFound := Load(root, visualscripts.NewRegistry())
 	if len(loaded) != 0 || len(errorsFound) != 1 || !strings.Contains(errorsFound[0].Error(), "exactly one JSON document") {
 		t.Fatalf("Load trailing manifest = %#v, %#v", loaded, errorsFound)
+	}
+}
+
+func TestLoadRejectsWorldWritableRootOnUnix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows permission bits do not represent directory ACLs")
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	loaded, errorsFound := Load(root, visualscripts.NewRegistry())
+	if len(loaded) != 0 || len(errorsFound) != 1 || !strings.Contains(errorsFound[0].Error(), "must not be world-writable") {
+		t.Fatalf("Load world-writable root = %#v, %v", loaded, errorsFound)
 	}
 }
 
