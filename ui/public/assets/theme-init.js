@@ -1,4 +1,4 @@
-// Run before the application to avoid a flash of the wrong theme.
+// Served through the existing /xact/assets/ route before the application loads.
 try {
   document.documentElement.setAttribute('data-theme', localStorage.getItem('xact-theme') || 'dark-navy');
   document.documentElement.setAttribute('data-widget-decoration', localStorage.getItem('xact-widget-decoration') || 'shadowed');

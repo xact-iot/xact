@@ -2163,7 +2163,7 @@ export class AreaMapWidget extends BaseComponent {
         </select>
         <input class="rule-value" type="text" value="${esc(r.value)}" placeholder="value" style="${fieldStyle}">
         <icon-picker class="rule-glyph" value="${esc(r.glyph || 'mdi:circle')}"></icon-picker>
-        <input class="rule-size" type="number" value="${r.size ?? 24}" min="8" max="96" title="Icon size (px)" style="${fieldStyle}width:100%;">
+        <input class="rule-size" type="number" value="${esc(String(r.size ?? 24))}" min="8" max="96" title="Icon size (px)" style="${fieldStyle}width:100%;">
         <input type="color" class="rule-color" value="${toHexColor(r.color)}"
                style="width:34px;height:26px;padding:1px 2px;cursor:pointer;border:1px solid var(--border-color);border-radius:3px;background:var(--content-bg);">
         <select class="rule-anim" style="${fieldStyle}">
@@ -2206,7 +2206,7 @@ export class AreaMapWidget extends BaseComponent {
           <label style="${labelStyle}">Default Glyph</label>
           <div style="display:flex;gap:6px;align-items:center;">
             <icon-picker id="le-default-glyph" value="${esc(layer.defaultGlyph ?? 'mdi:map-marker')}"></icon-picker>
-            <input id="le-default-size" type="number" value="${layer.defaultSize ?? 24}" min="8" max="96" title="Default icon size (px)" style="${fieldStyle}width:56px;">
+            <input id="le-default-size" type="number" value="${esc(String(layer.defaultSize ?? 24))}" min="8" max="96" title="Default icon size (px)" style="${fieldStyle}width:56px;">
           </div>
         </div>
         <div style="display:flex;gap:8px;align-items:flex-end;">
@@ -2217,11 +2217,11 @@ export class AreaMapWidget extends BaseComponent {
           </div>
           <div style="flex:1;">
             <label style="${labelStyle}">Offset X</label>
-            <input id="le-offset-x" type="number" value="${layer.offsetX ?? 0}" style="${fieldStyle}width:100%;">
+            <input id="le-offset-x" type="number" value="${esc(String(layer.offsetX ?? 0))}" style="${fieldStyle}width:100%;">
           </div>
           <div style="flex:1;">
             <label style="${labelStyle}">Offset Y</label>
-            <input id="le-offset-y" type="number" value="${layer.offsetY ?? 0}" style="${fieldStyle}width:100%;">
+            <input id="le-offset-y" type="number" value="${esc(String(layer.offsetY ?? 0))}" style="${fieldStyle}width:100%;">
           </div>
         </div>`}
       </div>
@@ -2240,11 +2240,11 @@ export class AreaMapWidget extends BaseComponent {
         <div style="display:flex;gap:8px;margin-bottom:16px;">
           <div style="flex:1;">
             <label style="${labelStyle}">Zoom Threshold (icon → zoomed marker)</label>
-            <input id="le-zoom-threshold" type="number" value="${layer.zoomThreshold ?? 13}" min="1" max="20" style="${fieldStyle}width:100%;">
+            <input id="le-zoom-threshold" type="number" value="${esc(String(layer.zoomThreshold ?? 13))}" min="1" max="20" style="${fieldStyle}width:100%;">
           </div>
           <div style="flex:1;">
             <label style="${labelStyle}">Refresh Interval (ms, 0 = off)</label>
-            <input id="le-refresh-interval" type="number" value="${layer.refreshInterval ?? 0}" min="0" style="${fieldStyle}width:100%;">
+            <input id="le-refresh-interval" type="number" value="${esc(String(layer.refreshInterval ?? 0))}" min="0" style="${fieldStyle}width:100%;">
           </div>
         </div>
         <div id="le-section-zoom-widget">

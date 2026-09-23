@@ -89,7 +89,7 @@ export class VisualScriptCanvas extends HTMLElement {
     const inputs = (definition?.inputs || []).map(port => `<button class="vsc-port vsc-in" data-node="${esc(node.id)}" data-port="${esc(port.name)}" data-kind="in" aria-label="Connect to ${esc(definition?.name || node.type)} ${esc(port.label)}">${esc(port.label)}</button>`).join('');
     const outputs = (definition?.outputs || []).map(port => `<button class="vsc-port vsc-out ${this.pendingOutput?.nodeId === node.id && this.pendingOutput.port === port.name ? 'pending' : ''}" data-node="${esc(node.id)}" data-port="${esc(port.name)}" data-kind="out" aria-label="Connect from ${esc(definition?.name || node.type)} ${esc(port.label)}">${esc(port.label)}</button>`).join('');
     const manualTrigger = node.type === 'core.manual' && this.options.showManualTrigger ? `<div class="vsc-manual-action"><button class="vsc-manual-trigger" data-trigger-node="${esc(node.id)}" ${this.options.manualTriggerEnabled ? '' : 'disabled'} title="${this.options.manualTriggerEnabled ? 'Run the script from this Manual trigger' : 'Start the script to enable this trigger'}">Trigger</button></div>` : '';
-    return `<section class="vsc-node ${this.selected === node.id ? 'selected' : ''}" tabindex="0" data-node-id="${esc(node.id)}" style="left:${node.position.x}px;top:${node.position.y}px;${visualScriptCategoryStyle(definition?.category)}" aria-label="${esc(definition?.name || node.type)} node">
+    return `<section class="vsc-node ${this.selected === node.id ? 'selected' : ''}" tabindex="0" data-node-id="${esc(node.id)}" style="left:${esc(node.position.x)}px;top:${esc(node.position.y)}px;${visualScriptCategoryStyle(definition?.category)}" aria-label="${esc(definition?.name || node.type)} node">
       <div class="vsc-head"><span class="vsc-icon">${esc(definition?.icon || '◇')}</span><span><div class="vsc-title">${esc(definition?.name || node.type)}</div></span></div>
       ${summary ? `<div class="vsc-summary" title="${esc(summary)}">${esc(summary)}</div>` : ''}
       <div class="vsc-ports"><div class="vsc-port-col">${inputs}</div><div class="vsc-port-col">${outputs}</div></div>
@@ -101,14 +101,14 @@ export class VisualScriptCanvas extends HTMLElement {
     const points = this.edgePoints(edge); if (!points) return '';
     const d = curvePath(points.from, points.to);
     const label = `${this.nodeLabel(edge.from.nodeId)} ${edge.from.port} to ${this.nodeLabel(edge.to.nodeId)} ${edge.to.port}`;
-    return `<g class="vsc-edge ${this.selectedEdge === edge.id ? 'selected' : ''}" data-edge-id="${esc(edge.id)}"><path class="vsc-edge-hit" d="${d}" tabindex="${this.readonly ? '-1' : '0'}" aria-label="${esc(label)}"><title>${esc(label)}</title></path><path class="vsc-edge-line" d="${d}"></path></g>`;
+    return `<g class="vsc-edge ${this.selectedEdge === edge.id ? 'selected' : ''}" data-edge-id="${esc(edge.id)}"><path class="vsc-edge-hit" d="${esc(d)}" tabindex="${this.readonly ? '-1' : '0'}" aria-label="${esc(label)}"><title>${esc(label)}</title></path><path class="vsc-edge-line" d="${esc(d)}"></path></g>`;
   }
 
   private edgeHandlesMarkup(): string {
     if (this.readonly || !this.graph || !this.selectedEdge) return '';
     const edge = this.graph.edges.find(item => item.id === this.selectedEdge); const points = edge && this.edgePoints(edge);
     if (!edge || !points) return '';
-    return `<circle class="vsc-edge-handle" data-edge-id="${esc(edge.id)}" data-end="from" cx="${points.from.x}" cy="${points.from.y}" r="6" aria-label="Move connection source"></circle><circle class="vsc-edge-handle" data-edge-id="${esc(edge.id)}" data-end="to" cx="${points.to.x}" cy="${points.to.y}" r="6" aria-label="Move connection target"></circle>`;
+    return `<circle class="vsc-edge-handle" data-edge-id="${esc(edge.id)}" data-end="from" cx="${esc(points.from.x)}" cy="${esc(points.from.y)}" r="6" aria-label="Move connection source"></circle><circle class="vsc-edge-handle" data-edge-id="${esc(edge.id)}" data-end="to" cx="${esc(points.to.x)}" cy="${esc(points.to.y)}" r="6" aria-label="Move connection target"></circle>`;
   }
 
   private edgePoints(edge: GraphEdge): { from: Point; to: Point } | null {
@@ -202,7 +202,7 @@ export class VisualScriptCanvas extends HTMLElement {
     event.preventDefault(); this.drag = { id, startX: event.clientX, startY: event.clientY, x: node.position.x, y: node.position.y, moved: false };
     document.addEventListener('pointermove', this.moveDrag); document.addEventListener('pointerup', this.endDrag);
   }
-  private moveDrag = (event: PointerEvent): void => { if (!this.drag || !this.graph) return; const node = this.graph.nodes.find(n => n.id === this.drag!.id); if (!node) return; const x = Math.max(0, Math.round((this.drag.x + event.clientX - this.drag.startX) / 10) * 10); const y = Math.max(0, Math.round((this.drag.y + event.clientY - this.drag.startY) / 10) * 10); if (x === node.position.x && y === node.position.y) return; node.position.x = x; node.position.y = y; this.drag.moved = true; const el = this.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(node.id)}"]`); if (el) { el.style.left = `${node.position.x}px`; el.style.top = `${node.position.y}px`; } };
+  private moveDrag = (event: PointerEvent): void => { if (!this.drag || !this.graph) return; const node = this.graph.nodes.find(n => n.id === this.drag!.id); if (!node) return; const x = Math.max(0, Math.round((this.drag.x + event.clientX - this.drag.startX) / 10) * 10); const y = Math.max(0, Math.round((this.drag.y + event.clientY - this.drag.startY) / 10) * 10); if (x === node.position.x && y === node.position.y) return; node.position.x = x; node.position.y = y; this.drag.moved = true; const el = this.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(node.id)}"]`); if (el) { el.style.left = `${esc(node.position.x)}px`; el.style.top = `${esc(node.position.y)}px`; } };
   private endDrag = (): void => { if (this.drag?.moved) this.changed(); this.stopDrag(); };
   private stopDrag(): void { this.drag = null; document.removeEventListener('pointermove', this.moveDrag); document.removeEventListener('pointerup', this.endDrag); }
 

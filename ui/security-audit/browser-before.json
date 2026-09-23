@@ -1,0 +1,18 @@
+{
+  "customElementSurvivedSanitizer": true,
+  "svgAnimatedHref": "#",
+  "proofs": {
+    "tag-value": "SYNTHETIC-AUDIT-TOKEN-NOT-A-REAL-CREDENTIAL",
+    "tag-units": "SYNTHETIC-AUDIT-TOKEN-NOT-A-REAL-CREDENTIAL",
+    "map-expression": "SYNTHETIC-AUDIT-TOKEN-NOT-A-REAL-CREDENTIAL",
+    "map-tag-value": "SYNTHETIC-AUDIT-TOKEN-NOT-A-REAL-CREDENTIAL",
+    "saved-svg": "SYNTHETIC-AUDIT-TOKEN-NOT-A-REAL-CREDENTIAL",
+    "text-color": "SYNTHETIC-AUDIT-TOKEN-NOT-A-REAL-CREDENTIAL",
+    "custom-element": "SYNTHETIC-AUDIT-TOKEN-NOT-A-REAL-CREDENTIAL",
+    "org-logo": "SYNTHETIC-AUDIT-TOKEN-NOT-A-REAL-CREDENTIAL",
+    "chart-tooltip": "SYNTHETIC-AUDIT-TOKEN-NOT-A-REAL-CREDENTIAL"
+  },
+  "ordinaryHtmlControlBlocked": true,
+  "svgClickError": "locator.click: Timeout 2500ms exceeded.",
+  "browserVersion": "148.0.7778.96"
+}

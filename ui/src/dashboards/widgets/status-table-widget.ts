@@ -1,3 +1,4 @@
+import { escapeSelector } from '../../utils/html-sanitize';
 /**
  * status-table-widget - Two-column live status table.
  *
@@ -568,10 +569,10 @@ export class StatusTableWidget extends BaseComponent {
         </label>`;
         break;
       case 'number':
-        input = `<input class="stw-command-field stw-command-input" ${attrs} type="number" min="${col.min}" max="${col.max}" value="${esc(String(stored ?? ''))}" style="width:7rem;">`;
+        input = `<input class="stw-command-field stw-command-input" ${attrs} type="number" min="${esc(String(col.min))}" max="${esc(String(col.max))}" value="${esc(String(stored ?? ''))}" style="width:7rem;">`;
         break;
       case 'slider':
-        input = `<input class="stw-command-field" ${attrs} type="range" min="${col.min}" max="${col.max}" value="${esc(String(stored ?? col.min))}" style="width:7rem;">`;
+        input = `<input class="stw-command-field" ${attrs} type="range" min="${esc(String(col.min))}" max="${esc(String(col.max))}" value="${esc(String(stored ?? col.min))}" style="width:7rem;">`;
         break;
       case 'enum': {
         const opts = col.enumOptions.split(',').map(s => s.trim()).filter(Boolean);
@@ -648,7 +649,7 @@ export class StatusTableWidget extends BaseComponent {
         const formatted = Number.isInteger(n) ? String(n) : n.toFixed(2);
         const color = resolveColumnColor(col, n);
         return {
-          html: `<span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:${numSz};color:${color};">${esc(formatted)}</span>`,
+          html: `<span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:${numSz};color:${esc(String(color))};">${esc(formatted)}</span>`,
           units,
         };
       }
@@ -664,10 +665,10 @@ export class StatusTableWidget extends BaseComponent {
         return {
           html: `
             <div style="display:flex;align-items:center;gap:6px;">
-              <div class="stw-bar-track" style="flex:1;background:color-mix(in srgb, ${color} 18%, transparent);">
-                <div class="stw-bar-fill" style="width:${pct.toFixed(1)}%;background:${color};"></div>
+              <div class="stw-bar-track" style="flex:1;background:color-mix(in srgb, ${esc(String(color))} 18%, transparent);">
+                <div class="stw-bar-fill" style="width:${pct.toFixed(1)}%;background:${esc(String(color))};"></div>
               </div>
-              <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:${numSz};color:${color};">${Number.isInteger(n) ? n : n.toFixed(1)}</span>
+              <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:${numSz};color:${esc(String(color))};">${Number.isInteger(n) ? n : n.toFixed(1)}</span>
             </div>`,
           units,
         };
@@ -689,7 +690,7 @@ export class StatusTableWidget extends BaseComponent {
         const s = String(value);
         const color = col.colorBandsEnabled ? resolveColumnColor(col, parseFloat(s)) : 'inherit';
         return {
-          html: `<span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;color:${color};" title="${esc(s)}">${esc(s)}</span>`,
+          html: `<span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;color:${esc(String(color))};" title="${esc(s)}">${esc(s)}</span>`,
           units: '',
         };
       }
@@ -814,7 +815,7 @@ export class StatusTableWidget extends BaseComponent {
   private updateAffectedRows(fullPath: string): void {
     const hasColumn3 = this.hasColumn3();
     for (const row of this.config.rows) {
-      const tr = this.querySelector<HTMLElement>(`.stw-row[data-row-id="${row.id}"]`);
+      const tr = this.querySelector<HTMLElement>(`.stw-row[data-row-id="${escapeSelector(row.id)}"]`);
       if (!tr) continue;
       const tds = tr.querySelectorAll('td');
       if (row.col2?.type === 'value' && this.resolveTagPath(row.col2.tagPath) === fullPath && tds[1]) {
@@ -1166,9 +1167,9 @@ export class StatusTableWidget extends BaseComponent {
         ${showCommand ? `<div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0.5rem;margin-top:0.5rem;">
           <div><label style="${lblStyle}">Default value</label><input class="stw-c-command-value" type="text" value="${esc(String(c.commandValue ?? ''))}" style="${fldStyle}"></div>
           <div><label style="${lblStyle}">Enum options</label><input class="stw-c-enum" type="text" value="${esc(c.enumOptions)}" placeholder="A,B,C" style="${fldStyle}"></div>
-          <div><label style="${lblStyle}">Min</label><input class="stw-c-min" type="number" value="${c.min}" style="${fldStyle}"></div>
-          <div><label style="${lblStyle}">Max</label><input class="stw-c-max" type="number" value="${c.max}" style="${fldStyle}"></div>
-          <div><label style="${lblStyle}">Timeout</label><input class="stw-c-timeout" type="number" min="1" value="${c.timeoutSeconds}" style="${fldStyle}"></div>
+          <div><label style="${lblStyle}">Min</label><input class="stw-c-min" type="number" value="${esc(String(c.min))}" style="${fldStyle}"></div>
+          <div><label style="${lblStyle}">Max</label><input class="stw-c-max" type="number" value="${esc(String(c.max))}" style="${fldStyle}"></div>
+          <div><label style="${lblStyle}">Timeout</label><input class="stw-c-timeout" type="number" min="1" value="${esc(String(c.timeoutSeconds))}" style="${fldStyle}"></div>
         </div>` : ''}
       </div>`;
   }

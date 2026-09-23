@@ -956,7 +956,7 @@ export class TagsManagerWidget extends BaseComponent {
       <div id="delete-confirm-modal" class="fixed inset-0 z-50 flex items-center justify-center" style="z-index:${TAGS_MANAGER_MODAL_Z_INDEX};background:rgba(0,0,0,.55)">
         <div class="rounded-lg shadow-2xl p-6 w-full max-w-sm" style="background:var(--content-bg);border:1px solid rgba(248,113,113,.4)">
           <h3 class="text-base font-semibold mb-2" style="color:#f87171">Confirm Delete</h3>
-          <p class="text-xs mb-1 opacity-80">Delete ${type} <strong>${path}</strong>?</p>
+          <p class="text-xs mb-1 opacity-80">Delete ${type} <strong>${escapeHtml(path)}</strong>?</p>
           ${type === 'node'
             ? `<p class="text-xs mb-4" style="color:#f87171">⚠ All child nodes and tags will be permanently deleted.</p>`
             : `<p class="text-xs mb-4 opacity-50">This action cannot be undone.</p>`}
@@ -977,7 +977,7 @@ export class TagsManagerWidget extends BaseComponent {
     if (this.debugRunning) {
       resultsHtml = `<div class="text-xs opacity-50 py-4 text-center">Running…</div>`;
     } else if (this.debugError) {
-      resultsHtml = `<div class="text-xs py-2" style="color:#f87171">${this.debugError}</div>`;
+      resultsHtml = `<div class="text-xs py-2" style="color:#f87171">${escapeHtml(this.debugError)}</div>`;
     } else if (this.debugResults !== null) {
       if (this.debugResults.length === 0) {
         resultsHtml = `<div class="text-xs opacity-50 py-2 text-center">No pipeline blocks - value passes through unchanged.</div>`;
@@ -985,8 +985,8 @@ export class TagsManagerWidget extends BaseComponent {
         resultsHtml = this.debugResults.map((step, i) => {
           const label = this.getBlockSchema(step.type)?.label ?? step.type;
           const state = step.stateChange
-            ? `<span class="ml-1 px-1 rounded text-xs" style="background:rgba(239,68,68,.3);color:#f87171">→ ${step.stateChange}</span>` : '';
-          const err = step.error ? `<div class="text-xs mt-1" style="color:#f87171">Error: ${step.error}</div>` : '';
+            ? `<span class="ml-1 px-1 rounded text-xs" style="background:rgba(239,68,68,.3);color:#f87171">→ ${escapeHtml(step.stateChange)}</span>` : '';
+          const err = step.error ? `<div class="text-xs mt-1" style="color:#f87171">Error: ${escapeHtml(step.error)}</div>` : '';
           return `
             <div class="rounded p-2 mb-1" style="background:color-mix(in srgb,var(--accent-color) 6%,transparent);border:1px solid color-mix(in srgb,var(--accent-color) 15%,transparent)">
               <div class="flex items-center gap-1 mb-1">
@@ -994,17 +994,17 @@ export class TagsManagerWidget extends BaseComponent {
               </div>
               <div class="flex items-center gap-2 text-xs flex-wrap">
                 <span class="opacity-40">In:</span>
-                <code class="px-1 rounded" style="background:color-mix(in srgb,var(--border-color) 40%,transparent)">${JSON.stringify(step.input)}</code>
+                <code class="px-1 rounded" style="background:color-mix(in srgb,var(--border-color) 40%,transparent)">${escapeHtml(JSON.stringify(step.input))}</code>
                 <span class="opacity-30">→</span>
                 <span class="opacity-40">Out:</span>
-                <code class="px-1 rounded font-bold" style="background:color-mix(in srgb,var(--accent-color) 18%,transparent);color:var(--accent-color)">${JSON.stringify(step.output)}</code>
+                <code class="px-1 rounded font-bold" style="background:color-mix(in srgb,var(--accent-color) 18%,transparent);color:var(--accent-color)">${escapeHtml(JSON.stringify(step.output))}</code>
               </div>
               ${err}
             </div>`;
         }).join('') + `
           <div class="flex items-center gap-2 mt-2 pt-2 text-xs" style="border-top:1px solid var(--border-color)">
             <span class="opacity-50">Final output:</span>
-            <code class="px-2 py-0.5 rounded font-bold" style="background:color-mix(in srgb,var(--accent-color) 20%,transparent);color:var(--accent-color)">${JSON.stringify(this.debugFinalOutput)}</code>
+            <code class="px-2 py-0.5 rounded font-bold" style="background:color-mix(in srgb,var(--accent-color) 20%,transparent);color:var(--accent-color)">${escapeHtml(JSON.stringify(this.debugFinalOutput))}</code>
           </div>`;
       }
     }
@@ -1015,12 +1015,12 @@ export class TagsManagerWidget extends BaseComponent {
           <div class="flex items-center justify-between mb-4">
             <div>
               <h3 class="text-base font-semibold" style="color:var(--accent-color)">Pipeline Debugger</h3>
-              <div class="text-xs opacity-40 mt-0.5">${this.debugTagPath ?? ''}</div>
+              <div class="text-xs opacity-40 mt-0.5">${escapeHtml(this.debugTagPath ?? '')}</div>
             </div>
             <button id="debugger-close" class="text-2xl leading-none opacity-50 hover:opacity-100" style="color:var(--content-text)">&times;</button>
           </div>
           <div class="flex items-center gap-2 mb-4">
-            <input type="text" id="debug-input" value="${this.debugInput}"
+            <input type="text" id="debug-input" value="${escapeHtml(this.debugInput)}"
                    class="flex-1 px-3 py-2 text-xs rounded border font-mono"
                    style="border-color:var(--border-color);background:var(--content-bg);color:var(--content-text)"
                    placeholder='Test input value - JSON (e.g. 42 or "hello")'>
@@ -1052,13 +1052,13 @@ export class TagsManagerWidget extends BaseComponent {
         break;
       case 'integer':
       case 'float':
-        inputHtml = `<input type="number" id="value-edit-input" value="${currentVal}" step="${type === 'float' ? 'any' : '1'}"
+        inputHtml = `<input type="number" id="value-edit-input" value="${escapeHtml(currentVal)}" step="${type === 'float' ? 'any' : '1'}"
                             class="w-full px-3 py-2 text-sm rounded border"
                             style="border-color:var(--border-color);background:var(--content-bg);color:var(--content-text)"
                             placeholder="Enter ${type} value">`;
         break;
       default:
-        inputHtml = `<input type="text" id="value-edit-input" value="${currentVal}"
+        inputHtml = `<input type="text" id="value-edit-input" value="${escapeHtml(currentVal)}"
                             class="w-full px-3 py-2 text-sm rounded border"
                             style="border-color:var(--border-color);background:var(--content-bg);color:var(--content-text)"
                             placeholder="Enter value">`;
@@ -1071,7 +1071,7 @@ export class TagsManagerWidget extends BaseComponent {
             <h3 class="text-base font-semibold" style="color:var(--accent-color)">Edit Value</h3>
             <button id="value-edit-close" class="text-2xl leading-none opacity-50 hover:opacity-100" style="color:var(--content-text)">&times;</button>
           </div>
-          <div class="text-xs opacity-60 mb-3">${this.valueEditPath}</div>
+          <div class="text-xs opacity-60 mb-3">${escapeHtml(this.valueEditPath)}</div>
           <div class="mb-4">${inputHtml}</div>
           <div class="flex gap-2">
             <button id="value-edit-accept" class="flex-1 px-4 py-2 text-sm font-semibold rounded" style="background:var(--accent-color);color:var(--accent-text)">Accept</button>

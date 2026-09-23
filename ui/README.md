@@ -34,6 +34,8 @@ ui/
 
 ## Development
 
+Use Node.js 20.19+ or 22.12+ (CI uses Node 22).
+
 Install dependencies:
 
 ```bash
@@ -55,6 +57,8 @@ npm run build
 ```
 
 The built files will be in the `dist/` directory.
+
+Security findings, fixes, template compatibility notes, and browser checks are documented in [UI_SECURITY_AUDIT.md](../UI_SECURITY_AUDIT.md).
 
 ## Features
 

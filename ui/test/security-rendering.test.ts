@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { escapeHtml, escapeSelector, sanitizeHtml } from '../src/utils/html-sanitize';
+import { escapeSelector, sanitizeHtml } from '../src/utils/html-sanitize';
+import { csvCell } from '../src/utils/csv';
 import { renderMapTemplate } from '../src/utils/map-template';
 import { normalizeSvgDiagramConfig, parseSvgTemplate } from '../src/dashboards/widgets/svg-diagram-widget';
 import { getMirrorStore } from '../src/store/store';
@@ -7,6 +8,7 @@ import '../src/dashboards/widgets/text-widget';
 import '../src/dashboards/widgets/html-widget';
 import '../src/dashboards/widgets/tags-manager-widget';
 import '../src/dashboards/widgets/timeseries-chart-widget';
+import '../src/dashboards/widgets/pdf-template-widget';
 import '../src/components/app-sidebar';
 
 const payload = '<img src="/missing" onerror="window.securityProbe = true">';
@@ -18,7 +20,9 @@ describe('untrusted map templates', () => {
   it('preserves variables, tag references, comparisons, arithmetic and conditionals', () => {
     expect(renderMapTemplate('${deviceName} ${deviceDescription}: ${tag("temperature") + 2}', context)).toBe('Pump 1 Feed: 122');
     expect(renderMapTemplate('<b style="color:${tag("temperature") > 100 ? "red" : "green"}">${tag("temperature")}</b>', context)).toContain('color:red');
-    expect(renderMapTemplate('${tag(sign.message)}', context)).toBe(escapeHtml(payload));
+    const div = document.createElement('div'); div.innerHTML = renderMapTemplate('${tag(sign.message)}', context);
+    expect(div.textContent).toBe(payload);
+    expect(div.querySelector('img')).toBeNull();
   });
 
   it.each([
@@ -76,6 +80,39 @@ describe('rich content boundaries', () => {
 });
 
 describe('plain data rendering', () => {
+  it('escapes stored tag data in the value editor and pipeline debugger', () => {
+    const widget = document.createElement('tags-manager-widget') as any;
+    widget.isValueEditOpen = true;
+    widget.valueEditPath = 'audit.device.message';
+    widget.valueEditCurrent = '">' + payload;
+    widget.isDebuggerOpen = true;
+    widget.debugResults = [{ type: 'publish', input: payload, output: payload, error: payload }];
+    widget.debugInput = '">' + payload;
+    widget.debugFinalOutput = payload;
+    const div = document.createElement('div');
+    div.innerHTML = widget.renderValueEditModal() + widget.renderDebugger();
+    expect(div.querySelector('img,[onerror]')).toBeNull();
+    expect(div.textContent).toContain(payload);
+    expect(div.querySelector<HTMLInputElement>('#value-edit-input')?.value).toBe('\">' + payload);
+  });
+
+  it('escapes image URLs and styles from saved report templates', () => {
+    const widget = document.createElement('pdf-template-widget') as any;
+    const div = document.createElement('div');
+    div.innerHTML = widget.renderCanvasImage({ imageData: '/missing\" onerror=\"bad()' }, 100, 1)
+      + widget.renderCanvasGrid({ type: 'table', rows: [[{ text: 'safe', bgColor: '\">' + payload, font: '\">' + payload }]] }, 100, 1, 0);
+    expect(div.querySelector('[onerror]')).toBeNull();
+    expect(div.querySelectorAll('img')).toHaveLength(1);
+  });
+
+  it.each(['=1+1', '+1+1', '-1+1', '@SUM(1)', '\t=1+1', '  =1+1', '＝1+1'])('neutralizes spreadsheet formula %j', value => {
+    expect(csvCell(value)).toBe('"\'' + value + '"');
+  });
+
+  it('retains CSV quoting for ordinary text and multiline values', () => {
+    expect(csvCell('a,"b"\nc')).toBe('"a,""b""\nc"');
+    expect(csvCell(42)).toBe('"42"');
+  });
   it('renders tag values and units as text on first render and live updates', () => {
     const store = getMirrorStore() as any;
     const path = 'audit.device.security_tag';

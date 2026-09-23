@@ -8,6 +8,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import assert from 'node:assert/strict';
 
 const ui = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dir = await mkdtemp(join(tmpdir(), 'xact-ui-audit-'));
@@ -41,7 +42,7 @@ try {
   });
   const bundle = await readFile(join(dir, 'audit.js'));
   server = createServer((req, res) => {
-    // Match the current Go server's CSP; event handlers and eval remain allowed.
+    // Deliberately use the pre-fix CSP so it cannot mask rendering regressions.
     res.setHeader('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
     if (req.url === '/audit.js') {
       res.setHeader('Content-Type', 'application/javascript');
@@ -150,12 +151,17 @@ try {
   });
   // Real browser click, allowing child pointer-events override of the template layer.
   try {
+    if (await page.locator('#audit-svg-link rect').count()) {
     await page.locator('#audit-svg-link rect').click({ timeout: 2500 });
     await page.waitForTimeout(120);
     results.proofs = await page.evaluate(() => ({ ...window.auditProofs }));
+    }
   } catch (error) { results.svgClickError = error.message.split('\n')[0]; }
   results.browserVersion = browser.version();
   console.log(JSON.stringify(results, null, 2));
+  assert.deepEqual(results.proofs, {}, 'Untrusted content executed JavaScript');
+  assert.equal(results.customElementSurvivedSanitizer, false);
+  assert.equal(results.ordinaryHtmlControlBlocked, true);
 } finally {
   await browser?.close();
   if (server?.listening) await new Promise(ok => server.close(ok));

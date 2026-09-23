@@ -387,7 +387,6 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 			fs := http.StripPrefix(prefix+"/", http.FileServer(http.Dir(s.config.StaticDir)))
 			r.Get("/icons/{path:.*}", fs.ServeHTTP)
 			r.Get("/manual/{path:.*}", fs.ServeHTTP)
-			r.Get("/test/{path:.*}", fs.ServeHTTP)
 			r.Get("/logo.svg", fs.ServeHTTP)
 			r.Get("/favicon.svg", fs.ServeHTTP)
 

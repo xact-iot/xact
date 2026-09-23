@@ -22,6 +22,13 @@ export function loadLeaflet(): Promise<void> {
   return leafletReady ??= (async () => {
     const leaflet = await import('leaflet');
     await import('leaflet/dist/leaflet.css');
+    const [icon, retina, shadow] = await Promise.all([
+      import('leaflet/dist/images/marker-icon.png'),
+      import('leaflet/dist/images/marker-icon-2x.png'),
+      import('leaflet/dist/images/marker-shadow.png'),
+    ]);
+    leaflet.Icon.Default.imagePath = '';
+    leaflet.Icon.Default.mergeOptions({ iconUrl: icon.default, iconRetinaUrl: retina.default, shadowUrl: shadow.default });
     (window as any).L = leaflet;
   })().catch(error => { leafletReady = null; throw error; });
 }

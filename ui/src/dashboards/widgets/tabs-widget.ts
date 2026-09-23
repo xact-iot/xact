@@ -341,7 +341,7 @@ export class TabsWidget extends BaseComponent {
     const showChildConfigure = this.editMode && isActive && this._tabChildIsConfigurable(tab);
     return `
       <div class="tw-tab ${isActive ? 'tw-tab-active' : ''}"
-           data-tab-id="${tab.id}"
+           data-tab-id="${this._esc(tab.id)}"
            draggable="${this.editMode ? 'true' : 'false'}"
            style="
              display:flex; align-items:center; gap:0.2rem;
@@ -359,7 +359,7 @@ export class TabsWidget extends BaseComponent {
           ${this._esc(tab.label || 'Tab')}
         </span>
         ${showChildConfigure ? `
-          <button class="tw-child-cfg" data-tab-id="${tab.id}"
+          <button class="tw-child-cfg" data-tab-id="${this._esc(tab.id)}"
                   title="Configure widget" style="
                     background:none; border:none; cursor:pointer; padding:1px 2px;
                     font-size:0.9rem; opacity:0.55; color:var(--widget-header-text);
@@ -367,7 +367,7 @@ export class TabsWidget extends BaseComponent {
                   ">&#9881;</button>
         ` : ''}
         ${this.editMode ? `
-          <button class="tw-tab-remove" data-tab-id="${tab.id}"
+          <button class="tw-tab-remove" data-tab-id="${this._esc(tab.id)}"
                   title="Remove tab" style="
                     background:none; border:none; cursor:pointer; padding:1px 2px;
                     font-size:1rem; opacity:0.45; color:var(--widget-header-text);
@@ -762,12 +762,12 @@ export class TabsWidget extends BaseComponent {
       )
     ].join('');
     return `
-      <div class="tw-mgr-row" data-mgr-tab="${tab.id}" draggable="true">
+      <div class="tw-mgr-row" data-mgr-tab="${this._esc(tab.id)}" draggable="true">
         <span class="tw-mgr-drag">⠿</span>
         <input class="tw-mgr-input" type="text" placeholder="Tab label"
                value="${this._esc(tab.label)}" data-field="label">
         <select class="tw-mgr-select" data-field="widgetType">${opts}</select>
-        <button class="tw-mgr-rm" data-rm="${tab.id}">✕</button>
+        <button class="tw-mgr-rm" data-rm="${this._esc(tab.id)}">✕</button>
       </div>
     `;
   }

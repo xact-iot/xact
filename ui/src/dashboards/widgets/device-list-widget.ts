@@ -1,3 +1,4 @@
+import { csvCell } from '../../utils/csv';
 /**
  * device-list-widget - Compact real-time device inventory table.
  *
@@ -1087,7 +1088,7 @@ export class DeviceListWidget extends BaseComponent {
         <tr class="${classes}" data-path="${this.escHtml(d.path)}">
           ${cols.map(col => {
             const center = this.isCentered(col.formatter) ? ' style="text-align:center"' : '';
-            return `<td class="dlw-col-${col.formatter}"${center}>${this.renderCellValue(d.values[col.tagPath], col.formatter)}</td>`;
+            return `<td class="dlw-col-${this.escHtml(col.formatter)}"${center}>${this.renderCellValue(d.values[col.tagPath], col.formatter)}</td>`;
           }).join('')}
         </tr>`;
     }).join('');
@@ -1290,7 +1291,7 @@ export class DeviceListWidget extends BaseComponent {
       return val === undefined || val === null ? '' : String(val);
     }));
     const csv = [headers, ...rows]
-      .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .map(row => row.map(csvCell).join(','))
       .join('\r\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);

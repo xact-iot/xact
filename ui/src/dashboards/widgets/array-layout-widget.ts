@@ -628,19 +628,19 @@ export class ArrayLayoutWidget extends BaseComponent {
         <div class="alw-cfg-field">
           <label class="alw-cfg-label">Tile Width (px)</label>
           <input class="alw-cfg-input" id="alw-tile-w" type="number" min="100" max="2000"
-                 value="${this.config.tileWidth || 320}">
+                 value="${this._esc(String(this.config.tileWidth || 320))}">
         </div>
 
         <div class="alw-cfg-field">
           <label class="alw-cfg-label">Tile Height (px)</label>
           <input class="alw-cfg-input" id="alw-tile-h" type="number" min="80" max="2000"
-                 value="${this.config.tileHeight || 240}">
+                 value="${this._esc(String(this.config.tileHeight || 240))}">
         </div>
 
         <div class="alw-cfg-field">
           <label class="alw-cfg-label">Gap (px)</label>
           <input class="alw-cfg-input" id="alw-tile-gap" type="number" min="0" max="48"
-                 value="${this.config.tileGap ?? 8}">
+                 value="${this._esc(String(this.config.tileGap ?? 8))}">
         </div>
 
         <div class="alw-cfg-footer">

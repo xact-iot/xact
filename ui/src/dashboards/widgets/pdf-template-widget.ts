@@ -608,7 +608,7 @@ export class PDFTemplateWidget extends BaseComponent {
             ${([['Left','cfg-ml',m.left],['Right','cfg-mr',m.right],['Top','cfg-mt',m.top],['Bottom','cfg-mb',m.bottom]] as [string,string,number][]).map(([lbl,id,val]) => `
               <div>
                 <div class="opacity-50 mb-0.5">${lbl}</div>
-                <input id="${id}" type="number" value="${val}" min="0" max="200"
+                <input id="${id}" type="number" value="${this.esc(String(val))}" min="0" max="200"
                        class="prop-input">
               </div>
             `).join('')}
@@ -680,7 +680,7 @@ export class PDFTemplateWidget extends BaseComponent {
            style="background:color-mix(in srgb,var(--panel-bg,var(--widget-bg,#0d1117)) 100%,transparent)">
         <div style="width:${pageW}px">
           <div class="flex items-center justify-center gap-2 mb-2">
-            <span class="text-xs opacity-30 font-mono">${cfg.pageSize} - ${cfg.orientation === 'P' ? 'Portrait' : 'Landscape'}</span>
+            <span class="text-xs opacity-30 font-mono">${this.esc(String(cfg.pageSize))} - ${cfg.orientation === 'P' ? 'Portrait' : 'Landscape'}</span>
             <div class="flex items-center gap-1 ml-2">
               <button id="btn-editor-zoom-out" title="Zoom out"
                       class="text-xs px-2 py-0.5 rounded border transition-colors"
@@ -739,7 +739,7 @@ case 'events':
     const rows = el.rows ?? [];
     if (rows.length === 0) {
       return `<div style="padding:8px;font-size:10px;opacity:.3;text-align:center;border:1px dashed #ccc">
-                Empty ${el.type} - add rows in properties
+                Empty ${this.esc(String(el.type))} - add rows in properties
               </div>`;
     }
     const numCols = Math.max(...rows.map(r => r.length), 1);
@@ -795,11 +795,11 @@ case 'events':
                 : this.esc(cell.text);
 
               return `<td class="canvas-cell" data-el="${elIdx}" data-row="${ri}" data-col="${ci}"
-                          style="width:${colPct[ci]}%;height:${rowH}px;background:${cellBg};color:${cellTx};
-                                 font-family:${fam};font-size:${sz}px;font-weight:${fw};
+                          style="width:${colPct[ci]}%;height:${rowH}px;background:${this.esc(String(cellBg))};color:${this.esc(String(cellTx))};
+                                 font-family:${this.esc(String(fam))};font-size:${this.esc(String(sz))}px;font-weight:${fw};
                                  font-style:${fs};text-decoration:${td};text-align:${align};
                                  padding:2px 4px;overflow:hidden;cursor:pointer;
-                                 ${borderStyle}${selStyle}vertical-align:middle">
+                                 ${this.esc(String(borderStyle))}${selStyle}vertical-align:middle">
                         ${cellContent}
                       </td>`;
             }).join('')}
@@ -813,7 +813,7 @@ case 'events':
     return `
       <div style="height:${h}px;display:flex;align-items:center;justify-content:center;
                   border:1px dashed #ccc;border-radius:2px">
-        <span style="font-size:10px;color:#aaa;user-select:none">Spacer (${el.height ?? 36} pt)</span>
+        <span style="font-size:10px;color:#aaa;user-select:none">Spacer (${this.esc(String(el.height ?? 36))} pt)</span>
       </div>`;
   }
 
@@ -834,9 +834,9 @@ case 'events':
     }
 
     return `
-      <div style="width:100%;padding:3px 0;font-family:${fam};font-size:${sz}px;
+      <div style="width:100%;padding:3px 0;font-family:${this.esc(String(fam))};font-size:${this.esc(String(sz))}px;
                   font-weight:${fw};font-style:${fs};text-decoration:${td};
-                  text-align:${align};color:${tx};${borderCss}">
+                  text-align:${align};color:${this.esc(String(tx))};${this.esc(String(borderCss))}">
         ${this.esc(el.text ?? '')}
       </div>`;
   }
@@ -845,12 +845,12 @@ case 'events':
     const h = Math.max(20, Math.round((el.height ?? 72) * scale * 0.352778));
     const w = el.width ? Math.min(contentW, Math.round(el.width * scale * 0.352778)) : contentW;
     if (el.imageData) {
-      return `<img src="${el.imageData}" style="width:${w}px;height:${h}px;object-fit:contain;display:block">`;
+      return `<img src="${this.esc(String(el.imageData))}" style="width:${w}px;height:${h}px;object-fit:contain;display:block">`;
     }
     return `
       <div style="width:${w}px;height:${h}px;display:flex;align-items:center;justify-content:center;
                   background:#f0f0f0;border:1px dashed #ccc;border-radius:2px">
-        <span style="font-size:11px;color:#aaa">🖼 Image (${el.height ?? 72} pt tall)</span>
+        <span style="font-size:11px;color:#aaa">🖼 Image (${this.esc(String(el.height ?? 72))} pt tall)</span>
       </div>`;
   }
 
@@ -872,7 +872,7 @@ case 'events':
           ${metrics.length > 0
             ? metrics.map(m => this.esc(m)).join(' · ')
             : '<span style="color:#f87171">No metrics set</span>'}
-          · ${lookback} · ${el.height ?? 200}pt
+          · ${this.esc(String(lookback))} · ${this.esc(String(el.height ?? 200))}pt
         </div>
       </div>`;
   }
@@ -880,8 +880,8 @@ case 'events':
   private renderCanvasEvents(el: TElement, contentW: number, scale: number): string {
     const cfg = el.eventsConfig;
     const sev = cfg?.severity || 'All';
-    const dev = cfg?.device ? this.esc(cfg.device) : 'All';
-    const search = cfg?.search ? `"${this.esc(cfg.search)}"` : '-';
+    const dev = cfg?.device || 'All';
+    const search = cfg?.search ? `"${cfg.search}"` : '-';
     const lookback = cfg?.lookback || '24h';
     const limit = cfg?.limit ?? 50;
     const cols = cfg?.columns ?? ['timestamp', 'severity', 'device', 'message'];
@@ -914,11 +914,11 @@ case 'events':
         if (c === 'severity') {
           return `<td style="padding:1px 4px;font-size:${Math.round(7 * scale)}px">
             <span style="background:${sevColors[val] ?? '#64748b'}22;color:${sevColors[val] ?? '#64748b'};
-                         padding:0 3px;border-radius:2px;font-weight:600;font-size:${Math.round(6.5 * scale)}px">${val}</span>
+                         padding:0 3px;border-radius:2px;font-weight:600;font-size:${Math.round(6.5 * scale)}px">${this.esc(String(val))}</span>
           </td>`;
         }
         return `<td style="padding:1px 4px;font-size:${Math.round(7 * scale)}px;color:#64748b;
-                           white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:${c === 'message' ? '120px' : '80px'}">${val}</td>`;
+                           white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:${c === 'message' ? '120px' : '80px'}">${this.esc(String(val))}</td>`;
       }).join('');
       return `<tr style="border-bottom:1px solid #e2e8f0">${cells}</tr>`;
     }).join('');
@@ -933,7 +933,7 @@ case 'events':
           <span style="font-size:${Math.round(11 * scale)}px">📋</span>
           <span style="font-size:${Math.round(9 * scale)}px;font-weight:600;color:#334155">Events List</span>
           <span style="font-size:${Math.round(8 * scale)}px;color:#94a3b8;margin-left:auto">
-            ${sev} · ${dev} · ${lookback} · max ${limit}
+            ${this.esc(String(sev))} · ${this.esc(String(dev))} · ${this.esc(String(lookback))} · max ${this.esc(String(limit))}
           </span>
         </div>
         <!-- Mini table -->
@@ -943,7 +943,7 @@ case 'events':
             <tbody>${sampleHtml}</tbody>
           </table>
           <div style="text-align:center;font-size:${Math.round(7 * scale)}px;color:#94a3b8;padding:2px 0">
-            ${search !== '-' ? `search: ${search} · ` : ''}queried at generation time
+            ${search !== '-' ? `search: ${this.esc(String(search))} · ` : ''}queried at generation time
           </div>
         </div>
       </div>`;
@@ -976,7 +976,7 @@ case 'events':
         const color = slice.color || `hsl(${(i * 360 / total)},60%,55%)`;
         const d = `M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${largeArc},1 ${x2},${y2} Z`;
         startAngle = endAngle;
-        return `<path d="${d}" fill="${color}" stroke="#fff" stroke-width="1"/>`;
+        return `<path d="${d}" fill="${this.esc(color)}" stroke="#fff" stroke-width="1"/>`;
       }).join('');
     }
 
@@ -984,7 +984,7 @@ case 'events':
       ? `<div style="display:flex;flex-wrap:wrap;gap:4px 8px;justify-content:center;margin-top:4px">
           ${slices.map(s => `
             <span style="display:flex;align-items:center;gap:3px;font-size:${Math.round(7 * scale)}px;color:#475569">
-              <span style="width:8px;height:8px;border-radius:50%;background:${s.color || '#94a3b8'};flex-shrink:0"></span>
+              <span style="width:8px;height:8px;border-radius:50%;background:${this.esc(String(s.color || '#94a3b8'))};flex-shrink:0"></span>
               ${this.esc(s.label || s.value)}
             </span>`).join('')}
          </div>`
@@ -1027,7 +1027,7 @@ case 'events':
               <span class="text-xs font-medium opacity-40 uppercase tracking-widest">Properties</span>
               ${el ? `<span class="text-xs px-1.5 py-0.5 rounded font-medium"
                            style="background:color-mix(in srgb,var(--accent-color) 15%,transparent);
-                                  color:var(--accent-color)">${el.type}</span>` : ''}
+                                  color:var(--accent-color)">${this.esc(String(el.type))}</span>` : ''}
             </div>
             ${el ? `
               <button class="el-delete" data-el="${s.selectedEl}"
@@ -1222,7 +1222,7 @@ case 'events':
         <div>
           <div class="opacity-50 mb-0.5">Height (pt)</div>
           <input type="number" class="spacer-height prop-input" data-el="${elIdx}"
-                 value="${el.height ?? 36}" min="4" max="500">
+                 value="${this.esc(String(el.height ?? 36))}" min="4" max="500">
         </div>
       </div>`;
   }
@@ -1253,12 +1253,12 @@ case 'events':
         <div>
           <div class="opacity-50 mb-0.5">Height (pt)</div>
           <input type="number" class="image-height prop-input" data-el="${elIdx}"
-                 value="${el.height ?? 144}" min="18">
+                 value="${this.esc(String(el.height ?? 144))}" min="18">
         </div>
         <div>
           <div class="opacity-50 mb-0.5">Width (pt, 0 = full width)</div>
           <input type="number" class="image-width prop-input" data-el="${elIdx}"
-                 value="${el.width ?? 0}" min="0">
+                 value="${this.esc(String(el.width ?? 0))}" min="0">
         </div>
         <div>
           <div class="opacity-50 mb-0.5">Image File</div>
@@ -1267,7 +1267,7 @@ case 'events':
                  style="font-size:11px;width:100%">
         </div>
         ${el.imageData ? `
-          <img src="${el.imageData}" style="width:100%;max-height:80px;object-fit:contain;
+          <img src="${this.esc(String(el.imageData))}" style="width:100%;max-height:80px;object-fit:contain;
                border:1px solid var(--border-color);border-radius:2px">
         ` : ''}
       </div>`;
@@ -1285,7 +1285,7 @@ case 'events':
         <div>
           <div class="opacity-50 mb-0.5">Height (pt)</div>
           <input type="number" class="chart-height prop-input" data-el="${elIdx}"
-                 value="${el.height ?? 200}" min="40">
+                 value="${this.esc(String(el.height ?? 200))}" min="40">
         </div>
 
         <!-- Data source -->
@@ -1475,7 +1475,7 @@ case 'events':
             <div class="opacity-50 mb-0.5">Font Size (pt)</div>
             <select class="evt-font-size prop-select" data-el="${elIdx}">
               ${[7, 8, 9, 10].map(sz =>
-                `<option value="${sz}" ${(el.size ?? 8) === sz ? 'selected' : ''}>${sz}</option>`
+                `<option value="${this.esc(String(sz))}" ${(el.size ?? 8) === sz ? 'selected' : ''}>${this.esc(String(sz))}</option>`
               ).join('')}
             </select>
           </div>
@@ -1511,7 +1511,7 @@ case 'events':
           </select>
           <select class="${prefix}-font-size prop-select prop-w-68" ${dc}>
             ${[6,8,9,10,11,12,14,16,18,20,24,28,32,36,40].map(sz =>
-              `<option value="${sz}" ${(src.size ?? 10) === sz ? 'selected' : ''}>${sz}px</option>`
+              `<option value="${this.esc(String(sz))}" ${(src.size ?? 10) === sz ? 'selected' : ''}>${this.esc(String(sz))}px</option>`
             ).join('')}
           </select>
         </div>
@@ -1565,7 +1565,7 @@ case 'events':
               <div class="opacity-50 mb-0.5">${side.charAt(0).toUpperCase()+side.slice(1)}</div>
               <div class="flex items-center gap-1">
                 <button class="${prefix}-border-dec prop-btn-sm" data-side="${side}" ${dc}>−</button>
-                <span class="text-center font-mono prop-text-11 prop-w-28">${bv[side]}px</span>
+                <span class="text-center font-mono prop-text-11 prop-w-28">${this.esc(String(bv[side]))}px</span>
                 <button class="${prefix}-border-inc prop-btn-sm" data-side="${side}" ${dc}>+</button>
               </div>
             </div>
@@ -1593,8 +1593,8 @@ case 'events':
     return `
       <div class="flex flex-col gap-1.5">
         <div class="flex items-center gap-1.5">
-          <input type="color" class="${cls}-picker prop-color-picker prop-color-picker-lg" ${dc} value="${safeVal}">
-          <input type="text" class="${cls}-hex prop-input prop-flex-1" ${dc} value="${value || ''}"
+          <input type="color" class="${cls}-picker prop-color-picker prop-color-picker-lg" ${dc} value="${this.esc(String(safeVal))}">
+          <input type="text" class="${cls}-hex prop-input prop-flex-1" ${dc} value="${this.esc(String(value || ''))}"
                  placeholder="${value ? '' : 'inherit'}" maxlength="7"
                  >
           ${value ? `<button class="${cls}-clear prop-btn-clear" ${dc}>✕</button>` : ''}
@@ -3442,7 +3442,7 @@ case 'events':
         <div>
           <div class="opacity-50 mb-0.5">Height (pt)</div>
           <input type="number" class="piechart-height prop-input" data-el="${elIdx}"
-                 value="${el.height ?? 200}" min="40"
+                 value="${this.esc(String(el.height ?? 200))}" min="40"
                  >
         </div>
 
@@ -3468,10 +3468,10 @@ case 'events':
                   </div>
                   <div class="flex items-center gap-1.5">
                     <input type="color" class="piechart-slice-color-picker prop-color-picker" data-el="${elIdx}" data-idx="${i}"
-                           value="${slice.color}"
+                           value="${this.esc(String(slice.color))}"
                            >
                     <input type="text" class="piechart-slice-color-hex prop-input prop-flex-1 prop-font-mono" data-el="${elIdx}" data-idx="${i}"
-                           value="${slice.color}" maxlength="7"
+                           value="${this.esc(String(slice.color))}" maxlength="7"
                            >
                   </div>
                    <div>

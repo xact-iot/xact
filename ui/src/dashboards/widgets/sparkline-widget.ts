@@ -305,20 +305,20 @@ export class SparklineWidget extends HTMLElement {
     return `
       <div class="sl-bg" style="
         position:relative; height:38px; border-radius:3px;
-        background:${color}08;
+        background:${esc(color)}08;
       ">
         <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
              style="width:100%;height:38px;display:block;"
              xmlns="http://www.w3.org/2000/svg">
           <defs>
-            <linearGradient id="sl-fill-${uid}" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stop-color="${color}" stop-opacity="0.22"/>
-              <stop offset="100%" stop-color="${color}" stop-opacity="0.01"/>
+            <linearGradient id="sl-fill-${esc(uid)}" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stop-color="${esc(color)}" stop-opacity="0.22"/>
+              <stop offset="100%" stop-color="${esc(color)}" stop-opacity="0.01"/>
             </linearGradient>
           </defs>
-          <path d="${area}" fill="url(#sl-fill-${uid})"/>
+          <path d="${area}" fill="url(#sl-fill-${esc(uid)})"/>
           <polyline points="${pts}"
-            fill="none" stroke="${color}" stroke-width="1.5"
+            fill="none" stroke="${esc(color)}" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round"
             vector-effect="non-scaling-stroke"/>
         </svg>
@@ -362,9 +362,9 @@ export class SparklineWidget extends HTMLElement {
     tip.style.cssText = `
       display:none; position:fixed; pointer-events:none; z-index:9999;
       padding:6px 10px; border-radius:4px;
-      background:var(--panel-bg,#111); border:1px solid ${color};
+      background:var(--panel-bg,#111); border:1px solid ${esc(color)};
       font-family:ui-monospace,'Cascadia Code','SF Mono','Menlo','Consolas',monospace;
-      font-size:0.6rem; font-weight:400; color:${color};
+      font-size:0.6rem; font-weight:400; color:${esc(color)};
       white-space:nowrap; letter-spacing:0.04em; line-height:1.7;
       box-shadow:0 4px 16px rgba(0,0,0,0.55);
     `;

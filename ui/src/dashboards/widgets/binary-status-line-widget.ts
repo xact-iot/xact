@@ -1,3 +1,4 @@
+import { escapeHtml } from '../../utils/html-sanitize';
 import { BaseComponent } from '../../components/base-component';
 import { getMirrorStore } from '../../store/store';
 import { getUiStore } from '../../store/ui-store';
@@ -249,7 +250,7 @@ export class BinaryStatusLineWidget extends BaseComponent {
       const dateStr = d.toLocaleDateString(undefined, { month: '2-digit', day: '2-digit', year: 'numeric' });
       const timeStr = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       const stateHtml = isOn
-        ? `<span style="color:${barColor};font-weight:600;">ON</span>`
+        ? `<span style="color:${escapeHtml(barColor)};font-weight:600;">ON</span>`
         : `<span style="opacity:0.45;">OFF</span>`;
 
       tip.innerHTML = `
