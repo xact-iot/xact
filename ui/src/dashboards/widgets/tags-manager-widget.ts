@@ -1,3 +1,4 @@
+import { escapeSelector } from '../../utils/html-sanitize';
 import { BaseComponent } from '../../components/base-component';
 import { registerWidgetType } from './widget-registry';
 import { getMirrorStore } from '../../store/store';
@@ -429,18 +430,18 @@ export class TagsManagerWidget extends BaseComponent {
       const status = store.getNodeStatus(leafPath);
       this.valueCache.set(leafPath, { value, timestamp: ts, status });
       const eid = this.escapeId(leafPath);
-      const rowEl = this.querySelector(`[data-leaf-path="${leafPath}"]`);
+      const rowEl = this.querySelector(`[data-leaf-path="${escapeSelector(leafPath)}"]`);
       if (this.statusFilter && rowEl && !this.statusMatchesFilter(status, this.statusFilter)) {
         this.rerender();
         return;
       }
-      const valEl  = this.querySelector(`#val-${eid}`);
-      const statEl = this.querySelector(`#stat-${eid}`);
-      const timeEl = this.querySelector(`#time-${eid}`);
+      const valEl  = this.querySelector(`#val-${escapeSelector(eid)}`);
+      const statEl = this.querySelector(`#stat-${escapeSelector(eid)}`);
+      const timeEl = this.querySelector(`#time-${escapeSelector(eid)}`);
       if (valEl) {
         const units = store.getNodeShared(leafPath)?.units ?? '';
         valEl.innerHTML = this.formatValue(value) +
-          (units ? `<span style="font-weight:500;opacity:0.85;font-size:0.8em">${units}</span>` : '');
+          (units ? `<span style="font-weight:500;opacity:0.85;font-size:0.8em">${escapeHtml(units)}</span>` : '');
       }
       if (statEl) statEl.innerHTML = this.statusBadgeHtml(status);
       if (timeEl) timeEl.textContent = this.formatTimestamp(ts);
@@ -451,7 +452,7 @@ export class TagsManagerWidget extends BaseComponent {
     if (val === undefined || val === null) return '-';
     if (typeof val === 'boolean') return val ? 'true' : 'false';
     if (typeof val === 'number' && !Number.isInteger(val)) return val.toFixed(2);
-    return String(val);
+    return escapeHtml(val);
   }
 
   private formatTimestamp(ts: number): string {
@@ -506,7 +507,7 @@ export class TagsManagerWidget extends BaseComponent {
       const nodeTypeKey = nodeConfig?.type || '';
       const typeLabel  = NODE_TYPE_LABELS[nodeTypeKey] ?? '';
       const typeBadge  = typeLabel
-        ? `<span class="px-1 py-0.5 rounded text-xs font-bold mr-1" style="background:color-mix(in srgb,var(--accent-color) 18%,transparent);color:var(--accent-color)">${typeLabel}</span>`
+        ? `<span class="px-1 py-0.5 rounded text-xs font-bold mr-1" style="background:color-mix(in srgb,var(--accent-color) 18%,transparent);color:var(--accent-color)">${escapeHtml(typeLabel)}</span>`
         : '';
 
       // Array node indicator
@@ -528,11 +529,11 @@ export class TagsManagerWidget extends BaseComponent {
       html += `
         <div class="tv-node-row flex items-center py-1 px-2 cursor-pointer hover:opacity-80"
              style="padding-left:${indent + 8}px;border-bottom:1px solid color-mix(in srgb,var(--border-color) 30%,transparent)"
-             data-node-path="${nodePath}">
+             data-node-path="${escapeHtml(nodePath)}">
           <span class="mr-1 text-xs opacity-60 ${isExpanded ? 'rotate-90' : ''} inline-block transition-transform" style="width:16px">▶</span>
           ${typeBadge}${arrayBadge}
-          <span class="font-medium text-sm" style="color:var(--accent-color)">${store.getIsArray(path) && /^\d+$/.test(name) ? `[${name}]` : name}</span>
-          ${desc ? `<span class="ml-2 text-xs opacity-50">${desc}</span>` : ''}
+          <span class="font-medium text-sm" style="color:var(--accent-color)">${store.getIsArray(path) && /^\d+$/.test(name) ? `[${escapeHtml(name)}]` : escapeHtml(name)}</span>
+          ${desc ? `<span class="ml-2 text-xs opacity-50">${escapeHtml(desc)}</span>` : ''}
           <span class="ml-2 px-1.5 py-0.5 rounded text-xs" style="background:color-mix(in srgb,var(--accent-color) 20%,transparent);color:var(--accent-color)">${leafCount} tags</span>
           ${matchBadge}
           <span class="ml-auto text-xs opacity-40">${latestTs ? this.formatTimestamp(latestTs) : ''}</span>
@@ -555,7 +556,7 @@ export class TagsManagerWidget extends BaseComponent {
           ${this.canWrite ? `<div class="flex items-center py-1" style="padding-left:${(depth + 1) * 20 + 8}px;border-bottom:1px solid color-mix(in srgb,var(--border-color) 20%,transparent)">
             <button class="tv-add-tag-btn px-2 py-0.5 text-xs rounded"
                     style="background:color-mix(in srgb,var(--accent-color) 12%,transparent);color:var(--accent-color);border:1px dashed var(--accent-color);opacity:.7"
-                    data-parent-path="${nodePath}">＋ Add Tag</button>
+                    data-parent-path="${escapeHtml(nodePath)}">＋ Add Tag</button>
           </div>` : ''}`;
         html += this.renderSubtree(nodePath, depth + 1);
       }
@@ -584,22 +585,22 @@ export class TagsManagerWidget extends BaseComponent {
       const units  = store.getNodeShared(leafPath)?.units ?? '';
 
       rows += `
-        <tr class="tv-leaf-row" data-leaf-path="${leafPath}" style="border-bottom:1px solid color-mix(in srgb,var(--border-color) 30%,transparent)">
+        <tr class="tv-leaf-row" data-leaf-path="${escapeHtml(leafPath)}" style="border-bottom:1px solid color-mix(in srgb,var(--border-color) 30%,transparent)">
           <td class="px-2 py-1">
-            <div class="text-xs">${name}</div>
-            <div class="text-xs opacity-40">${leafPath.split('.').slice(1).join('.')}</div>
+            <div class="text-xs">${escapeHtml(name)}</div>
+            <div class="text-xs opacity-40">${escapeHtml(leafPath.split('.').slice(1).join('.'))}</div>
           </td>
           <td class="px-2 py-1">
             <span class="tv-value-cell px-2 rounded cursor-pointer hover:opacity-80 text-xs"
-                  id="val-${eid}"
-                  data-leaf-path="${leafPath}"
+                  id="val-${escapeHtml(eid)}"
+                  data-leaf-path="${escapeHtml(leafPath)}"
                   title="Click to edit value"
                   style="min-width:120px;min-height:1.5rem;display:inline-flex;align-items:center;gap:0.25rem;border:1px solid var(--border-color);background:color-mix(in srgb,var(--accent-color) 8%,transparent);color:var(--accent-color);font-weight:600">
-              ${this.formatValue(val)}${units ? `<span style="font-weight:500;opacity:0.85;font-size:0.8em">${units}</span>` : ''}
+              ${this.formatValue(val)}${units ? `<span style="font-weight:500;opacity:0.85;font-size:0.8em">${escapeHtml(units)}</span>` : ''}
             </span>
           </td>
-          <td class="px-2 py-1" id="stat-${eid}">${this.statusBadgeHtml(status)}</td>
-          <td class="px-2 py-1 text-xs opacity-60" id="time-${eid}">${this.formatTimestamp(ts)}</td>
+          <td class="px-2 py-1" id="stat-${escapeHtml(eid)}">${this.statusBadgeHtml(status)}</td>
+          <td class="px-2 py-1 text-xs opacity-60" id="time-${escapeHtml(eid)}">${this.formatTimestamp(ts)}</td>
           <td class="px-2 py-1">
              <div class="flex items-center gap-1">
               <button class="tv-edit-tag px-1.5 py-0.5 text-xs rounded opacity-60 hover:opacity-100" data-action="edit-tag"  title="${this.canWrite ? 'Edit tag' : 'View tag'}">✏️</button>
@@ -645,34 +646,34 @@ export class TagsManagerWidget extends BaseComponent {
       <div id="node-editor-modal" class="fixed inset-0 z-50 flex items-center justify-center" style="z-index:${TAGS_MANAGER_MODAL_Z_INDEX};background:rgba(0,0,0,.55)">
         <div class="rounded-lg shadow-2xl p-6 w-full max-w-md" style="background:var(--content-bg);border:1px solid var(--border-color)">
           <div class="flex items-center justify-between mb-5">
-            <h3 class="text-base font-semibold" style="color:var(--accent-color)">${title}</h3>
+            <h3 class="text-base font-semibold" style="color:var(--accent-color)">${escapeHtml(title)}</h3>
             <button id="modal-close" class="text-2xl leading-none opacity-50 hover:opacity-100" style="color:var(--content-text)">&times;</button>
           </div>
           <form id="node-edit-form" class="space-y-4">
             <div>
               <label class="block text-xs font-medium mb-1 opacity-70">${isAdd ? 'Parent Path' : 'Path'}</label>
-              <input type="text" value="${data.path}" disabled
+              <input type="text" value="${escapeHtml(data.path)}" disabled
                      class="w-full px-3 py-2 text-xs rounded border opacity-50"
                      style="border-color:var(--border-color);background:color-mix(in srgb,var(--content-bg) 90%,black);color:var(--content-text)">
             </div>
             <div>
               <label class="block text-xs font-medium mb-1 opacity-70">Name</label>
-              <input type="text" id="node-name" value="${data.name}"
+              <input type="text" id="node-name" value="${escapeHtml(data.name)}"
                      class="w-full px-3 py-2 text-xs rounded border"
                      style="border-color:${nameError ? '#f87171' : 'var(--border-color)'};background:var(--content-bg);color:var(--content-text)"
                      placeholder="Node name (letters, numbers, _ -)" ${disabled}>
-              ${nameError ? `<p class="mt-1 text-xs" style="color:#f87171">${nameError}</p>` : ''}
+              ${nameError ? `<p class="mt-1 text-xs" style="color:#f87171">${escapeHtml(nameError)}</p>` : ''}
             </div>
             <div>
               <label class="block text-xs font-medium mb-1 opacity-70">Description</label>
               <textarea id="node-description" rows="2"
                         class="w-full px-3 py-2 text-xs rounded border resize-none"
-                        style="border-color:var(--border-color);background:var(--content-bg);color:var(--content-text)" ${disabled}>${data.description}</textarea>
+                        style="border-color:var(--border-color);background:var(--content-bg);color:var(--content-text)" ${disabled}>${escapeHtml(data.description)}</textarea>
             </div>
             <div>
               <label class="block text-xs font-medium mb-1 opacity-70">Template</label>
               <div class="flex gap-1">
-                <input type="text" id="node-template" value="${data.templateName}"
+                <input type="text" id="node-template" value="${escapeHtml(data.templateName)}"
                        class="flex-1 px-3 py-2 text-xs rounded border"
                        style="border-color:var(--border-color);background:var(--content-bg);color:var(--content-text)"
                        placeholder="Optional - click ⋯ to browse" ${disabled}>
@@ -705,7 +706,7 @@ export class TagsManagerWidget extends BaseComponent {
   private renderPipelineEditor(): string {
     const blocks   = this.tagPipeline;
     const readOnly = this.pipelineMode === 'inherited' || !this.canWrite;
-    const selectorOptions = this.blockSchemas.map(s => `<option value="${s.type}">${s.label}</option>`).join('');
+    const selectorOptions = this.blockSchemas.map(s => `<option value="${escapeHtml(s.type)}">${escapeHtml(s.label)}</option>`).join('');
 
     let blockRows = '';
     for (let i = 0; i < blocks.length; i++) {
@@ -721,67 +722,61 @@ export class TagsManagerWidget extends BaseComponent {
           const val = this.getNestedParam(block.params, k) ?? def.default ?? '';
           if (def.type === 'boolean') {
             fields += `<label class="flex items-center gap-1.5 text-xs opacity-80">
-              <input type="checkbox" class="pipeline-param" data-block-idx="${i}" data-param="${k}" ${val ? 'checked' : ''} ${readOnly ? 'disabled' : ''} style="accent-color:var(--accent-color)">
-              ${def.label}</label>`;
+              <input type="checkbox" class="pipeline-param" data-block-idx="${i}" data-param="${escapeHtml(k)}" ${val ? 'checked' : ''} ${readOnly ? 'disabled' : ''} style="accent-color:var(--accent-color)">
+              ${escapeHtml(def.label)}</label>`;
           } else if (def.type === 'select') {
             const opts = (def.options ?? []).map(o =>
-              `<option value="${o}" ${o === val ? 'selected' : ''}>${o}</option>`
+              `<option value="${escapeHtml(o)}" ${o === val ? 'selected' : ''}>${escapeHtml(o)}</option>`
             ).join('');
             fields += `<div class="flex items-center gap-1">
-              <label class="text-xs opacity-50 w-20 flex-shrink-0">${def.label}</label>
+              <label class="text-xs opacity-50 w-20 flex-shrink-0">${escapeHtml(def.label)}</label>
               <select class="pipeline-param flex-1 px-2 py-0.5 text-xs rounded border"
-                      style="${inputStyle}" data-block-idx="${i}" data-param="${k}" ${readOnly ? 'disabled' : ''}>
+                      style="${inputStyle}" data-block-idx="${i}" data-param="${escapeHtml(k)}" ${readOnly ? 'disabled' : ''}>
                 ${opts}
               </select>
             </div>`;
           } else if (def.type === 'notification-profile') {
             const noneOpt = `<option value="0" ${!val || val === 0 ? 'selected' : ''}>(none)</option>`;
             const profileOpts = this.notificationProfiles.map(p =>
-              `<option value="${p.id}" ${String(p.id) === String(val) ? 'selected' : ''}>${p.name}</option>`
+              `<option value="${p.id}" ${String(p.id) === String(val) ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
             ).join('');
             fields += `<div class="flex items-center gap-1">
-              <label class="text-xs opacity-50 w-20 flex-shrink-0">${def.label}</label>
+              <label class="text-xs opacity-50 w-20 flex-shrink-0">${escapeHtml(def.label)}</label>
               <select class="pipeline-param flex-1 px-2 py-0.5 text-xs rounded border"
-                      style="${inputStyle}" data-block-idx="${i}" data-param="${k}" ${readOnly ? 'disabled' : ''}>
+                      style="${inputStyle}" data-block-idx="${i}" data-param="${escapeHtml(k)}" ${readOnly ? 'disabled' : ''}>
                 ${noneOpt}${profileOpts}
               </select>
             </div>`;
           } else if (def.type === 'string') {
             fields += `<div class="flex items-center gap-1">
-              <label class="text-xs opacity-50 w-20 flex-shrink-0">${def.label}</label>
+              <label class="text-xs opacity-50 w-20 flex-shrink-0">${escapeHtml(def.label)}</label>
               <input type="text" class="pipeline-param flex-1 px-2 py-0.5 text-xs rounded border"
-                     style="${inputStyle}" data-block-idx="${i}" data-param="${k}"
-                     value="${val}" placeholder="${def.required ? 'required' : 'optional'}" ${readOnly ? 'disabled' : ''}>
+                     style="${inputStyle}" data-block-idx="${i}" data-param="${escapeHtml(k)}"
+                     value="${escapeHtml(val)}" placeholder="${def.required ? 'required' : 'optional'}" ${readOnly ? 'disabled' : ''}>
             </div>`;
           } else {
             fields += `<div class="flex items-center gap-1">
-              <label class="text-xs opacity-50 w-20 flex-shrink-0">${def.label}</label>
+              <label class="text-xs opacity-50 w-20 flex-shrink-0">${escapeHtml(def.label)}</label>
               <input type="number" step="any" class="pipeline-param flex-1 px-2 py-0.5 text-xs rounded border"
-                     style="${inputStyle}" data-block-idx="${i}" data-param="${k}"
-                     value="${val}" placeholder="${def.required ? 'required' : 'optional'}" ${readOnly ? 'disabled' : ''}>
+                     style="${inputStyle}" data-block-idx="${i}" data-param="${escapeHtml(k)}"
+                     value="${escapeHtml(val)}" placeholder="${def.required ? 'required' : 'optional'}" ${readOnly ? 'disabled' : ''}>
             </div>`;
           }
         }
       }
 
       const actionButtons = readOnly ? '' : `
-        <div class="flex gap-1 ml-2" onclick="event.stopPropagation()">
+        <div class="flex gap-1 ml-2">
           ${i > 0 ? `<button class="pipeline-move-up" data-idx="${i}" title="Move up"
-            style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:4px;border:1px solid color-mix(in srgb,var(--accent-color) 40%,transparent);background:color-mix(in srgb,var(--accent-color) 12%,transparent);color:var(--accent-color);cursor:pointer;flex-shrink:0"
-            onmouseover="this.style.background='color-mix(in srgb,var(--accent-color) 28%,transparent)'"
-            onmouseout="this.style.background='color-mix(in srgb,var(--accent-color) 12%,transparent)'">
+            style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:4px;border:1px solid color-mix(in srgb,var(--accent-color) 40%,transparent);background:color-mix(in srgb,var(--accent-color) 12%,transparent);color:var(--accent-color);cursor:pointer;flex-shrink:0">
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,8 6,4 10,8"/></svg>
           </button>` : '<span style="display:inline-block;width:22px"></span>'}
           ${i < blocks.length - 1 ? `<button class="pipeline-move-down" data-idx="${i}" title="Move down"
-            style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:4px;border:1px solid color-mix(in srgb,var(--accent-color) 40%,transparent);background:color-mix(in srgb,var(--accent-color) 12%,transparent);color:var(--accent-color);cursor:pointer;flex-shrink:0"
-            onmouseover="this.style.background='color-mix(in srgb,var(--accent-color) 28%,transparent)'"
-            onmouseout="this.style.background='color-mix(in srgb,var(--accent-color) 12%,transparent)'">
+            style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:4px;border:1px solid color-mix(in srgb,var(--accent-color) 40%,transparent);background:color-mix(in srgb,var(--accent-color) 12%,transparent);color:var(--accent-color);cursor:pointer;flex-shrink:0">
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,4 6,8 10,4"/></svg>
           </button>` : '<span style="display:inline-block;width:22px"></span>'}
           <button class="pipeline-remove" data-idx="${i}" title="Remove block"
-            style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:4px;border:1px solid rgba(248,113,113,0.35);background:rgba(248,113,113,0.1);color:#f87171;cursor:pointer;flex-shrink:0"
-            onmouseover="this.style.background='rgba(248,113,113,0.25)'"
-            onmouseout="this.style.background='rgba(248,113,113,0.1)'">
+            style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:4px;border:1px solid rgba(248,113,113,0.35);background:rgba(248,113,113,0.1);color:#f87171;cursor:pointer;flex-shrink:0">
             <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/></svg>
           </button>
         </div>`;
@@ -792,8 +787,8 @@ export class TagsManagerWidget extends BaseComponent {
         <div class="pipeline-block rounded mb-1" style="background:color-mix(in srgb,var(--accent-color) 8%,transparent);border:1px solid color-mix(in srgb,var(--accent-color) 18%,transparent)${readOnly ? ';opacity:0.75' : ''}">
           <div class="pipeline-block-toggle flex items-center gap-1.5 px-2 py-1.5 cursor-pointer select-none" data-block-idx="${i}" style="min-height:28px">
             ${chevron}
-            <span class="text-xs font-semibold" style="color:var(--accent-color)">${i + 1}. ${label}</span>
-            ${!isExpanded ? `<span class="text-xs opacity-40 ml-1 truncate flex-1">${desc}</span>` : '<span class="flex-1"></span>'}
+            <span class="text-xs font-semibold" style="color:var(--accent-color)">${i + 1}. ${escapeHtml(label)}</span>
+            ${!isExpanded ? `<span class="text-xs opacity-40 ml-1 truncate flex-1">${escapeHtml(desc)}</span>` : '<span class="flex-1"></span>'}
             ${actionButtons}
           </div>
           ${isExpanded ? `<div class="px-2 pb-2 space-y-1 border-t" style="border-color:color-mix(in srgb,var(--accent-color) 18%,transparent)">${fields}</div>` : ''}
@@ -866,7 +861,7 @@ export class TagsManagerWidget extends BaseComponent {
               <input type="text" id="tag-name" value="${escapeHtml(data.name)}"
                      class="w-full px-3 py-2 text-xs rounded border"
                      style="border-color:${nameErr ? '#f87171' : 'var(--border-color)'};background:var(--content-bg);color:var(--content-text)" ${disabled}>
-              ${nameErr ? `<p class="mt-1 text-xs" style="color:#f87171">${nameErr}</p>` : ''}
+              ${nameErr ? `<p class="mt-1 text-xs" style="color:#f87171">${escapeHtml(nameErr)}</p>` : ''}
             </div>
             ${isAdd ? `
             <div class="flex items-center gap-3">
@@ -995,7 +990,7 @@ export class TagsManagerWidget extends BaseComponent {
           return `
             <div class="rounded p-2 mb-1" style="background:color-mix(in srgb,var(--accent-color) 6%,transparent);border:1px solid color-mix(in srgb,var(--accent-color) 15%,transparent)">
               <div class="flex items-center gap-1 mb-1">
-                <span class="text-xs font-semibold" style="color:var(--accent-color)">${i + 1}. ${label}</span>${state}
+                <span class="text-xs font-semibold" style="color:var(--accent-color)">${i + 1}. ${escapeHtml(label)}</span>${state}
               </div>
               <div class="flex items-center gap-2 text-xs flex-wrap">
                 <span class="opacity-40">In:</span>
@@ -1703,6 +1698,7 @@ export class TagsManagerWidget extends BaseComponent {
   };
 
   private handleRemovePipelineBlock = (e: Event): void => {
+    e.stopPropagation();
     if (!this.canWrite) return;
     e.preventDefault();
     this.syncPipelineFromDOM();
@@ -1715,6 +1711,7 @@ export class TagsManagerWidget extends BaseComponent {
   };
 
   private handleMovePipelineBlock = (e: Event): void => {
+    e.stopPropagation();
     if (!this.canWrite) return;
     e.preventDefault();
     this.syncPipelineFromDOM();

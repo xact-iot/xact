@@ -1,3 +1,4 @@
+import { escapeHtml } from '../utils/html-sanitize';
 import { BaseComponent } from '../components/base-component';
 import { registerPermissions } from '../permissions/registry';
 import { can } from '../permissions/permissions';
@@ -193,12 +194,12 @@ export class DashboardConfigEditor extends BaseComponent {
 
     return `
       <tr class="border-t transition-colors hover:opacity-90 ${isCategory ? '' : 'cursor-pointer'}" style="border-color: var(--border-color);"
-          ${isCategory ? '' : `data-dashboard-name="${c.name}" data-dashboard-id="${c.serverId ?? ''}"`}>
+          ${isCategory ? '' : `data-dashboard-name="${escapeHtml(c.name)}" data-dashboard-id="${escapeHtml(c.serverId ?? '')}"`}>
         <td class="px-4 py-2.5">
           ${this.canEdit ? `
           <div class="flex flex-col gap-0.5">
-            <button class="move-btn text-xs opacity-40 hover:opacity-100 ${index === 0 ? 'invisible' : ''}" data-id="${c.id}" data-dir="up" title="Move up">&#9650;</button>
-            <button class="move-btn text-xs opacity-40 hover:opacity-100 ${index === total - 1 ? 'invisible' : ''}" data-id="${c.id}" data-dir="down" title="Move down">&#9660;</button>
+            <button class="move-btn text-xs opacity-40 hover:opacity-100 ${index === 0 ? 'invisible' : ''}" data-id="${escapeHtml(c.id)}" data-dir="up" title="Move up">&#9650;</button>
+            <button class="move-btn text-xs opacity-40 hover:opacity-100 ${index === total - 1 ? 'invisible' : ''}" data-id="${escapeHtml(c.id)}" data-dir="down" title="Move down">&#9660;</button>
           </div>
           ` : ''}
         </td>
@@ -209,12 +210,12 @@ export class DashboardConfigEditor extends BaseComponent {
               const svg = getIconSVG(ico, 'var(--accent-color)', 18);
               return svg ? `<span style="display:inline-flex;align-items:center;">${svg}</span>` : '';
             })()}
-            <span class="${isCategory ? 'font-semibold uppercase text-xs tracking-wider' : 'font-medium'}">${c.name}</span>
-            ${c.permission ? `<span class="text-xs px-1.5 py-0.5 rounded opacity-60" style="background-color: color-mix(in srgb, var(--border-color) 60%, transparent);">🔒 ${c.permission}</span>` : ''}
+            <span class="${isCategory ? 'font-semibold uppercase text-xs tracking-wider' : 'font-medium'}">${escapeHtml(c.name)}</span>
+            ${c.permission ? `<span class="text-xs px-1.5 py-0.5 rounded opacity-60" style="background-color: color-mix(in srgb, var(--border-color) 60%, transparent);">🔒 ${escapeHtml(c.permission)}</span>` : ''}
           </div>
         </td>
         <td class="px-4 py-2.5 hidden md:table-cell">
-          <span class="opacity-60 text-xs">${c.description || '-'}</span>
+          <span class="opacity-60 text-xs">${escapeHtml(c.description || '-')}</span>
         </td>
         <td class="px-4 py-2.5 hidden sm:table-cell">
           <span class="px-2 py-0.5 text-xs rounded-full" style="background-color: color-mix(in srgb, var(--accent-color) 15%, transparent); color: var(--accent-color);">
@@ -224,10 +225,10 @@ export class DashboardConfigEditor extends BaseComponent {
         <td class="px-4 py-2.5 text-right">
           ${this.canEdit ? `
           <div class="flex items-center justify-end gap-1">
-            <button class="edit-btn p-1.5 rounded hover:opacity-70 transition-opacity" data-id="${c.id}" title="Edit">
+            <button class="edit-btn p-1.5 rounded hover:opacity-70 transition-opacity" data-id="${escapeHtml(c.id)}" title="Edit">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
             </button>
-            <button class="delete-btn p-1.5 rounded hover:opacity-70 transition-opacity" style="color: #ef4444;" data-id="${c.id}" title="Delete">
+            <button class="delete-btn p-1.5 rounded hover:opacity-70 transition-opacity" style="color: #ef4444;" data-id="${escapeHtml(c.id)}" title="Delete">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
             </button>
           </div>
@@ -245,26 +246,26 @@ export class DashboardConfigEditor extends BaseComponent {
       <div id="modal-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem;">
         <div class="border rounded-lg p-5 w-full max-w-xl overflow-y-auto" style="max-height:90vh;border-color:var(--accent-color);background-color:var(--content-bg);color:var(--content-text);box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);">
           <div class="flex items-center justify-between mb-4">
-            <h3 class="text-sm font-semibold">${this.editingId ? 'Edit' : 'New'} ${isCategory ? 'Category' : 'Dashboard'}: ${f.name || 'New'}</h3>
+            <h3 class="text-sm font-semibold">${this.editingId ? 'Edit' : 'New'} ${isCategory ? 'Category' : 'Dashboard'}: ${escapeHtml(f.name || 'New')}</h3>
             <button id="modal-close" class="w-7 h-7 flex items-center justify-center rounded opacity-60 hover:opacity-100 text-xl leading-none" title="Close">&times;</button>
           </div>
 
           <div class="space-y-4">
             <div>
               <label class="block text-xs font-medium mb-1 opacity-60">Name</label>
-              <input type="text" id="edit-name" value="${f.name || ''}"
+              <input type="text" id="edit-name" value="${escapeHtml(f.name || '')}"
                 class="w-full px-3 py-2 text-sm border rounded-lg"
                 style="background-color: var(--content-bg); border-color: var(--border-color); color: var(--content-text);">
             </div>
 
             <div>
               <label class="block text-xs font-medium mb-1 opacity-60">Icon</label>
-              <icon-picker id="edit-icon-picker" value="${f.icon || 'mdi:file-document'}"></icon-picker>
+              <icon-picker id="edit-icon-picker" value="${escapeHtml(f.icon || 'mdi:file-document')}"></icon-picker>
             </div>
 
             <div>
               <label class="block text-xs font-medium mb-1 opacity-60">Description</label>
-              <input type="text" id="edit-description" value="${f.description || ''}"
+              <input type="text" id="edit-description" value="${escapeHtml(f.description || '')}"
                 class="w-full px-3 py-2 text-sm border rounded-lg"
                 style="background-color: var(--content-bg); border-color: var(--border-color); color: var(--content-text);">
             </div>
@@ -282,20 +283,20 @@ export class DashboardConfigEditor extends BaseComponent {
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label class="block text-xs font-medium mb-1 opacity-60">Device Type</label>
-                  <input type="text" id="edit-deviceType" value="${f.deviceType || ''}"
+                  <input type="text" id="edit-deviceType" value="${escapeHtml(f.deviceType || '')}"
                     class="w-full px-3 py-2 text-sm border rounded-lg"
                     style="background-color: var(--content-bg); border-color: var(--border-color); color: var(--content-text);">
                 </div>
                 <div>
                   <label class="block text-xs font-medium mb-1 opacity-60">Device Subtype</label>
-                  <input type="text" id="edit-variation" value="${f.variation || ''}"
+                  <input type="text" id="edit-variation" value="${escapeHtml(f.variation || '')}"
                     class="w-full px-3 py-2 text-sm border rounded-lg"
                     style="background-color: var(--content-bg); border-color: var(--border-color); color: var(--content-text);">
                 </div>
               </div>
               <div>
                 <label class="block text-xs font-medium mb-1 opacity-60">Permission</label>
-                <input type="text" id="edit-permission" value="${f.permission || ''}"
+                <input type="text" id="edit-permission" value="${escapeHtml(f.permission || '')}"
                   placeholder="e.g. site-a-data (leave blank for all users)"
                   class="w-full px-3 py-2 text-sm border rounded-lg"
                   style="background-color: var(--content-bg); border-color: var(--border-color); color: var(--content-text);">
@@ -362,7 +363,7 @@ export class DashboardConfigEditor extends BaseComponent {
     const currentParentId = found?.parent?.id || '';
     return this.configs
       .filter(c => c.children !== undefined)
-      .map(c => `<option value="${c.id}" ${c.id === currentParentId ? 'selected' : ''}>${c.name}</option>`)
+      .map(c => `<option value="${escapeHtml(c.id)}" ${c.id === currentParentId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`)
       .join('');
   }
 

@@ -6,18 +6,7 @@
   <title>XACT</title>
   <link rel="icon" type="image/svg+xml" href="/xact/favicon.svg">
 
-  <script>
-    // Apply theme before app loads to prevent flash
-    (function() {
-      const savedTheme = localStorage.getItem('xact-theme') || 'dark-navy';
-      const savedWidgetDecoration = localStorage.getItem('xact-widget-decoration') || 'shadowed';
-      document.documentElement.setAttribute('data-theme', savedTheme);
-      document.documentElement.setAttribute('data-widget-decoration', savedWidgetDecoration);
-      if (new URLSearchParams(window.location.search).get('embedded') === 'dashboard') {
-        document.documentElement.classList.add('xact-embedded-dashboard');
-      }
-    })();
-  </script>
+  <script src="/xact/theme-init.js"></script>
   <style>
     /* Fallback styles while app loads */
     html, body { margin: 0; padding: 0; height: 100%; font-family: system-ui, sans-serif; }

@@ -1,3 +1,4 @@
+import { escapeHtml } from '../utils/html-sanitize';
 import { BaseComponent } from './base-component';
 import { can, getPermissions } from '../permissions/permissions';
 import { getCurrentUser, getAuthHeaders, isAuthenticated, switchOrg } from '../auth';
@@ -337,9 +338,7 @@ export class AppSidebar extends BaseComponent {
   }
 
   private escapeHTML(str: string): string {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    return escapeHtml(str);
   }
 
   setMenuItems(items: MenuItem[]): void {

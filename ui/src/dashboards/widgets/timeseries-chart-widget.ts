@@ -1,3 +1,4 @@
+import { escapeHtml } from '../../utils/html-sanitize';
 import { BaseComponent } from '../../components/base-component';
 import { getMirrorStore } from '../../store/store';
 import { getUiStore } from '../../store/ui-store';
@@ -729,8 +730,8 @@ export class TimeseriesChartWidget extends BaseComponent {
               const v = p.value[1];
               const vStr = Number.isInteger(v) ? String(v) : v.toFixed(2);
               return `<div style="display:flex;gap:8px;align-items:center;margin-top:3px;">
-                <span style="display:inline-block;width:10px;height:3px;background:${p.color};border-radius:2px;flex-shrink:0;"></span>
-                <span style="opacity:0.7;flex:1;">${p.seriesName}</span>
+                <span style="display:inline-block;width:10px;height:3px;background:${escapeHtml(p.color)};border-radius:2px;flex-shrink:0;"></span>
+                <span style="opacity:0.7;flex:1;">${escapeHtml(p.seriesName)}</span>
                 <span style="font-weight:500;">${vStr}</span>
               </div>`;
             }).join('');

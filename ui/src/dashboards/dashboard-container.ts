@@ -131,7 +131,7 @@ export class DashboardContainer extends BaseComponent {
       } else {
         if (loadGeneration === this.loadGeneration && this.isConnected) {
           console.error('Failed to load dashboard:', err);
-          this.innerHTML = `<div class="p-4 text-sm opacity-60">Failed to load dashboard "${dashboardRef}".</div>`;
+          this.innerHTML = `<div class="p-4 text-sm opacity-60">Failed to load dashboard "${escapeHtml(dashboardRef)}".</div>`;
         }
         return;
       }

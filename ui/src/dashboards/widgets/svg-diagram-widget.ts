@@ -1,4 +1,5 @@
 import { BaseComponent } from '../../components/base-component';
+import DOMPurify from 'dompurify';
 import { getTreeBrowserDialog } from '../../components/tree-browser-dialog';
 import { getMirrorStore } from '../../store/store';
 import { ensureWidgetTypeLoaded, getAvailableWidgets, getWidgetMeta, registerWidgetType } from './widget-registry';
@@ -210,10 +211,17 @@ export function applyDiagramStyleTarget(node: SVGElement, target: DiagramBindTar
 
 export function parseSvgTemplate(text: string): { template: DiagramTemplateSvg; width: number; height: number } {
   const parser = new DOMParser();
-  const doc = parser.parseFromString(text, 'image/svg+xml');
+  let doc = parser.parseFromString(text, 'image/svg+xml');
   if (doc.querySelector('parsererror')) throw new Error('The selected file is not valid SVG.');
-  const svg = doc.documentElement;
+  let svg = doc.documentElement;
   if (!svg || svg.localName.toLowerCase() !== 'svg') throw new Error('The selected file does not contain an SVG root.');
+  if (!svg.namespaceURI) {
+    svg.removeAttribute('xmlns');
+    const xml = new XMLSerializer().serializeToString(svg).replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+    doc = parser.parseFromString(xml, 'image/svg+xml');
+    svg = doc.documentElement;
+  }
+  if (svg.namespaceURI !== 'http://www.w3.org/2000/svg') throw new Error('Invalid SVG namespace.');
 
   sanitizeSvgTree(svg);
 
@@ -1961,7 +1969,12 @@ function normalizeTemplateSvg(input: any): DiagramTemplateSvg | undefined {
   const viewBox = String(input.viewBox || '').trim();
   const content = String(input.content || '').trim();
   if (!viewBox || !content) return undefined;
-  return { viewBox, content };
+  // Saved/imported dashboard JSON is just as untrusted as an SVG upload.
+  try {
+    return parseSvgTemplate(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${escAttr(viewBox)}">${content}</svg>`).template;
+  } catch {
+    return undefined;
+  }
 }
 
 function getEmbeddableWidgetTypes(): string[] {
@@ -2174,7 +2187,14 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 function sanitizeSvgTree(root: Element): void {
-  const blockedTags = new Set(['script', 'foreignobject', 'iframe', 'object', 'embed', 'audio', 'video']);
+  DOMPurify.sanitize(root, {
+    IN_PLACE: true,
+    USE_PROFILES: { svg: true, svgFilters: true },
+    FORBID_TAGS: ['a', 'style', 'animate', 'animateMotion', 'animateTransform', 'set', 'discard', 'foreignObject'],
+    FORBID_ATTR: ['is', 'config'],
+    ALLOW_DATA_ATTR: false,
+  });
+  const blockedTags = new Set(['script', 'foreignobject', 'iframe', 'object', 'embed', 'audio', 'video', 'a', 'style', 'animate', 'animatemotion', 'animatetransform', 'set', 'discard']);
   const nodes = [root, ...Array.from(root.querySelectorAll('*'))];
   for (const node of nodes) {
     if (blockedTags.has(node.localName.toLowerCase())) {
@@ -2206,9 +2226,7 @@ function sanitizeSvgTree(root: Element): void {
 function isSafeSvgHref(value: string): boolean {
   if (!value) return true;
   if (value.startsWith('#')) return true;
-  if (/^data:image\/svg\+xml/i.test(value)) return false;
-  if (/^data:image\//i.test(value)) return true;
-  return !/^[a-z][a-z0-9+.-]*:/i.test(value);
+  return /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(value);
 }
 
 function svgDimensions(svg: Element): { width: number; height: number } {

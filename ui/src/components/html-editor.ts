@@ -12,49 +12,7 @@
  *   change - dispatched when content changes
  */
 
-// Singleton promise so CodeMirror resources load only once
-let cmReady: Promise<void> | null = null;
-
-function loadCodeMirror(): Promise<void> {
-  if (cmReady) return cmReady;
-  cmReady = new Promise<void>((resolve, reject) => {
-    if ((window as any).CodeMirror) { resolve(); return; }
-
-    // Load CSS files
-    const cssFiles = [
-      'https://unpkg.com/codemirror@5.65.16/lib/codemirror.css',
-      'https://unpkg.com/codemirror@5.65.16/theme/dracula.css',
-    ];
-    for (const href of cssFiles) {
-      const link = document.createElement('link');
-      link.rel = 'stylesheet';
-      link.href = href;
-      document.head.appendChild(link);
-    }
-
-    // Load scripts sequentially
-    const scripts = [
-      'https://unpkg.com/codemirror@5.65.16/lib/codemirror.js',
-      'https://unpkg.com/codemirror@5.65.16/mode/xml/xml.js',
-      'https://unpkg.com/codemirror@5.65.16/mode/javascript/javascript.js',
-      'https://unpkg.com/codemirror@5.65.16/mode/css/css.js',
-      'https://unpkg.com/codemirror@5.65.16/mode/htmlmixed/htmlmixed.js',
-    ];
-
-    let idx = 0;
-    function loadNext(): void {
-      if (idx >= scripts.length) { resolve(); return; }
-      const src = scripts[idx++];
-      const script = document.createElement('script');
-      script.src = src;
-      script.onload = loadNext;
-      script.onerror = () => { cmReady = null; reject(new Error(`Failed to load: ${src}`)); };
-      document.head.appendChild(script);
-    }
-    loadNext();
-  });
-  return cmReady;
-}
+import { loadCodeMirror } from '../utils/vendor-loaders';
 
 export class HtmlEditor extends HTMLElement {
   private editor: any = null;

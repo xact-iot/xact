@@ -18,25 +18,32 @@
   "devDependencies": {
     "@iconify/json": "^2.2.0",
     "@playwright/test": "^1.60.0",
+    "@types/codemirror": "^5.60.18",
+    "@types/leaflet": "^1.9.22",
     "@types/node": "^20.11.0",
-    "@vitest/ui": "^4.0.18",
+    "@vitest/ui": "^4.1.11",
     "autoprefixer": "^10.4.17",
     "happy-dom": "^20.5.0",
     "jsdom": "^28.0.0",
     "postcss": "^8.4.33",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.3.3",
-    "vite": "^5.0.11",
-    "vitest": "^4.0.18"
+    "vite": "^7.3.6",
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "@nats-io/jetstream": "npm:@jsr/nats-io__jetstream@^3.0.0",
     "@nats-io/kv": "npm:@jsr/nats-io__kv@^3.3.0",
     "@nats-io/transport-node": "^3.3.0",
-    "echarts": "^6.0.0",
+    "codemirror": "^5.65.21",
+    "dompurify": "^3.4.15",
+    "echarts": "^6.1.0",
     "gridstack": "^12.4.2",
+    "jsep": "^1.4.0",
+    "leaflet": "^1.9.4",
     "marked": "^17.0.5",
     "nanostores": "^0.10.3",
-    "nats.ws": "^1.30.3"
+    "nats.ws": "^1.30.3",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   }
 }

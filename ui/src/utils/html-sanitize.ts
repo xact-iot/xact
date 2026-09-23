@@ -1,70 +1,46 @@
-const DEFAULT_FORBIDDEN_TAGS = new Set([
-  'script', 'object', 'embed', 'link', 'meta', 'base', 'form',
-  'input', 'button', 'select', 'textarea', 'option', 'svg', 'math',
-  'header', 'footer', 'nav', 'main', 'section', 'article', 'aside',
-  'details', 'dialog', 'summary', 'template', 'slot', 'canvas',
-]);
-
-const URL_ATTRS = new Set(['href', 'src', 'xlink:href', 'formaction', 'poster']);
-const SAFE_URL_RE = /^(https?:|mailto:|tel:|\/|#|\.\/|\.\.\/)/i;
+import DOMPurify from 'dompurify';
 
 export interface SanitizeHtmlOptions {
   allowedTags?: Set<string>;
   forbiddenTags?: Set<string>;
 }
 
-function sanitizeStyle(value: string): string {
-  const lower = value.toLowerCase();
-  if (lower.includes('expression(') || lower.includes('javascript:') || lower.includes('vbscript:')) return '';
-  if (lower.includes('url(')) return '';
-  return value;
+export function escapeHtml(value: unknown): string {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]!));
 }
 
+export function escapeSelector(value: string): string {
+  // Hex escapes work for both identifiers and quoted attribute selectors.
+  return Array.from(value, char => `\\${char.codePointAt(0)!.toString(16)} `).join('');
+}
+
+// Rich content is presentation only. Custom elements must never be upgraded
+// with attacker-supplied config after sanitization.
+const forbiddenTags = [
+  'style', 'script', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'form',
+  'input', 'button', 'select', 'textarea', 'option', 'svg', 'math', 'template',
+];
+
 export function sanitizeHtml(html: string, options: SanitizeHtmlOptions = {}): string {
-  const template = document.createElement('template');
-  template.innerHTML = html;
-  const forbiddenTags = options.forbiddenTags ?? DEFAULT_FORBIDDEN_TAGS;
-
-  const walk = (node: Node): void => {
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      const el = node as HTMLElement;
-      const tag = el.tagName.toLowerCase();
-      if (forbiddenTags.has(tag)) {
-        el.remove();
-        return;
-      }
-      if (options.allowedTags && !options.allowedTags.has(tag)) {
-        for (const child of Array.from(node.childNodes)) walk(child);
-        el.replaceWith(...Array.from(el.childNodes));
-        return;
-      }
-
-      for (const attr of Array.from(el.attributes)) {
-        const name = attr.name.toLowerCase();
-        const value = attr.value.trim();
-        if (name.startsWith('on')) {
-          el.removeAttribute(attr.name);
-          continue;
-        }
-        if (name === 'style') {
-          const clean = sanitizeStyle(value);
-          if (clean) el.setAttribute(attr.name, clean);
-          else el.removeAttribute(attr.name);
-          continue;
-        }
-        if (URL_ATTRS.has(name)) {
-          if (!SAFE_URL_RE.test(value)) el.removeAttribute(attr.name);
-          continue;
-        }
-        if (name === 'srcdoc') {
-          el.removeAttribute(attr.name);
-        }
+  const fragment = DOMPurify.sanitize(String(html ?? ''), {
+    RETURN_DOM_FRAGMENT: true,
+    ...(options.allowedTags ? { ALLOWED_TAGS: [...options.allowedTags] } : { USE_PROFILES: { html: true } }),
+    FORBID_TAGS: [...forbiddenTags, ...(options.forbiddenTags ?? [])],
+    FORBID_ATTR: ['srcdoc', 'is', 'config'],
+    ALLOW_DATA_ATTR: false,
+    SANITIZE_NAMED_PROPS: true,
+  });
+  for (const el of fragment.querySelectorAll<HTMLElement>('[style]')) {
+    // CSSOM normalizes escaped function names before checking URL-bearing CSS.
+    for (const prop of Array.from(el.style)) {
+      if (prop.startsWith('--') || /url\s*\(|expression\s*\(|javascript:|vbscript:/i.test(el.style.getPropertyValue(prop))) {
+        el.style.removeProperty(prop);
       }
     }
-
-    for (const child of Array.from(node.childNodes)) walk(child);
-  };
-
-  walk(template.content);
+  }
+  const template = document.createElement('template');
+  template.content.append(fragment);
   return template.innerHTML;
 }

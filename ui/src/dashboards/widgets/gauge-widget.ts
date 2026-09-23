@@ -399,7 +399,7 @@ export class GaugeWidget extends BaseComponent {
         if (t <= f) return '';
         const d = arcD(BAND_R, START_DEG + f * SWEEP, (t - f) * SWEEP);
         return d
-          ? `<path d="${d}" fill="none" stroke="${color}" stroke-width="${BAND_W}" stroke-linecap="butt" opacity="0.9"/>`
+          ? `<path d="${d}" fill="none" stroke="${this.esc(color)}" stroke-width="${BAND_W}" stroke-linecap="butt" opacity="0.9"/>`
           : '';
       };
 
@@ -439,8 +439,8 @@ export class GaugeWidget extends BaseComponent {
     const needleHtml = value !== null ? `
       <line x1="${CX}" y1="${CY}"
             x2="${needleX.toFixed(2)}" y2="${needleY.toFixed(2)}"
-            stroke="${fillColor}" stroke-width="2" stroke-linecap="round" opacity="0.95"/>
-      <circle cx="${CX}" cy="${CY}" r="5" fill="${fillColor}" opacity="0.9"/>
+            stroke="${this.esc(fillColor)}" stroke-width="2" stroke-linecap="round" opacity="0.95"/>
+      <circle cx="${CX}" cy="${CY}" r="5" fill="${this.esc(fillColor)}" opacity="0.9"/>
       <circle cx="${CX}" cy="${CY}" r="2.5" fill="var(--panel-bg, #111)"/>
     ` : `
       <circle cx="${CX}" cy="${CY}" r="5" fill="var(--content-text)" opacity="0.12"/>
@@ -467,7 +467,7 @@ export class GaugeWidget extends BaseComponent {
             text-anchor="middle"
             font-family="ui-monospace,'Cascadia Code','SF Mono','Menlo','Consolas',monospace"
             font-size="20" font-weight="300" letter-spacing="-0.01em"
-            fill="${textColor}" opacity="${textOpacity}">
+            fill="${this.esc(textColor)}" opacity="${textOpacity}">
         ${this.esc(numStr)}
       </text>
       ${units && displayValue !== null ? `
@@ -475,7 +475,7 @@ export class GaugeWidget extends BaseComponent {
             text-anchor="start" dominant-baseline="auto"
             font-family="ui-monospace,'Cascadia Code','SF Mono','Menlo','Consolas',monospace"
             font-size="11" font-weight="400"
-            fill="${textColor}" opacity="${String(textOpacity * 0.65)}">
+            fill="${this.esc(textColor)}" opacity="${String(textOpacity * 0.65)}">
         ${this.esc(units)}
       </text>` : ''}`;
 
@@ -512,7 +512,7 @@ export class GaugeWidget extends BaseComponent {
         ${bandsHtml}
 
         <!-- Active fill -->
-        ${fillPath ? `<path d="${fillPath}" fill="none" stroke="${fillColor}"
+        ${fillPath ? `<path d="${fillPath}" fill="none" stroke="${this.esc(fillColor)}"
                            stroke-width="${TRACK_W}" stroke-linecap="round" opacity="0.85"/>` : ''}
 
         <!-- Tick marks -->

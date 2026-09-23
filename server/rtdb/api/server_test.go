@@ -1195,6 +1195,9 @@ func TestSecurityHeadersConfiguredCORSAndBodyLimit(t *testing.T) {
 	if got := rr.Header().Get("X-Frame-Options"); got != "DENY" {
 		t.Fatalf("X-Frame-Options = %q, want DENY", got)
 	}
+	if got := rr.Header().Get("Content-Security-Policy"); !strings.Contains(got, "script-src 'self';") || !strings.Contains(got, "script-src-attr 'none';") || strings.Contains(got, "unsafe-") {
+		t.Fatalf("Content-Security-Policy permits unsafe scripts: %q", got)
+	}
 	if got := rr.Header().Get("Referrer-Policy"); got != "strict-origin-when-cross-origin" {
 		t.Fatalf("Referrer-Policy = %q, want strict-origin-when-cross-origin", got)
 	}

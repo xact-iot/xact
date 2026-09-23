@@ -1,3 +1,4 @@
+import { escapeHtml } from '../utils/html-sanitize';
 import { BaseComponent } from './base-component';
 import { getCurrentUser, isAuthenticated } from '../auth';
 
@@ -53,8 +54,8 @@ export class AppHeader extends BaseComponent {
 
         <div class="relative">
           <button id="user-btn" class="flex items-center gap-2 p-1.5 rounded-lg transition-colors hover:opacity-80">
-            <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium" style="background-color: var(--accent-color); color: var(--header-icon-text-color);">${avatarLetter}</div>
-            <span class="text-sm hidden sm:inline">${displayName}</span>
+            <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium" style="background-color: var(--accent-color); color: var(--header-icon-text-color);">${escapeHtml(avatarLetter)}</div>
+            <span class="text-sm hidden sm:inline">${escapeHtml(displayName)}</span>
             <svg class="w-3 h-3 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
             </svg>
@@ -89,9 +90,9 @@ export class AppHeader extends BaseComponent {
   private renderTabsHTML(): string {
     const showClose = this.tabData.length > 1;
     const tabsHTML = this.tabData.map(tab => `
-      <div class="xact-tab${tab.active ? ' active' : ''}" data-tab-id="${tab.id}">
+      <div class="xact-tab${tab.active ? ' active' : ''}" data-tab-id="${escapeHtml(tab.id)}">
         <span class="xact-tab-title">${this.escapeHTML(tab.title)}</span>
-        ${showClose ? `<button class="xact-tab-close" data-tab-id="${tab.id}" title="Close tab">&times;</button>` : ''}
+        ${showClose ? `<button class="xact-tab-close" data-tab-id="${escapeHtml(tab.id)}" title="Close tab">&times;</button>` : ''}
       </div>
     `).join('');
 
@@ -101,9 +102,7 @@ export class AppHeader extends BaseComponent {
   }
 
   private escapeHTML(str: string): string {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    return escapeHtml(str);
   }
 
   private refreshTabStrip(): void {

@@ -13,63 +13,7 @@
  *   change - dispatched when content changes, detail: { value: string }
  */
 
-// Reuse the same CodeMirror loader as html-editor (js mode is already loaded)
-let cmJsonReady: Promise<void> | null = null;
-
-function loadCodeMirrorForJSON(): Promise<void> {
-  if (cmJsonReady) return cmJsonReady;
-  cmJsonReady = new Promise<void>((resolve, reject) => {
-    // If CM is already available (html-editor loaded it), resolve immediately
-    const checkReady = () => {
-      const CM = (window as any).CodeMirror;
-      if (CM && CM.modes && CM.modes['javascript']) {
-        resolve();
-        return;
-      }
-      // Need to load
-      const cssFiles = [
-        'https://unpkg.com/codemirror@5.65.16/lib/codemirror.css',
-        'https://unpkg.com/codemirror@5.65.16/theme/dracula.css',
-      ];
-      for (const href of cssFiles) {
-        if (!document.querySelector(`link[href="${href}"]`)) {
-          const link = document.createElement('link');
-          link.rel = 'stylesheet';
-          link.href = href;
-          document.head.appendChild(link);
-        }
-      }
-
-      const scripts = [
-        'https://unpkg.com/codemirror@5.65.16/lib/codemirror.js',
-        'https://unpkg.com/codemirror@5.65.16/mode/javascript/javascript.js',
-      ];
-
-      let idx = 0;
-      function loadNext(): void {
-        if (idx >= scripts.length) { resolve(); return; }
-        const src = scripts[idx++];
-        if (document.querySelector(`script[src="${src}"]`)) {
-          loadNext(); // already loaded
-          return;
-        }
-        const script = document.createElement('script');
-        script.src = src;
-        script.onload = loadNext;
-        script.onerror = () => { cmJsonReady = null; reject(new Error(`Failed to load: ${src}`)); };
-        document.head.appendChild(script);
-      }
-      loadNext();
-    };
-
-    if ((window as any).CodeMirror) {
-      checkReady();
-    } else {
-      checkReady();
-    }
-  });
-  return cmJsonReady;
-}
+import { loadCodeMirror as loadCodeMirrorForJSON } from '../utils/vendor-loaders';
 
 export class JsonEditor extends HTMLElement {
   private editor: any = null;

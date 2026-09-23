@@ -27,38 +27,7 @@ registerWidgetType({
 
 // ── CodeMirror loader (same pattern as html-editor) ─────────────────────────
 
-let cmReady: Promise<void> | null = null;
-
-function loadCodeMirror(): Promise<void> {
-  if (cmReady) return cmReady;
-  cmReady = new Promise((resolve, reject) => {
-    if ((window as any).CodeMirror) { resolve(); return; }
-
-    const css = (href: string) => {
-      if (document.querySelector(`link[href="${href}"]`)) return;
-      const el = document.createElement('link');
-      el.rel = 'stylesheet'; el.href = href;
-      document.head.appendChild(el);
-    };
-
-    css('https://unpkg.com/codemirror@5.65.16/lib/codemirror.css');
-
-    const script = (src: string) =>
-      new Promise<void>((res, rej) => {
-        if (document.querySelector(`script[src="${src}"]`)) { res(); return; }
-        const el = document.createElement('script');
-        el.src = src;
-        el.onload = () => res();
-        el.onerror = () => rej(new Error(`Failed to load ${src}`));
-        document.head.appendChild(el);
-      });
-
-    script('https://unpkg.com/codemirror@5.65.16/lib/codemirror.js')
-      .then(() => resolve())
-      .catch(reject);
-  });
-  return cmReady;
-}
+import { loadCodeMirror } from '../../utils/vendor-loaders';
 
 // ── Custom CodeMirror mode for tag expressions ────────────────────────────────
 
@@ -186,7 +155,7 @@ export class TagCalcsWidget extends BaseComponent {
       return;
     }
     if (this.error) {
-      this.innerHTML = `<div class="p-8 text-center text-red-400 text-sm">${this.error}</div>`;
+      this.innerHTML = `<div class="p-8 text-center text-red-400 text-sm">${this.esc(this.error)}</div>`;
       return;
     }
 
@@ -580,7 +549,7 @@ export class TagCalcsWidget extends BaseComponent {
                 ${this.dialog.testing ? '⟳ running…' : '▶ test'}
               </button>
               <div class="ts-result flex-1 ${this.dialog.testResult.startsWith('Error') ? 'err' : this.dialog.testResult ? 'ok' : ''}">
-                ${this.dialog.testResult || '<span style="opacity:0.3;">run test to see live result</span>'}
+                ${this.dialog.testResult ? this.esc(this.dialog.testResult) : '<span style="opacity:0.3;">run test to see live result</span>'}
               </div>
             </div>` : ''}
 

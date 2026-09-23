@@ -23,20 +23,11 @@ registerWidgetType({
   minH: 1,
 });
 
-// ─── SheetJS loader (CDN, singleton) ─────────────────────────────────────────
-
+// The pinned SheetJS distribution is bundled locally, never loaded from a CDN.
 let xlsxReady: Promise<void> | null = null;
 function loadXlsx(): Promise<void> {
-  if (xlsxReady) return xlsxReady;
-  xlsxReady = new Promise<void>((resolve, reject) => {
-    if ((window as any).XLSX) { resolve(); return; }
-    const s = document.createElement('script');
-    s.src = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
-    s.onload = () => resolve();
-    s.onerror = () => { xlsxReady = null; reject(new Error('Failed to load SheetJS')); };
-    document.head.appendChild(s);
-  });
-  return xlsxReady;
+  return xlsxReady ??= import('xlsx').then(XLSX => { (window as any).XLSX = XLSX; })
+    .catch(error => { xlsxReady = null; throw error; });
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────

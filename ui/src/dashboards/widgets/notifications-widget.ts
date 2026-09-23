@@ -109,7 +109,7 @@ export class NotificationsWidget extends BaseComponent {
       return;
     }
     if (this.error) {
-      this.innerHTML = `<div class="p-8 text-center text-red-400 text-sm">${this.error}</div>`;
+      this.innerHTML = `<div class="p-8 text-center text-red-400 text-sm">${this.esc(this.error)}</div>`;
       return;
     }
 
@@ -441,7 +441,7 @@ export class NotificationsWidget extends BaseComponent {
 
             ${this.dialog.error ? `
             <div class="text-xs text-red-400 px-2.5 py-1.5 rounded"
-                 style="background: rgba(239,68,68,0.08);">${this.dialog.error}</div>
+                 style="background: rgba(239,68,68,0.08);">${this.esc(this.dialog.error)}</div>
             ` : ''}
           </div>
 

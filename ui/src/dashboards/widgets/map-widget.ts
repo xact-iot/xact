@@ -38,26 +38,8 @@ registerWidgetType({
 
 // ── Leaflet singleton ──────────────────────────────────────────────────────────
 
-let leafletReady: Promise<void> | null = null;
-
-function loadLeaflet(): Promise<void> {
-  if (leafletReady) return leafletReady;
-  leafletReady = new Promise<void>((resolve, reject) => {
-    if ((window as any).L) { resolve(); return; }
-
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-    document.head.appendChild(link);
-
-    const script = document.createElement('script');
-    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    script.onload = () => resolve();
-    script.onerror = () => { leafletReady = null; reject(new Error('Failed to load Leaflet')); };
-    document.head.appendChild(script);
-  });
-  return leafletReady;
-}
+import { loadLeaflet } from '../../utils/vendor-loaders';
+import { renderMapTemplate } from '../../utils/map-template';
 
 // ── Config types ───────────────────────────────────────────────────────────────
 
@@ -1369,7 +1351,7 @@ export class AreaMapWidget extends BaseComponent {
       const w = layer.divWidgetWidth ?? 280;
       const name = esc(devicePath.split('.').pop() ?? devicePath);
       return `<div class="xact-map-marker-root${selectedClass}"><div class="xact-map-dw-card" style="transform:translate(-50%,-100%);cursor:default;`
-           + `width:${w}px;background:var(--panel-bg,#1a1a1a);border:1px solid var(--border-color);color:#f3f4f6;`
+           + `width:${esc(String(w))}px;background:var(--panel-bg,#1a1a1a);border:1px solid var(--border-color);color:#f3f4f6;`
            + `border-radius:6px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.55);">`
            + `<div class="xact-map-dw-header" style="display:flex;align-items:center;`
            + `justify-content:space-between;padding:6px 10px;border-bottom:1px solid var(--border-color);">`
@@ -1406,21 +1388,21 @@ export class AreaMapWidget extends BaseComponent {
     const fallbackGlyph = prefix ? '📍' : glyph;
     const glyphHtml = svg
       ? svg
-      : `<span style="font-size:${size}px;text-shadow:0 1px 3px rgba(0,0,0,0.5);line-height:1;">${fallbackGlyph}</span>`;
-    const iconDiv = `<div class="xact-map-icon-wrap ${animClass}" style="color:${color};text-align:center;line-height:1;">${glyphHtml}</div>`;
+      : `<span style="font-size:${esc(String(size))}px;text-shadow:0 1px 3px rgba(0,0,0,0.5);line-height:1;">${esc(fallbackGlyph)}</span>`;
+    const iconDiv = `<div class="xact-map-icon-wrap ${animClass}" style="color:${esc(String(color))};text-align:center;line-height:1;">${glyphHtml}</div>`;
 
     // Hover tooltip sits above the icon; positioned relative to the marker root which matches icon dimensions
     let hoverContent: string;
     if (template) {
       const name = esc(devicePath.split('.').pop() ?? devicePath);
-      hoverContent = `<div class="xact-map-hover-card" style="background:var(--panel-bg,#1a1a1a);border:1px solid var(--border-color);border-radius:6px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.55);min-width:${layer.divWidgetWidth ?? 280}px;color:#f3f4f6;">`
+      hoverContent = `<div class="xact-map-hover-card" style="background:var(--panel-bg,#1a1a1a);border:1px solid var(--border-color);border-radius:6px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.55);min-width:${esc(String(layer.divWidgetWidth ?? 280))}px;color:#f3f4f6;">`
         + `<div class="xact-map-dw-header" style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;border-bottom:1px solid var(--border-color);">`
         + `<span style="font-size:12px;font-weight:700;color:#fff;">${name}</span></div>`
         + `<div>${this.renderTemplateContent(layer, devicePath)}</div></div>`;
     } else if (this.hasZoomWidget(layer)) {
       // Zoomed widget mode - mount a live widget into this placeholder after marker creation
       const name = esc(devicePath.split('.').pop() ?? devicePath);
-      hoverContent = `<div class="xact-map-hover-card" style="background:var(--panel-bg,#1a1a1a);border:1px solid var(--border-color);border-radius:6px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.55);min-width:${layer.divWidgetWidth ?? 280}px;color:#f3f4f6;">`
+      hoverContent = `<div class="xact-map-hover-card" style="background:var(--panel-bg,#1a1a1a);border:1px solid var(--border-color);border-radius:6px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.55);min-width:${esc(String(layer.divWidgetWidth ?? 280))}px;color:#f3f4f6;">`
         + `<div class="xact-map-dw-header" style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;border-bottom:1px solid var(--border-color);">`
         + `<span style="font-size:12px;font-weight:700;color:#fff;">${name}</span></div>`
         + `<div class="xact-map-hover-body"></div></div>`;
@@ -1429,7 +1411,7 @@ export class AreaMapWidget extends BaseComponent {
     }
     const hoverTip = hoverContent ? `<div class="xact-map-hover-tip">${hoverContent}</div>` : '';
 
-    return `<div class="xact-map-marker-root${selectedClass}" style="width:${size}px;height:${size}px;">${iconDiv}${hoverTip}</div>`;
+    return `<div class="xact-map-marker-root${selectedClass}" style="width:${esc(String(size))}px;height:${esc(String(size))}px;">${iconDiv}${hoverTip}</div>`;
   }
 
 
@@ -1484,16 +1466,8 @@ export class AreaMapWidget extends BaseComponent {
       const fullPath = relPath.startsWith(orgPrefix) ? relPath : devicePath + '.' + relPath;
       return store.resolveTagReference(fullPath) ?? '';
     };
-    // Auto-quote bare dotted paths in tag() calls: tag(sign.message) → tag('sign.message')
-    const normalised = template.replace(
-      /\btag\(([a-zA-Z_$][a-zA-Z0-9_$]*(?:\.[a-zA-Z_$][a-zA-Z0-9_$]*)+(?::[a-zA-Z_][a-zA-Z0-9_-]*)?)\)/g,
-      "tag('$1')"
-    );
     try {
-      // eslint-disable-next-line no-new-func
-      return new Function('deviceName', 'deviceDescription', 'tag', `return \`${normalised}\``)(
-        deviceName, deviceDescription, tagFn
-      );
+      return renderMapTemplate(template, { deviceName, deviceDescription, tag: tagFn });
     } catch (err) {
       console.error(`[map-widget] Div template error for "${devicePath}":`, err, '\nTemplate:', template);
       return `<span style="background:#1a1a1a;padding:4px 6px;border-radius:4px;font-size:11px;color:#f59e0b;">${esc(deviceName)}</span>`;
@@ -2028,7 +2002,7 @@ export class AreaMapWidget extends BaseComponent {
               <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
                 <label style="font-size:12px;opacity:0.6;white-space:nowrap;min-width:90px;">Base map opacity</label>
                 <input id="cfg-base-opacity" type="range" min="0" max="1" step="0.05"
-                       value="${cfg.baseOpacity ?? 1}"
+                       value="${esc(String(cfg.baseOpacity ?? 1))}"
                        style="flex:1;accent-color:var(--accent-color);cursor:pointer;">
                 <span id="cfg-base-opacity-val" style="font-size:12px;font-family:'IBM Plex Mono',monospace;opacity:0.7;min-width:32px;text-align:right;">${Math.round((cfg.baseOpacity ?? 1) * 100)}%</span>
               </div>
@@ -2287,7 +2261,7 @@ export class AreaMapWidget extends BaseComponent {
             </div>
             <div>
               <label style="${labelStyle}">Width (px)</label>
-              <input id="le-dw-width" type="number" value="${layer.divWidgetWidth ?? 280}" min="160" max="600" style="${fieldStyle}width:100%;">
+              <input id="le-dw-width" type="number" value="${esc(String(layer.divWidgetWidth ?? 280))}" min="160" max="600" style="${fieldStyle}width:100%;">
             </div>
             ${hasZoomConfig
               ? `<span style="color:#d1d5db;font-size:11px;padding-bottom:6px;">Config saved</span>`

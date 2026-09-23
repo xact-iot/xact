@@ -8,7 +8,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: 'index.html',
-        test: 'test/index.html',
       },
       output: {
         manualChunks(id) {

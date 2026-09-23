@@ -229,18 +229,18 @@ export class BigNumberWidget extends BaseComponent {
         <!-- Value -->
         <div style="flex:1; display:flex; align-items:center; justify-content:center; min-height:0; overflow:hidden;">
           <div style="display:flex; align-items:center; gap:0.45em; overflow:hidden; max-width:100%;">
-            ${iconHtml ? `<div id="bn-icon" style="display:flex;align-items:center;justify-content:center;flex-shrink:0;color:${this.iconColor(color)};">${iconHtml}</div>` : ''}
+            ${iconHtml ? `<div id="bn-icon" style="display:flex;align-items:center;justify-content:center;flex-shrink:0;color:${this.esc(this.iconColor(color))};">${iconHtml}</div>` : ''}
             <div id="bn-val" style="
               font-family:ui-monospace,'Cascadia Code','SF Mono','Menlo','Consolas',monospace;
               font-size:${fontSize}px; font-weight:300; line-height:1;
-              color:${color}; transition:color 0.35s ease;
+              color:${this.esc(color)}; transition:color 0.35s ease;
               letter-spacing:-0.02em; white-space:nowrap;
               overflow:hidden; text-overflow:ellipsis;
             ">${displayValue !== null ? this.esc(displayValue) : '<span style="opacity:0.18">-</span>'}</div>
             ${units ? `<div id="bn-units" style="
               font-family:ui-monospace,'Cascadia Code','SF Mono','Menlo','Consolas',monospace;
               font-size:${Math.round(fontSize * 0.5)}px; font-weight:400; line-height:1;
-              color:${color}; opacity:0.75; white-space:nowrap; flex-shrink:0;
+              color:${this.esc(color)}; opacity:0.75; white-space:nowrap; flex-shrink:0;
             ">${this.esc(units)}</div>` : ''}
           </div>
         </div>
@@ -249,7 +249,7 @@ export class BigNumberWidget extends BaseComponent {
         ${showSparkline && dm ? `
           <div style="flex-shrink:0; height:38px; margin-top:0.25rem;">
             <sparkline-widget
-              id="${uid}-sl"
+              id="${this.esc(uid)}-sl"
               device="${this.esc(dm.device)}"
               metric="${this.esc(dm.metric)}"
               time-period="48"

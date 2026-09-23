@@ -4,7 +4,9 @@ import './styles.css';
 // Global error handler
 window.onerror = function(msg, url, line, col) {
   console.error('Global error:', msg, 'at', url, ':', line, ':', col);
-  document.body.innerHTML = '<div style="padding: 20px; color: red;"><h1>Error</h1><pre>' + msg + '</pre></div>';
+  const error = document.createElement('pre');
+  error.textContent = String(msg);
+  document.body.replaceChildren(error);
   return false;
 };
 

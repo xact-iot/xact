@@ -1,3 +1,4 @@
+import { escapeHtml } from '../utils/html-sanitize';
 import { BaseComponent } from './base-component';
 import { getMirrorStore } from '../store/store';
 
@@ -109,7 +110,7 @@ export class TreeBrowserDialog extends BaseComponent {
       : (rootExists
           ? this.renderSubtree(this.rootPath, 0)
           : `<div class="px-4 py-6 text-xs text-center opacity-40">
-               No "<strong>${this.rootPath}</strong>" node found in the tree.
+               No "<strong>${escapeHtml(this.rootPath)}</strong>" node found in the tree.
              </div>`);
 
     const subtitle = this.pendingLeafPath
@@ -128,7 +129,7 @@ export class TreeBrowserDialog extends BaseComponent {
           <div class="flex items-center justify-between px-4 py-3 flex-shrink-0"
                style="border-bottom:1px solid var(--border-color)">
             <div>
-              <h3 class="text-sm font-semibold" style="color:var(--accent-color)">${this.dialogTitle}</h3>
+              <h3 class="text-sm font-semibold" style="color:var(--accent-color)">${escapeHtml(this.dialogTitle)}</h3>
               <div class="text-xs mt-0.5">${subtitle}</div>
             </div>
             <button id="tbd-close" class="text-xl leading-none opacity-50 hover:opacity-100"
@@ -191,7 +192,7 @@ export class TreeBrowserDialog extends BaseComponent {
         const isSelected = childPath === this.selectedPath;
         const typeName = this.tagTypeName(childPath);
         const typeBadge = typeName
-          ? `<span style="flex-shrink:0;font-size:10px;padding:1px 5px;border-radius:3px;background:color-mix(in srgb,var(--accent-color) 12%,transparent);color:var(--accent-color);opacity:0.75;letter-spacing:0.03em;">${typeName}</span>`
+          ? `<span style="flex-shrink:0;font-size:10px;padding:1px 5px;border-radius:3px;background:color-mix(in srgb,var(--accent-color) 12%,transparent);color:var(--accent-color);opacity:0.75;letter-spacing:0.03em;">${escapeHtml(typeName)}</span>`
           : '';
         // Display name: numeric children of array parents show as [0], [1], etc.
         const leafParentIsArray = path ? store.getIsArray(path) : false;
@@ -201,13 +202,13 @@ export class TreeBrowserDialog extends BaseComponent {
           <div class="tbd-node flex items-center gap-1 py-1 cursor-pointer hover:opacity-80 select-none"
                style="padding-left:${indent}px;padding-right:12px;border-bottom:1px solid color-mix(in srgb,var(--border-color) 15%,transparent);${isSelected ? 'background:color-mix(in srgb,var(--accent-color) 18%,transparent);' : ''}"
                ${isSelected ? 'data-selected="true"' : ''}
-               data-path="${childPath}">
+               data-path="${escapeHtml(childPath)}">
             <span style="width:14px;flex-shrink:0"></span>
             <svg class="w-3 h-3 flex-shrink:0" style="flex-shrink:0;opacity:0.4;color:var(--accent-color)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                     d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a2 2 0 014-4z"/>
             </svg>
-            <span style="font-size:12px;color:var(--content-text);opacity:0.75;" data-select="${childPath}">${leafDisplayName}</span>
+            <span style="font-size:12px;color:var(--content-text);opacity:0.75;" data-select="${escapeHtml(childPath)}">${escapeHtml(leafDisplayName)}</span>
             ${typeBadge}
           </div>`;
         continue;
@@ -246,14 +247,14 @@ export class TreeBrowserDialog extends BaseComponent {
         <div class="tbd-node flex items-center gap-1 py-1.5 cursor-pointer hover:opacity-80 select-none"
              style="padding-left:${indent}px;padding-right:12px;border-bottom:1px solid color-mix(in srgb,var(--border-color) 25%,transparent);${isSelected ? 'background:color-mix(in srgb,var(--accent-color) 18%,transparent);' : ''}"
              ${isSelected ? 'data-selected="true"' : ''}
-             data-path="${childPath}">
+             data-path="${escapeHtml(childPath)}">
           <span class="tbd-toggle text-xs opacity-50 inline-block transition-transform flex-shrink-0"
                 style="width:14px;color:var(--content-text);${isExpanded ? 'transform:rotate(90deg)' : ''}"
-                data-toggle="${childPath}">
+                data-toggle="${escapeHtml(childPath)}">
             ${hasChildren ? '▶' : ''}
           </span>
           ${nodeIcon}
-          <span class="text-xs font-medium" style="color:var(--accent-color)" data-select="${childPath}">${displayName}</span>
+          <span class="text-xs font-medium" style="color:var(--accent-color)" data-select="${escapeHtml(childPath)}">${escapeHtml(displayName)}</span>
           ${arrayBadge}
         </div>`;
 
@@ -268,7 +269,7 @@ export class TreeBrowserDialog extends BaseComponent {
     const displayPath = getMirrorStore().toRelative(leafPath);
     let html = `
       <div class="px-4 pt-3 pb-2">
-        <div class="text-xs opacity-50 mb-2 font-mono" style="word-break:break-all;">${displayPath}</div>
+        <div class="text-xs opacity-50 mb-2 font-mono" style="word-break:break-all;">${escapeHtml(displayPath)}</div>
       </div>`;
     for (const opt of TAG_REFERENCE_SUFFIXES) {
       const resultPath = leafPath + opt.suffix;
@@ -278,7 +279,7 @@ export class TreeBrowserDialog extends BaseComponent {
       html += `
         <div class="tbd-suffix flex items-center gap-2 px-4 py-2.5 cursor-pointer hover:opacity-80 select-none"
              style="border-bottom:1px solid color-mix(in srgb,var(--border-color) 20%,transparent)"
-             data-result="${resultPath}">
+             data-result="${escapeHtml(resultPath)}">
           ${badge}
           <div>
             <div class="text-xs font-medium" style="color:var(--content-text)">${opt.label}</div>

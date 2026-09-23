@@ -34,6 +34,10 @@ export class TextWidget extends BaseComponent {
 
   setConfig(c: Partial<Config> & Record<string, any>): void {
     this.config = { ...this.config, ...c };
+    const size = Number(this.config.fontSize);
+    this.config.fontSize = Number.isFinite(size) ? Math.max(1, Math.min(size, 512)) : DEFAULT_CONFIG.fontSize;
+    if (!['left', 'center', 'right'].includes(this.config.textAlign)) this.config.textAlign = 'left';
+    this.config.text = String(this.config.text ?? '');
     this.rerender();
   }
 
@@ -78,7 +82,7 @@ export class TextWidget extends BaseComponent {
 
   protected render(): void {
     const { fontSize, color, textAlign } = this.config;
-    const colorStyle = `color:${color || 'var(--content-text)'};`;
+    const colorStyle = `color:${this.esc(color || 'var(--content-text)')};`;
 
     this.innerHTML = `
       <div style="

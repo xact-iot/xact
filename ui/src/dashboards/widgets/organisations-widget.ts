@@ -29,26 +29,7 @@ registerWidgetType({
 // ---------------------------------------------------------------------------
 // Leaflet loader - singleton promise so CSS+JS are loaded only once globally
 // ---------------------------------------------------------------------------
-let leafletReady: Promise<void> | null = null;
-
-function loadLeaflet(): Promise<void> {
-  if (leafletReady) return leafletReady;
-  leafletReady = new Promise<void>((resolve, reject) => {
-    if ((window as any).L) { resolve(); return; }
-
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-    document.head.appendChild(link);
-
-    const script = document.createElement('script');
-    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    script.onload = () => resolve();
-    script.onerror = () => { leafletReady = null; reject(new Error('Failed to load Leaflet')); };
-    document.head.appendChild(script);
-  });
-  return leafletReady;
-}
+import { loadLeaflet } from '../../utils/vendor-loaders';
 
 // ---------------------------------------------------------------------------
 // State types
