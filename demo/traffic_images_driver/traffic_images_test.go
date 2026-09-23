@@ -44,8 +44,8 @@ func TestMQTTBrokerFromEnv(t *testing.T) {
 }
 
 func TestMQTTUsernameFromEnv(t *testing.T) {
-	if got := mqttUsernameFromEnv(); got != "a" {
-		t.Fatalf("mqttUsernameFromEnv() = %q, want a", got)
+	if got := mqttUsernameFromEnv(); got != "default" {
+		t.Fatalf("mqttUsernameFromEnv() = %q, want default", got)
 	}
 
 	t.Setenv("MQTT_BROKER_USERNAME", "demo-user")

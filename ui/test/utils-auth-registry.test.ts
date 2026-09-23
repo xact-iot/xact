@@ -95,11 +95,11 @@ describe('auth helpers', () => {
       user: { id: '1', username: 'admin', tenant_id: 'default', roles: ['SystemAdmin'], allowed_orgs: ['default'] },
     };
     fetchMock.mockResolvedValueOnce(response(auth));
-    await expect(setBootstrapAdminPassword('new-password')).resolves.toEqual(auth);
+    await expect(setBootstrapAdminPassword('new-password', 'operator-setup-token')).resolves.toEqual(auth);
     expect(fetchMock).toHaveBeenLastCalledWith('/xact/api/v1/bootstrap/admin/password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: 'new-password' }),
+      body: JSON.stringify({ password: 'new-password', setupToken: 'operator-setup-token' }),
     });
 
     fetchMock.mockResolvedValueOnce(response({ error: 'nope' }, false, 401));

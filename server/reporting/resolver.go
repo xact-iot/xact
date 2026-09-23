@@ -94,8 +94,8 @@ func resolveOne(ctx context.Context, v Variable, rc ResolveContext) string {
 			return "«PAGE_COUNT»"
 		}
 	case VariableTypeRTDB:
-		if rc.TagReader != nil && v.Path != "" {
-			if val, ok := rc.TagReader(v.Path); ok {
+		if path, ok := scopedReportTagPath(rc.OrgName, v.Path); ok && rc.TagReader != nil {
+			if val, ok := rc.TagReader(path); ok {
 				return val
 			}
 		}
@@ -150,4 +150,23 @@ func jsonEscape(s string) string {
 	s = strings.ReplaceAll(s, "\r", `\r`)
 	s = strings.ReplaceAll(s, "\t", `\t`)
 	return s
+}
+
+// Report variables use fully qualified tag paths. Validate before invoking any
+// reader so every generation path, including stored templates, stays in its org.
+func scopedReportTagPath(org, path string) (string, bool) {
+	if org == "" || strings.ContainsAny(org, ". /\\*>") {
+		return "", false
+	}
+	path = strings.TrimPrefix(strings.ReplaceAll(path, ".", "/"), "/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 || parts[0] != org {
+		return "", false
+	}
+	for _, part := range parts {
+		if part == "" || strings.TrimSpace(part) != part || strings.ContainsAny(part, "\\*>\x00") {
+			return "", false
+		}
+	}
+	return strings.Join(parts, "."), true
 }

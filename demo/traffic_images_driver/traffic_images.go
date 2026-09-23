@@ -22,7 +22,7 @@ func Start() {
 
 	mqttPassword := os.Getenv("MQTT_BROKER_PASSWORD")
 	if mqttPassword == "" {
-		mqttPassword = "xact"
+		log.Fatal("MQTT_BROKER_PASSWORD must contain this tenant’s ingest API key")
 	}
 
 	pollInterval := DefaultPollInterval
@@ -75,7 +75,7 @@ func mqttUsernameFromEnv() string {
 	if username := os.Getenv("MQTT_BROKER_USERNAME"); username != "" {
 		return username
 	}
-	return "a"
+	return "default"
 }
 
 func pollAndPublish(client *TrafficImagesClient, publisher *MQTTPublisher) {

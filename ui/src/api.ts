@@ -38,6 +38,7 @@ export async function fetchHealth(): Promise<HealthInfo> {
 export interface NATSConfig {
   username: string;
   password: string;
+  inboxPrefix: string;
   natsWsPath: string;
   natsWsUrl?: string;
 }

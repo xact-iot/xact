@@ -26,7 +26,8 @@ The driver is configured via environment variables:
 |----------|----------|---------|-------------|
 | `LTA_API_KEY` | Yes | - | Your LTA DataMall API key (AccountKey) |
 | `MQTT_BROKER` | No | `tcp://127.0.0.1:1883` | MQTT broker address |
-| `MQTT_BROKER_PASSWORD` | No | `xact` | MQTT authentication password |
+| `MQTT_BROKER_PASSWORD` | Yes | - | Ingest API key for the selected organisation |
+| `MQTT_BROKER_USERNAME` | No | `default` | Organisation slug; also prefixes the client ID and telemetry topic |
 | `MQTT_TLS_CA_FILE` | No | - | CA or self-signed broker certificate to trust for `mqtts://` |
 | `MQTT_TLS_SERVER_NAME` | No | - | Optional server name override for broker certificate verification |
 | `MQTT_TLS_INSECURE_SKIP_VERIFY` | No | `false` | Disable broker certificate verification for local diagnostics only |

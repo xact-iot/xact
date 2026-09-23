@@ -137,9 +137,9 @@ func parseFlags() config {
 		restInsecure:   true,
 		timeout:        10 * time.Second,
 		mqttURL:        envDefault("MQTT_BROKER", "tcp://127.0.0.1:1883"),
-		mqttUsername:   envDefault("MQTT_USERNAME", "benchmark"),
-		mqttPassword:   envDefault("MQTT_BROKER_PASSWORD", "xact"),
-		mqttClientID:   fmt.Sprintf("xact-benchmark-%d", time.Now().UnixNano()),
+		mqttUsername:   os.Getenv("MQTT_USERNAME"),
+		mqttPassword:   os.Getenv("MQTT_BROKER_PASSWORD"),
+		mqttClientID:   os.Getenv("MQTT_CLIENT_ID"),
 		mqttQoS:        1,
 		natsURL:        envDefault("NATS_URL", natsgo.DefaultURL),
 		natsUsername:   envDefault("NATS_USERNAME", "internal"),
@@ -181,6 +181,12 @@ func parseFlags() config {
 	flag.Int64Var(&cfg.natsFlushEvery, "nats-flush-every", cfg.natsFlushEvery, "flush NATS connection every N messages; 0 flushes only at the end")
 
 	flag.Parse()
+	if cfg.mqttUsername == "" {
+		cfg.mqttUsername = cfg.tenant
+	}
+	if cfg.mqttClientID == "" {
+		cfg.mqttClientID = fmt.Sprintf("%s:benchmark-%d", cfg.tenant, time.Now().UnixNano())
+	}
 	return cfg
 }
 

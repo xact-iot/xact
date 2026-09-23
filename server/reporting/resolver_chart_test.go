@@ -23,16 +23,16 @@ func TestResolveVariablesCoversBuiltinRTDBSQLAndCustom(t *testing.T) {
 		{Name: "report", Type: VariableTypeBuiltin, Source: "report_name"},
 		{Name: "page", Type: VariableTypeBuiltin, Source: "page_no"},
 		{Name: "pages", Type: VariableTypeBuiltin, Source: "page_count"},
-		{Name: "tag", Type: VariableTypeRTDB, Path: "plant.temp"},
+		{Name: "tag", Type: VariableTypeRTDB, Path: "default.plant.temp"},
 		{Name: "sql", Type: VariableTypeSQL, Query: "select name"},
 		{Name: "custom", Type: VariableTypeCustom, DefaultValue: "fallback"},
-		{Name: "missing", Type: VariableTypeRTDB, Path: "plant.missing"},
+		{Name: "missing", Type: VariableTypeRTDB, Path: "default.plant.missing"},
 	}, ResolveContext{
 		OrgName:        "default",
 		OrgDisplayName: "Default Organisation",
 		ReportName:     "Daily",
 		TagReader: func(path string) (string, bool) {
-			return map[string]string{"plant.temp": "21.5"}[path], path == "plant.temp"
+			return map[string]string{"default.plant.temp": "21.5"}[path], path == "default.plant.temp"
 		},
 		SQLQueryer: func(_ context.Context, query string, orgName string) (string, error) {
 			if query != "select name" || orgName != "default" {

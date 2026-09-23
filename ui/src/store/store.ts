@@ -1,5 +1,4 @@
 import *  as nats from "@nats-io/nats-core";
-import { Kvm, KV, KvWatchOptions, KvWatchEntry } from "@nats-io/kv";
 import { loadNode, loadTag } from '../api';
 import { getCurrentUser } from '../auth';
 
@@ -187,16 +186,14 @@ type NatsConnectionStateCallback = (state: NatsConnectionState) => void;
 
 export class MirrorStore {
     private nc: nats.NatsConnection | null = null;
-    private kv: KV | null = null;
     private root: Node | null = null;
-    private watchers: nats.QueuedIterator<KvWatchEntry>[] = [];
-    private watchedTopLevelNodes: Set<string> = new Set();
     private desiredTagValuePaths: Set<string> = new Set();
     private watchedTagValuePaths: Map<string, nats.Subscription> = new Map();
     private tagValueSubscription: nats.Subscription | null = null;
     private hydratedTagValuePaths: Set<string> = new Set();
     private treeSubscriptions: Map<string, Set<TreeChangeCallback>> = new Map();
     private treeSubscriptionsActive: boolean = false;
+    private treeSubscription: nats.Subscription | null = null;
     private orgName: string = '';
     private natsConnectionState: NatsConnectionState = 'unknown';
     private natsConnectionStateSubscribers: Set<NatsConnectionStateCallback> = new Set();
@@ -207,7 +204,7 @@ export class MirrorStore {
     }
 
     // Connect to NAT and get the subtree below a root node.
-    public async storeConnectNats(url: string, kvBucket: string, username?: string, password?: string): Promise<void> {
+    public async storeConnectNats(url: string, username?: string, password?: string, inboxPrefix?: string): Promise<void> {
         this.setNatsConnectionState('connecting');
         try {
             // Determine the current org from the JWT. Fall back to 'default' if
@@ -218,11 +215,12 @@ export class MirrorStore {
                 opts.user = username;
                 opts.pass = password;
             }
+            if (inboxPrefix) opts.inboxPrefix = inboxPrefix;
             this.nc = await nats.wsconnect(opts);
             this.setNatsConnectionState('connected');
             this.monitorNatsConnection(this.nc);
-            const kvm = new Kvm(this.nc);
-            this.kv = await kvm.create(kvBucket);
+            // Initial values come from REST; live updates need no JetStream access.
+            await this.setupTreeSubscription();
             for (const path of this.desiredTagValuePaths) {
                 this.watchTagValuePath(path);
                 this.hydrateTagValuePath(path);
@@ -279,9 +277,9 @@ export class MirrorStore {
 
     public async storeDisconnectNats(): Promise<void> {
 
-        for (const w of this.watchers) {
-            w.stop();
-        }
+        this.treeSubscription?.unsubscribe();
+        this.treeSubscription = null;
+        this.treeSubscriptionsActive = false;
 
         for (const sub of this.watchedTagValuePaths.values()) {
             sub.unsubscribe();
@@ -297,7 +295,6 @@ export class MirrorStore {
             await this.nc.close();
         }
         this.nc = null;
-        this.kv = null;
         this.setNatsConnectionState('disconnected');
     }
 
@@ -341,14 +338,13 @@ export class MirrorStore {
             desiredTagValuePaths: Array.from(this.desiredTagValuePaths),
             tagValueSubscription: Boolean(this.tagValueSubscription),
             hydratedTagValuePaths: Array.from(this.hydratedTagValuePaths),
-            watchedTopLevelNodes: Array.from(this.watchedTopLevelNodes),
         };
         console.log('[xact:store:probe] state', state);
         return state;
     }
 
     // Subscribe to a node by path. Creates nodes if they don't exist.
-    // Automatically watches the current org's NATS KV subtree on first call.
+    // Values are hydrated through REST and updated through tenant-scoped NATS subscriptions.
     public subscribe(path: Path, callback: subscribeCallback): () => void {
         const pathElements = path.split('.');
 
@@ -357,12 +353,6 @@ export class MirrorStore {
         if (this.orgName && topLevelNode !== this.orgName) {
             console.warn(`MirrorStore: subscribe("${path}") rejected - outside org "${this.orgName}"`);
             return () => {};
-        }
-
-        // Watch the current org's KV subtree once (keyed by top-level org name)
-        if (!this.watchedTopLevelNodes.has(topLevelNode) && this.kv !== null) {
-            this.watchedTopLevelNodes.add(topLevelNode);
-            this.watchNatsSubtreeTree(topLevelNode);
         }
 
         this.desiredTagValuePaths.add(path);
@@ -818,14 +808,9 @@ export class MirrorStore {
         return absolutePath; // already relative
     }
 
-    // Explicitly start the KV watcher for an org top-level node.
-    // Normally the watcher is started lazily on the first subscribe() call; calling
-    // this method eagerly lets callers pre-populate the store before reading values.
+    // Compatibility helper: tree snapshots now come from REST rather than KV.
     public startKvWatch(orgName: string): void {
-        if (!this.watchedTopLevelNodes.has(orgName) && this.kv !== null) {
-            this.watchedTopLevelNodes.add(orgName);
-            this.watchNatsSubtreeTree(orgName);
-        }
+        if (orgName === this.orgName) void this.setupTreeSubscription();
     }
 
     // Subscribe to tree structural changes for a specific path
@@ -864,6 +849,7 @@ export class MirrorStore {
                 : 'rtdb.tree.>';
             const sub = this.nc.subscribe(subject);
 
+            this.treeSubscription = sub;
             this.treeSubscriptionsActive = true;
 
             // Process messages
@@ -909,25 +895,7 @@ export class MirrorStore {
                 return;
             }
 
-            // Traverse/create nodes as needed so new nodes appear immediately
-            const pathElements = path.split('.');
-            let currentNode = this.root!;
-            for (const element of pathElements) {
-                currentNode = currentNode.getOrCreateChild(element);
-            }
-
-            // Update payload maps if provided
-            if (data.config) currentNode.setConfig(data.config);
-            if (data.shared) currentNode.setShared(data.shared);
-            if (data.timestamp) currentNode.setTimestamp(data.timestamp);
-            if ('status' in data) currentNode.setStatus(data.status);
-            if (data.value !== undefined) currentNode.setValue(data.value);
-            if (data.type === 'node') currentNode.setNodeType('node');
-            else if (data.type === 'leaf') currentNode.setNodeType('leaf');
-            if (data.isArray) currentNode.setIsArray(true);
-
-            // Notify subscribers
-            this.notifyTreeSubscribers(path, data);
+            this.processIncomingNats({ key: path, value: msg.data });
         } catch (err) {
             console.error('Error handling tree change:', err);
         }
@@ -1026,33 +994,12 @@ export class MirrorStore {
         currentNode.setValue(displayValue);
     }
 
-    // Watch NATS node
-    private async watchNatsSubtreeTree(topLevel: string) {
-        let opts: KvWatchOptions = {
-            key: `${topLevel}.>`
-        };
-        const w = await this.kv!.watch(opts);
-        this.watchers.push(w);
-
-        // Start the iterator for this watcher
-        (async () => {
-            try {
-                for await (const e of w) {
-                    if (e !== null) {
-                        this.processIncomingNats(e);
-                    }
-                }
-            } catch (err) {
-                // ignore watcher error
-            }
-        })();
-    }
-    private processIncomingNats(e: KvWatchEntry) {
+    private processIncomingNats(e: { key: string; value: Uint8Array }) {
         // Split the key into path elements (e.g., "building.floor1.room2" -> ["building", "floor1", "room2"])
         const pathElements = e.key.split('.');
 
         // Start at root and traverse/create nodes as needed. Intermediate path
-        // elements are containers; the final element's type comes from the KV payload.
+        // elements are containers; the final element's type comes from the payload.
         let currentNode = this.root!;
         for (let i = 0; i < pathElements.length; i++) {
             currentNode = currentNode.getOrCreateChild(pathElements[i]);
@@ -1080,9 +1027,7 @@ export class MirrorStore {
             decodedValue = e.value; // Use raw value as fallback
         }
 
-        // Process the payload depending on the type in the packet. Value
-        // updates normally arrive via JetStream, but accepting them here keeps
-        // KV snapshots/tests and direct replay paths consistent.
+        // Apply tree metadata and values from the tenant's live subscription.
         if (decodedValue && typeof decodedValue === 'object') {
             if (decodedValue.type === 'leaf' || decodedValue.type === 'node') {
                 currentNode.setNodeType(decodedValue.type);
@@ -1107,9 +1052,7 @@ export class MirrorStore {
             currentNode.setValue(decodedValue);
         }
 
-        // Notify tree subscribers so that components using subscribeToTreeChanges
-        // (e.g. the map widget) pick up nodes delivered via the KV watch, not just
-        // live NATS tree-change messages.
+        // Notify components watching this node or its ancestors.
         this.notifyTreeSubscribers(e.key, decodedValue);
     }
 

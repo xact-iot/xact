@@ -111,7 +111,7 @@ func logBootstrapAdminCredential(cred sqldb.AdminBootstrapCredential) {
 		log.Printf("Created bootstrap admin user 'admin' using password from %s", cred.Source)
 		return
 	}
-	log.Printf("Created bootstrap admin user 'admin' with password unset; first browser login must set it")
+	log.Printf("Created bootstrap admin user 'admin' with password unset; browser setup requires XACT_BOOTSTRAP_SETUP_TOKEN (at least 32 characters)")
 }
 
 // ListRoles returns all defined roles.
@@ -248,7 +248,7 @@ func (db *PostgresDB) UpdateUser(ctx context.Context, user *sqldb.User) error {
 	tag, err := db.pool.Exec(ctx, `
 		UPDATE users SET
 			first_name = $2, last_name = $3, email = $4,
-			notification_options = $5, active = $6, updated_at = NOW()
+			notification_options = $5, token_version = token_version + CASE WHEN active <> $6 THEN 1 ELSE 0 END, active = $6, updated_at = NOW()
 		WHERE id = $1
 	`, user.ID, user.FirstName, user.LastName, user.Email, opts, user.Active)
 	if err != nil {
@@ -513,4 +513,15 @@ func scanUser(row userScanner) (*sqldb.User, error) {
 	}
 	u.LastLogin = lastLogin
 	return &u, nil
+}
+
+// ClaimBootstrapAdminPassword atomically claims an unset bootstrap account once.
+func (db *PostgresDB) ClaimBootstrapAdminPassword(ctx context.Context, id int, passwordHash string) (bool, error) {
+	tag, err := db.pool.Exec(ctx,
+		"UPDATE users SET password_hash = $2, token_version = token_version + 1, updated_at = NOW() WHERE id = $1 AND login_name = 'admin' AND active = TRUE AND password_hash = $3",
+		id, passwordHash, sqldb.UnsetBootstrapAdminHash)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }

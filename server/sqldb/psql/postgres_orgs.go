@@ -430,8 +430,8 @@ func (db *PostgresDB) CreateAgentToken(ctx context.Context, orgName string, user
 
 	var tok sqldb.AgentToken
 	err = db.pool.QueryRow(ctx, `
-		INSERT INTO org_agent_tokens (org_id, user_id, name, token_secret, token_hash, token_prefix, token_last4, roles, expires_at)
-		SELECT o.id, u.id, $3, $4, $5, $6, $7, $8::jsonb, $9
+		INSERT INTO org_agent_tokens (org_id, user_id, name, token_secret, token_hash, token_prefix, token_last4, roles, expires_at, user_token_version)
+		SELECT o.id, u.id, $3, $4, $5, $6, $7, $8::jsonb, $9, u.token_version
 		FROM organisations o
 		JOIN user_organisations uo ON uo.org_id = o.id
 		JOIN users u ON u.id = uo.user_id
@@ -514,6 +514,8 @@ func (db *PostgresDB) ResolveAgentToken(ctx context.Context, raw string) (*sqldb
 		JOIN organisations o ON o.id = k.org_id
 		LEFT JOIN users u ON u.id = k.user_id
 		WHERE k.token_hash = $1
+		  AND u.active = TRUE AND k.user_token_version > 0 AND k.user_token_version = u.token_version
+		  AND EXISTS (SELECT 1 FROM user_organisations uo WHERE uo.user_id = k.user_id AND uo.org_id = k.org_id)
 		  AND (k.expires_at IS NULL OR k.expires_at > NOW())
 	`, tokenHash)
 	tok, err := scanAgentToken(row)

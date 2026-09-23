@@ -12,8 +12,9 @@ Review these `.env` settings before exposing XACT beyond localhost:
 | --- | --- |
 | `JWT_SECRET` | Must be unique and high entropy. Used for JWT signing and as fallback API-key hashing pepper. |
 | `API_KEY_HASH_SECRET` | Recommended for production so API-key hashes use a dedicated server-side pepper. |
-| `NATS_INTERNAL_PASSWORD` / `NATS_BROWSER_TOKEN` | Must be unique. Internal credentials are not exposed unless explicitly enabled. |
-| `MQTT_BROKER_PASSWORD` | Must be unique when embedded MQTT or MQTT ingest is enabled. |
+| `NATS_INTERNAL_PASSWORD` | Must be unique. Internal credentials are not exposed unless explicitly enabled. Browser/mobile clients use their own authenticated session, scoped to their current organisation; the legacy `NATS_BROWSER_TOKEN` is ignored. |
+| `MQTT_BROKER_PASSWORD` | Used only by the ingest client with an external MQTT broker; configure a unique password and tenant ACLs there. The embedded broker authenticates devices with tenant API keys and generates its own internal ingest credential. |
+| `XACT_BOOTSTRAP_SETUP_TOKEN` | Optional operator-only, randomly generated token of at least 32 characters. Required to claim an unset admin password through the browser; setup is disabled when absent. Remove after setup. |
 | `API_HOST`, `NATS_WS_HOST` | Packaged evaluation defaults bind these to `0.0.0.0` for browser access from a trusted local network. For production, bind to loopback or a trusted interface behind a reverse proxy. |
 | `NATS_HOST` | Defaults to `127.0.0.1` for the internal NATS listener. Keep it private unless clustering explicitly requires otherwise. |
 | `NATS_LOG_FILE` | Defaults to `./logs/nats.log`. Check this file when embedded NATS fails to start; startup also prints the last log lines on failure. |
@@ -22,10 +23,22 @@ Review these `.env` settings before exposing XACT beyond localhost:
 | `CORS_ALLOWED_ORIGINS` | Set to the exact UI origins allowed to call the API. In production, no wildcard development CORS is assumed. |
 | `MAX_REQUEST_BODY_BYTES` | Caps API request bodies. Defaults to 8 MiB. |
 | `EXPOSE_NATS_INTERNAL_CONFIG` | Keep `no`. Only enable for controlled test harness use; the route still requires `SystemAdmin`. |
-| `NATS_BROWSER_ALLOW_COMMANDS` | Keep `no`. Browser command publishing should use the server-mediated command endpoint. |
+| `NATS_BROWSER_ALLOW_COMMANDS` | Keep `no` to use the server-mediated command endpoint. If enabled, direct publishing is limited to the current organisation and users with tag-write permission. |
 | `EVENT_RETENTION_DAYS` | Production default is `0`, which disables application-side audit/event purging. Set a positive value only when retention policy allows deletion. |
 
-API keys for REST ingest are stored as keyed hashes. The full raw key is shown only when it is created; later list views show masked metadata. Store new keys in your device secret manager when they are issued.
+API keys for REST and embedded MQTT ingest are stored as keyed hashes. The full raw key is shown only when it is created; later list views show masked metadata. Store new keys in your device secret manager when they are issued.
+
+## Security upgrade steps
+
+Rebuild and deploy both the server and UI, restart the server, and refresh browser clients. Restarting drops existing messaging connections. NATS permissions are rechecked on reconnect and at session expiry; an existing connection can retain its grants until then.
+
+Existing agent tokens are invalidated by the authentication-version migration and must be deleted and reissued. New tokens stop working when the owner is disabled, loses membership or roles, changes password, or has their sessions revoked. Issuance and retrieval require all token roles to be held by the caller, unless the caller is SystemAdmin. Agent tokens cannot create user sessions through organisation switching or use personal profile/password endpoints.
+
+For each MQTT device, create an ingest API key in its organisation. Set the MQTT username to the organisation slug, password to that API key, and client ID to `<organisation>:<device-id>`. Publish to `xact/data/<organisation>/<device-type>/<device-name>` or `xact/data/<organisation>/zone/<zone>/<device-type>/<device-name>`. Shared passwords and unrestricted wildcard subscriptions no longer work. The embedded ingest connection is configured automatically; keep external brokers' authentication and ACLs equally restrictive.
+
+For a fresh database, provision `XACT_BOOTSTRAP_ADMIN_PASSWORD` or its password file before first startup, or generate `XACT_BOOTSTRAP_SETUP_TOKEN` using `openssl rand -hex 32` and enter it in the setup form. For an existing database with an unset admin password, use the setup token. Setup can claim the account only once and cannot overwrite a configured password.
+
+Report RTDB variables must use fully qualified paths beginning with their own organisation, such as `default.device.temperature` or `/default/device/temperature`. Invalid or foreign paths resolve to empty values.
 
 ## PostgreSQL and TimescaleDB
 
@@ -147,3 +160,5 @@ ENABLE_AUTH_PLUGIN=yes
 ```
 
 Static widget, map-layer, and theme plugins are served as JavaScript and should be installed only from trusted sources.
+
+Browser NATS connections cannot access JetStream administration or KV buckets. Initial tree data is loaded through the authenticated REST API. Reconnects revalidate the session against the database, and connections close when their session expires. Account changes take effect on reconnect; already-connected sessions remain valid until their expiry.

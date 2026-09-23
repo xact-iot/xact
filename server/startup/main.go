@@ -78,14 +78,10 @@ func main() {
 
 	// Read or generate NATS credentials.
 	// NATS_INTERNAL_PASSWORD is used by the Go server process (full access).
-	// NATS_BROWSER_TOKEN is served to authenticated browsers with scoped permissions.
+	// Browser clients authenticate with their own HTTP session, never a shared secret.
 	internalPassword := os.Getenv("NATS_INTERNAL_PASSWORD")
 	if internalPassword == "" {
 		internalPassword = mustRandHex(16)
-	}
-	browserToken := os.Getenv("NATS_BROWSER_TOKEN")
-	if browserToken == "" {
-		browserToken = mustRandHex(16)
 	}
 
 	// HTTPS configuration from environment
@@ -131,10 +127,7 @@ func main() {
 		LogFile:       natsLogFile,
 	}
 
-	browserPublishAllow := []string{"$JS.API.>", "_INBOX.>"}
-	if envEnabled("NATS_BROWSER_ALLOW_COMMANDS") {
-		browserPublishAllow = append(browserPublishAllow, "xact.command.>")
-	}
+	natsAuth := nats.NewClientAuthenticator(internalPassword)
 
 	opts := &server.Options{
 		Host: natsHost,
@@ -145,45 +138,15 @@ func main() {
 			NoTLS:     wsNoTLS,
 			TLSConfig: wsTLSConfig,
 		},
-		StoreDir:   natsStoreDir,
-		JetStream:  true,
-		NoLog:      false,
-		Debug:      envEnabled("NATS_DEBUG"),
-		Trace:      envEnabled("NATS_TRACE"),
-		LogFile:    natsLogFile,
-		Logtime:    true,
-		MaxPayload: 8 * 1024 * 1024,
-		Users: []*server.User{
-			{
-				Username: "internal",
-				Password: internalPassword,
-				Permissions: &server.Permissions{
-					Publish:   &server.SubjectPermission{Allow: []string{">"}},
-					Subscribe: &server.SubjectPermission{Allow: []string{">"}},
-				},
-			},
-			{
-				// Browser clients: subscribe to RTDB/broadcast subjects and use
-				// JetStream API (for KV and stream consumers). Publishing to
-				// application subjects (rtdb.>, xact.>) is denied.
-				Username: "browser",
-				Password: browserToken,
-				Permissions: &server.Permissions{
-					Publish: &server.SubjectPermission{
-						Allow: browserPublishAllow,
-					},
-					Subscribe: &server.SubjectPermission{
-						Allow: []string{
-							"rtdb.tree.>",
-							"xact.internal.bcast.>",
-							"$JS.>",
-							"$KV.>",
-							"_INBOX.>",
-						},
-					},
-				},
-			},
-		},
+		StoreDir:                   natsStoreDir,
+		JetStream:                  true,
+		NoLog:                      false,
+		Debug:                      envEnabled("NATS_DEBUG"),
+		Trace:                      envEnabled("NATS_TRACE"),
+		LogFile:                    natsLogFile,
+		Logtime:                    true,
+		MaxPayload:                 8 * 1024 * 1024,
+		CustomClientAuthentication: natsAuth,
 	}
 
 	// Create and start NATS server
@@ -457,6 +420,7 @@ func main() {
 
 	apiConfig.AppVersion = appVersion()
 	apiServer := api.NewServer(apiConfig, treeOps, treeSync, nc, jwtSecret, database, pluginDir)
+	natsAuth.SetBrowserAuthenticator(apiServer.AuthenticateNATS)
 	apiServer.SetIngestProcessor(processor)
 	apiServer.SetEventsPublisher(publisher)
 
@@ -555,10 +519,11 @@ func main() {
 	}
 
 	// Start MQTT broker if enabled
-	embeddedMqtt := os.Getenv("EMBEDDED_MQTT_SERVER")
+	embeddedMqtt := envEnabledDefault("EMBEDDED_MQTT_SERVER", true)
 	embeddedBrokerRunning := false
-	if embeddedMqtt == "" || embeddedMqtt == "yes" {
-		if err := StartMqttBroker(); err != nil {
+	embeddedMQTTPassword := mustRandHex(32)
+	if embeddedMqtt {
+		if err := StartMqttBroker(database, embeddedMQTTPassword); err != nil {
 			log.Printf("Embedded MQTT broker failed to start: %v", err)
 		} else {
 			embeddedBrokerRunning = true
@@ -566,11 +531,16 @@ func main() {
 	}
 
 	// Start MQTT client if enabled
-	mqttClientEnabled := os.Getenv("MQTT_CLIENT_ENABLED")
 	var mqttClient *mqtt.Client
-	externalBroker := os.Getenv("MQTT_BROKER_URL") != ""
-	if (mqttClientEnabled == "" || mqttClientEnabled == "yes") && (embeddedBrokerRunning || externalBroker) {
-		mqttClient = mqtt.NewClientFromEnv(treeOps, nc)
+	externalBroker := !embeddedMqtt && os.Getenv("MQTT_BROKER_URL") != ""
+	if envEnabledDefault("MQTT_CLIENT_ENABLED", true) && (embeddedBrokerRunning || externalBroker) {
+		mqttConfig := mqtt.ConfigFromEnv()
+		if embeddedBrokerRunning {
+			mqttConfig.Username = mqttInternalUsername
+			mqttConfig.Password = embeddedMQTTPassword
+			mqttConfig.ClientID = mqttInternalUsername
+		}
+		mqttClient = mqtt.NewClient(mqttConfig, treeOps, nc)
 		if err := mqttClient.Start(); err != nil {
 			console.Warn("mqtt", "", "Failed to start MQTT client", "error", err)
 		}
@@ -599,8 +569,6 @@ func main() {
 		natsWSPath = "/xact/ws"
 	}
 	apiServer.SetNATSBrowserConfig(api.NATSBrowserConfig{
-		Username:   "browser",
-		Password:   browserToken,
 		NATSWSPath: natsWSPath,
 		NATSWSURL:  os.Getenv("NATS_WS_URL"),
 	})

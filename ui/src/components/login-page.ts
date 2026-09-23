@@ -299,7 +299,7 @@ const STYLE = `
 
 export class LoginPage extends HTMLElement {
   private shadow: ShadowRoot;
-  private mode: 'checking' | 'login' | 'setup' = 'checking';
+  private mode: 'checking' | 'login' | 'setup' | 'setup-disabled' = 'checking';
 
   constructor() {
     super();
@@ -351,12 +351,19 @@ export class LoginPage extends HTMLElement {
   }
 
   private renderForm() {
+    if (this.mode === 'setup-disabled') {
+      return '<div class="intro">Initial admin setup must be enabled by the server administrator.</div>';
+    }
     if (this.mode === 'setup') {
       return `
         <div class="section-label setup-label">SET ADMIN PASSWORD</div>
-        <div class="intro">Create the initial password for the admin account.</div>
+        <div class="intro">Enter the setup token supplied by the server administrator and create the initial admin password.</div>
 
         <form autocomplete="off" novalidate>
+          <div class="field">
+            <label for="setup-token">Setup Token</label>
+            <input id="setup-token" name="setup-token" type="password" autocomplete="off" />
+          </div>
           <div class="field">
             <label for="password">New Password</label>
             <input id="password" name="password" type="password" autocomplete="new-password" />
@@ -402,7 +409,7 @@ export class LoginPage extends HTMLElement {
   private async checkBootstrapStatus() {
     try {
       const status = await getBootstrapAdminStatus();
-      this.mode = status.setupRequired ? 'setup' : 'login';
+      this.mode = status.setupRequired ? (status.setupEnabled ? 'setup' : 'setup-disabled') : 'login';
       this.render();
       const firstInput = this.shadow.querySelector('input') as HTMLInputElement | null;
       firstInput?.focus();
@@ -423,6 +430,13 @@ export class LoginPage extends HTMLElement {
     const password = passwordEl.value;
 
     if (this.mode === 'setup') {
+      const setupTokenEl = this.shadow.getElementById('setup-token') as HTMLInputElement;
+      const setupToken = setupTokenEl.value;
+      if (!setupToken) {
+        this.showError('Enter the setup token supplied by the server administrator.');
+        setupTokenEl.focus();
+        return;
+      }
       const confirmPasswordEl = this.shadow.getElementById('confirm-password') as HTMLInputElement;
       const confirmPassword = confirmPasswordEl.value;
       if (password.length < 8) {
@@ -442,7 +456,7 @@ export class LoginPage extends HTMLElement {
       errorMsg.classList.remove('visible');
 
       try {
-        await setBootstrapAdminPassword(password);
+        await setBootstrapAdminPassword(password, setupToken);
         this.dispatchEvent(new CustomEvent('auth-success', { bubbles: true, composed: true }));
       } catch (err: any) {
         this.showError(err?.message || 'Failed to set admin password.');

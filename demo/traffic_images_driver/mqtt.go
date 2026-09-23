@@ -41,7 +41,7 @@ func (p *MQTTPublisher) Connect() error {
 	if tlsConfig := mqttclient.TLSConfigFromEnv(broker); tlsConfig != nil {
 		opts.SetTLSConfig(tlsConfig)
 	}
-	opts.SetClientID("lta-traffic-images-driver")
+	opts.SetClientID(p.username + ":lta-traffic-images-driver")
 	if p.username != "" {
 		opts.SetUsername(p.username)
 	}
@@ -85,7 +85,7 @@ func (p *MQTTPublisher) Disconnect() {
 
 // PublishTrafficImage publishes a single traffic camera image record
 func (p *MQTTPublisher) PublishTrafficImage(data TrafficImageData) error {
-	topic := fmt.Sprintf("xact/data/default/zone/Singapore/TrafficCamera/%s", data.CameraID)
+	topic := fmt.Sprintf("xact/data/%s/zone/Singapore/TrafficCamera/%s", p.username, data.CameraID)
 
 	payload := map[string]any{
 		"meta": map[string]any{

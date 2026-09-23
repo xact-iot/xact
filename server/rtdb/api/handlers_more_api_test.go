@@ -190,7 +190,7 @@ func TestNATSBrowserConfigAndTimezone(t *testing.T) {
 	s := &Server{config: ServerConfig{StaticServeMode: "proxy"}}
 	s.SetNATSBrowserConfig(NATSBrowserConfig{Username: "u", Password: "p", NATSWSPath: "/ws"})
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/nats", nil)
+	req := natsConfigRequest()
 	req.Host = "example.test:8443"
 	s.handleNATSConfig(rr, req)
 	if rr.Code != http.StatusOK {
@@ -232,7 +232,7 @@ func TestNATSConfigDirectModeUsesExplicitProxyPath(t *testing.T) {
 		Password:   "p",
 		NATSWSPath: "/xact/ws",
 	})
-	req := httptest.NewRequest(http.MethodGet, "/nats", nil)
+	req := natsConfigRequest()
 	rr := httptest.NewRecorder()
 	s.handleNATSConfig(rr, req)
 	if rr.Code != http.StatusOK {
@@ -254,7 +254,7 @@ func TestNATSConfigDirectModeInfersURLWithoutExplicitConfig(t *testing.T) {
 	t.Setenv("NATS_WS_PORT", "9222")
 	s := &Server{config: ServerConfig{StaticServeMode: "server"}}
 	s.SetNATSBrowserConfig(NATSBrowserConfig{Username: "u", Password: "p"})
-	req := httptest.NewRequest(http.MethodGet, "/nats", nil)
+	req := natsConfigRequest()
 	req.Host = "windows-vm:8080"
 	rr := httptest.NewRecorder()
 	s.handleNATSConfig(rr, req)
@@ -325,7 +325,7 @@ func TestNATSConfigProxyModeDoesNotInferURL(t *testing.T) {
 	s := &Server{config: ServerConfig{StaticServeMode: "proxy"}}
 	s.SetNATSBrowserConfig(NATSBrowserConfig{Username: "u"})
 	rr := httptest.NewRecorder()
-	s.handleNATSConfig(rr, httptest.NewRequest(http.MethodGet, "/nats", nil))
+	s.handleNATSConfig(rr, natsConfigRequest())
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d", rr.Code)
 	}

@@ -26,10 +26,12 @@ Useful flags:
 Environment defaults mirror the other XACT tools: `MQTT_BROKER`, `MQTT_USERNAME`, and `MQTT_BROKER_PASSWORD`. AirQuality loads environment values from exported variables, a local `.env`, or the shared `../demo/.env`.
 For MQTT over TLS, use `mqtts://...` in `MQTT_BROKER`. Publicly trusted broker certificates work like HTTPS; for a local self-signed XACT broker, set `MQTT_TLS_CA_FILE` to the broker certificate, for example `../server/certs/server.crt`.
 
+The MQTT username defaults to the selected tenant and the generated client ID includes its prefix. Set `MQTT_BROKER_PASSWORD` to an ingest API key for that tenant; an explicit `MQTT_CLIENT_ID` must use `<tenant>:<device-id>`.
+
 For the same local MQTT TLS setup as the demo drivers:
 
 ```env
-MQTT_BROKER_PASSWORD=xact
+MQTT_BROKER_PASSWORD=<your-organisation-ingest-api-key>
 MQTT_BROKER=mqtts://127.0.0.1:1883
 MQTT_TLS_INSECURE_SKIP_VERIFY=true
 ```

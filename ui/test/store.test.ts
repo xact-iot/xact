@@ -178,19 +178,20 @@ describe('MirrorStore connection and NATS helpers', () => {
     localStorage.clear();
   });
 
-  it('connects with credentials, creates the KV bucket, and hydrates desired tag paths', async () => {
+  it('connects with session credentials and a private inbox, skips JetStream, and hydrates through REST', async () => {
     const seen: any[] = [];
     store.subscribe('default.Device.temp', value => seen.push(value));
 
-    await store.storeConnectNats('ws://nats.example', 'mirror', 'alice', 'secret');
+    await store.storeConnectNats('ws://nats.example', 'alice', 'secret', '_INBOX.session');
     await flushAsyncWork();
 
     expect(natsMock.wsconnect).toHaveBeenCalledWith({
       servers: 'ws://nats.example',
       user: 'alice',
       pass: 'secret',
+      inboxPrefix: '_INBOX.session',
     });
-    expect(kvMock.create).toHaveBeenCalledWith('mirror');
+    expect(kvMock.create).not.toHaveBeenCalled();
     expect(nc.subscribe).toHaveBeenCalledWith('xact.internal.bcast.tagvalue.default.>');
     expect(apiMock.loadTag).toHaveBeenCalledWith('default.Device.temp');
     expect(store.getOrg()).toBe('default');
@@ -203,7 +204,7 @@ describe('MirrorStore connection and NATS helpers', () => {
     authMock.getCurrentUser.mockReturnValue(null);
     natsMock.wsconnect.mockRejectedValue(error);
 
-    await store.storeConnectNats('ws://broken', 'mirror');
+    await store.storeConnectNats('ws://broken');
 
     expect(store.getOrg()).toBe('default');
     expect(console.error).toHaveBeenCalledWith('Error connecting:', error);
@@ -214,10 +215,10 @@ describe('MirrorStore connection and NATS helpers', () => {
     const unsubscribe = store.subscribeNatsConnectionState(state => states.push(state));
 
     natsMock.wsconnect.mockRejectedValueOnce(new Error('no socket'));
-    await store.storeConnectNats('ws://broken', 'mirror');
+    await store.storeConnectNats('ws://broken');
     expect(states).toEqual(['unknown', 'connecting', 'disconnected']);
 
-    await store.storeConnectNats('ws://nats.example', 'mirror');
+    await store.storeConnectNats('ws://nats.example');
     nc.statuses.push({ type: 'disconnect', server: 'nats.example' });
     nc.statuses.push({ type: 'reconnect', server: 'nats.example' });
     await flushAsyncWork();
@@ -232,7 +233,7 @@ describe('MirrorStore connection and NATS helpers', () => {
   it('requests JSON payloads through NATS and handles empty responses', async () => {
     await expect(store.request('subject', { a: 1 }, 50)).rejects.toThrow('NATS is not connected');
 
-    await store.storeConnectNats('ws://nats.example', 'mirror');
+    await store.storeConnectNats('ws://nats.example');
     nc.request
       .mockResolvedValueOnce({ data: new TextEncoder().encode('{"ok":true}') })
       .mockResolvedValueOnce({ data: new Uint8Array() });
@@ -248,8 +249,8 @@ describe('MirrorStore connection and NATS helpers', () => {
     );
   });
 
-  it('cleans up KV watchers, tag subscriptions, and the NATS connection on disconnect', async () => {
-    await store.storeConnectNats('ws://nats.example', 'mirror');
+  it('cleans up tree and tag subscriptions and the NATS connection on disconnect', async () => {
+    await store.storeConnectNats('ws://nats.example');
     store.subscribe('default.Device.temp', () => undefined);
     store.startKvWatch('default');
     await flushAsyncWork();
@@ -257,8 +258,8 @@ describe('MirrorStore connection and NATS helpers', () => {
     await store.storeDisconnectNats();
     const state = store.debugNatsState();
 
-    expect(kv.watch).toHaveBeenCalledWith({ key: 'default.>' });
-    expect(kv.watchers[0].stopped).toBe(true);
+    expect(kv.watch).not.toHaveBeenCalled();
+    expect(nc.subscriptions['rtdb.tree.default.>'].unsubscribe).toHaveBeenCalled();
     expect(nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].unsubscribe).toHaveBeenCalled();
     expect(nc.close).toHaveBeenCalled();
     expect(state.connected).toBe(false);
@@ -271,7 +272,7 @@ describe('MirrorStore connection and NATS helpers', () => {
     disconnectedUnsub();
     expect(console.warn).toHaveBeenCalledWith('[xact:store:probe] NATS is not connected');
 
-    await store.storeConnectNats('ws://nats.example', 'mirror');
+    await store.storeConnectNats('ws://nats.example');
     const unsubscribe = store.debugSubscribeSubject('probe');
 
     nc.subscriptions.probe.push(msg('probe', { hello: 'world' }));
@@ -686,7 +687,7 @@ describe('MirrorStore tree subscriptions and live tag broadcasts', () => {
     apiMock.loadTag.mockResolvedValue({ config: {}, shared: {}, status: 'N', value: 1 });
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    await store.storeConnectNats('ws://nats.example', 'mirror');
+    await store.storeConnectNats('ws://nats.example');
   });
 
   afterEach(async () => {
@@ -695,7 +696,7 @@ describe('MirrorStore tree subscriptions and live tag broadcasts', () => {
     vi.clearAllMocks();
   });
 
-  it('notifies exact, ancestor, and root tree subscribers for KV watcher updates', async () => {
+  it('notifies exact, ancestor, and root subscribers for tenant tree updates', async () => {
     const exact = vi.fn();
     const parent = vi.fn();
     const root = vi.fn();
@@ -705,14 +706,14 @@ describe('MirrorStore tree subscriptions and live tag broadcasts', () => {
 
     store.startKvWatch('default');
     await flushAsyncWork();
-    kv.watchers[0].push(kvEntry('default.Device.temp', {
+    nc.subscriptions['rtdb.tree.default.>'].push(msg('rtdb.tree.default.Device.temp', {
       type: 'leaf',
       value: 44,
       status: 'N',
     }));
     await flushAsyncWork();
     unsubscribeRoot();
-    kv.watchers[0].push(kvEntry('default.Device.temp', {
+    nc.subscriptions['rtdb.tree.default.>'].push(msg('rtdb.tree.default.Device.temp', {
       type: 'leaf',
       value: 45,
       status: 'N',
@@ -759,6 +760,7 @@ describe('MirrorStore tree subscriptions and live tag broadcasts', () => {
   });
 
   it('logs tree subscription setup failures', async () => {
+    store['treeSubscriptionsActive'] = false;
     const error = new Error('subscribe failed');
     nc.subscribe.mockImplementationOnce(() => {
       throw error;
@@ -799,7 +801,7 @@ describe('MirrorStore tree subscriptions and live tag broadcasts', () => {
     expect(seen).toContain(12.35);
   });
 
-  it('does not start duplicate tag-value or KV watchers', async () => {
+  it('does not start duplicate tag-value or tree subscriptions', async () => {
     store.subscribe('default.Device.temp', () => undefined);
     store.subscribe('default.Device.pressure', () => undefined);
     store.startKvWatch('default');
@@ -807,7 +809,8 @@ describe('MirrorStore tree subscriptions and live tag broadcasts', () => {
     await flushAsyncWork();
 
     expect(nc.subscribe.mock.calls.filter(call => call[0] === 'xact.internal.bcast.tagvalue.default.>')).toHaveLength(1);
-    expect(kv.watch).toHaveBeenCalledTimes(1);
+    expect(kv.watch).not.toHaveBeenCalled();
+    expect(nc.subscribe.mock.calls.filter(call => call[0] === 'rtdb.tree.default.>')).toHaveLength(1);
   });
 
   it('skips live tag watches outside the active org', () => {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -16,11 +17,17 @@ type MQTTPublisher struct {
 	client   mqtt.Client
 	broker   string
 	password string
+	username string
 }
 
 // NewMQTTPublisher creates a new MQTT publisher
 func NewMQTTPublisher(broker, password string) *MQTTPublisher {
+	username := os.Getenv("MQTT_BROKER_USERNAME")
+	if username == "" {
+		username = "default"
+	}
 	return &MQTTPublisher{
+		username: username,
 		broker:   broker,
 		password: password,
 	}
@@ -35,8 +42,8 @@ func (p *MQTTPublisher) Connect() error {
 	if tlsConfig := mqttclient.TLSConfigFromEnv(broker); tlsConfig != nil {
 		opts.SetTLSConfig(tlsConfig)
 	}
-	opts.SetClientID("lta-vms-driver")
-	opts.SetUsername("a")
+	opts.SetClientID(p.username + ":lta-vms-driver")
+	opts.SetUsername(p.username)
 	opts.SetPassword(p.password)
 	opts.SetAutoReconnect(true)
 	opts.SetConnectRetry(true)
@@ -72,7 +79,7 @@ func (p *MQTTPublisher) PublishVMS(data VMSData) error {
 	// msgtype: data/cmd
 	// devicetype: VMS
 	// devicename: EquipmentID
-	topic := fmt.Sprintf("xact/data/default/zone/Singapore/VMS/%s", data.EquipmentID)
+	topic := fmt.Sprintf("xact/data/%s/zone/Singapore/VMS/%s", p.username, data.EquipmentID)
 
 	// Build payload with nested taggroups
 	// meta: lat, lon, ts

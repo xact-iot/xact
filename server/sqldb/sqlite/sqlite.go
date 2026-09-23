@@ -259,6 +259,7 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 			id           INTEGER PRIMARY KEY,
 			org_id       INTEGER NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
 			user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			user_token_version INTEGER NOT NULL DEFAULT 0,
 			name         TEXT NOT NULL,
 			token_secret TEXT NOT NULL,
 			token_hash   TEXT NOT NULL UNIQUE,
@@ -271,6 +272,7 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 		)`,
 		`DROP INDEX IF EXISTS idx_org_agent_tokens_token_unique`,
 		`ALTER TABLE org_agent_tokens ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE`,
+		`ALTER TABLE org_agent_tokens ADD COLUMN user_token_version INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE org_agent_tokens ADD COLUMN token_secret TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE org_agent_tokens ADD COLUMN token_hash TEXT`,
 		`ALTER TABLE org_agent_tokens ADD COLUMN token_prefix TEXT NOT NULL DEFAULT ''`,
@@ -783,7 +785,7 @@ func logBootstrapAdminCredential(cred sqldb.AdminBootstrapCredential) {
 		log.Printf("Created bootstrap admin user 'admin' using password from %s", cred.Source)
 		return
 	}
-	log.Printf("Created bootstrap admin user 'admin' with password unset; first browser login must set it")
+	log.Printf("Created bootstrap admin user 'admin' with password unset; browser setup requires XACT_BOOTSTRAP_SETUP_TOKEN (at least 32 characters)")
 }
 
 // ensureAdminOrgRoles ensures the admin user has SystemAdmin role in all organisations.

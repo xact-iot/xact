@@ -119,6 +119,10 @@ func (s *Server) handleCreateAgentToken(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if !agentRolesWithinCaller(r.Context(), roles) {
+		http.Error(w, `{"error":"cannot issue roles beyond your own"}`, http.StatusForbidden)
+		return
+	}
 	var expiresAt *time.Time
 	if strings.TrimSpace(req.ExpiresAt) != "" {
 		t, err := time.Parse(time.RFC3339, strings.TrimSpace(req.ExpiresAt))
@@ -133,6 +137,7 @@ func (s *Server) handleCreateAgentToken(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(token)
 }
@@ -223,6 +228,11 @@ func (s *Server) handleGetAgentToken(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"agent token not found"}`, http.StatusNotFound)
 		return
 	}
+	if !agentRolesWithinCaller(r.Context(), token.Roles) {
+		http.Error(w, `{"error":"cannot retrieve a token with roles beyond your own"}`, http.StatusForbidden)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(token)
 }
 
@@ -305,4 +315,26 @@ func (s *Server) agentTokenRolesForUser(ctx context.Context, orgName string, use
 		return roles, nil
 	}
 	return nil, fmt.Errorf("user is not a member of this organisation")
+}
+
+// Role containment also covers privileges checked directly by role name. Only a
+// SystemAdmin may delegate roles they do not themselves hold.
+func agentRolesWithinCaller(ctx context.Context, roles []string) bool {
+	claims, ok := GetClaimsFromContext(ctx)
+	if !ok || len(roles) == 0 {
+		return false
+	}
+	if isSystemAdmin(ctx) {
+		return true
+	}
+	owned := make(map[string]bool, len(claims.Roles))
+	for _, role := range claims.Roles {
+		owned[strings.ToLower(role)] = true
+	}
+	for _, role := range roles {
+		if !owned[strings.ToLower(role)] {
+			return false
+		}
+	}
+	return true
 }

@@ -41,58 +41,42 @@ func JWTAuth(secret []byte, dbs ...sqldb.DB) func(http.Handler) http.Handler {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" {
-				unauthorized(w)
-				return
-			}
-
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-				unauthorized(w)
-				return
-			}
-
-			tokenString := parts[1]
-
-			parser := jwt.NewParser(
-				jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
-			)
-
-			token, err := parser.ParseWithClaims(
-				tokenString,
-				&JWTClaims{},
-				func(token *jwt.Token) (interface{}, error) {
-					return secret, nil
-				},
-			)
-
-			if err != nil || !token.Valid {
-				if claims, ok := resolveAgentBearer(r.Context(), db, tokenString); ok {
-					ctx := context.WithValue(r.Context(), claimsContextKey, claims)
-					next.ServeHTTP(w, r.WithContext(ctx))
-					return
-				}
-				unauthorized(w)
-				return
-			}
-
-			claims, ok := token.Claims.(*JWTClaims)
+			claims, ok := authenticateBearer(r.Context(), secret, db, requestBearer(r))
 			if !ok {
 				unauthorized(w)
 				return
-			}
-			if db != nil {
-				if !validateLiveAuthState(r.Context(), db, claims) {
-					unauthorized(w)
-					return
-				}
 			}
 
 			ctx := context.WithValue(r.Context(), claimsContextKey, claims)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func requestBearer(r *http.Request) string {
+	parts := strings.SplitN(r.Header.Get("Authorization"), " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return ""
+	}
+	return parts[1]
+}
+
+func authenticateBearer(ctx context.Context, secret []byte, db sqldb.DB, raw string) (*JWTClaims, bool) {
+	if raw == "" {
+		return nil, false
+	}
+	parser := jwt.NewParser(jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
+	token, err := parser.ParseWithClaims(raw, &JWTClaims{}, func(*jwt.Token) (interface{}, error) {
+		return secret, nil
+	})
+	if err != nil || !token.Valid {
+		return resolveAgentBearer(ctx, db, raw)
+	}
+	claims, ok := token.Claims.(*JWTClaims)
+	if !ok || (db != nil && !validateLiveAuthState(ctx, db, claims)) {
+		return nil, false
+	}
+	return claims, true
 }
 
 func resolveAgentBearer(ctx context.Context, db sqldb.DB, raw string) (*JWTClaims, bool) {
@@ -104,26 +88,56 @@ func resolveAgentBearer(ctx context.Context, db sqldb.DB, raw string) (*JWTClaim
 	if err != nil || token == nil || token.OrgName == "" {
 		return nil, false
 	}
+	user, err := db.GetUserByID(ctx, token.UserID)
+	if err != nil || user == nil || !user.Active {
+		return nil, false
+	}
+	var roles []string
+	for _, org := range user.Orgs {
+		if org.OrgName != token.OrgName {
+			continue
+		}
+		for _, granted := range token.Roles {
+			for _, live := range org.Roles {
+				if strings.EqualFold(granted, live) {
+					roles = append(roles, live)
+					break
+				}
+			}
+		}
+	}
+	if len(roles) == 0 {
+		return nil, false
+	}
 	_ = resolver.TouchAgentToken(ctx, token.ID)
 	return &JWTClaims{
-		UserID:       "0",
+		UserID:       strconv.Itoa(token.UserID),
 		Username:     "agent:" + token.Name,
 		TenantID:     token.OrgName,
-		Roles:        token.Roles,
+		Roles:        roles,
 		AllowedOrgs:  []string{token.OrgName},
-		TokenVersion: 0,
+		TokenVersion: user.TokenVersion,
 		TokenType:    "agent",
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:  token.Name,
-			Issuer:   "xact",
-			IssuedAt: jwt.NewNumericDate(token.CreatedAt),
+			Subject:   token.Name,
+			Issuer:    "xact",
+			IssuedAt:  jwt.NewNumericDate(token.CreatedAt),
+			ExpiresAt: agentTokenExpiry(token),
 		},
 	}, true
 }
 
+func agentTokenExpiry(token *sqldb.AgentToken) *jwt.NumericDate {
+	if token.ExpiresAt == nil {
+		return nil
+	}
+	return jwt.NewNumericDate(*token.ExpiresAt)
+}
+
 func validateLiveAuthState(ctx context.Context, db sqldb.DB, claims *JWTClaims) bool {
 	if claims.TokenType == "agent" {
-		return true
+		// Agent credentials are opaque database tokens, never signed JWTs.
+		return false
 	}
 	userID, err := strconv.Atoi(claims.UserID)
 	if err != nil || userID <= 0 {

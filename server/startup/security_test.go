@@ -24,7 +24,7 @@ func TestValidateProductionSecretsAllowsConfiguredProductionSecrets(t *testing.T
 	t.Setenv("XACT_ENV", "production")
 	t.Setenv("JWT_SECRET", "jwt-secret-with-enough-randomness")
 	t.Setenv("NATS_INTERNAL_PASSWORD", "internal-secret-with-enough-randomness")
-	t.Setenv("NATS_BROWSER_TOKEN", "browser-token-with-enough-randomness")
+	t.Setenv("NATS_BROWSER_TOKEN", "") // Shared browser credentials are no longer required.
 	t.Setenv("MQTT_BROKER_PASSWORD", "mqtt-broker-secret-with-enough-randomness")
 
 	if err := validateProductionSecrets(); err != nil {
@@ -126,20 +126,20 @@ func TestResolvePluginDirRandHexAndMQTTHook(t *testing.T) {
 	}
 
 	h := &MqttPasswordHook{}
-	if h.ID() != "password-auth" {
+	if h.ID() != "tenant-auth" {
 		t.Fatalf("hook ID = %q", h.ID())
 	}
 	if !h.Provides(mqtt.OnConnectAuthenticate) || !h.Provides(mqtt.OnACLCheck) || h.Provides(0xff) {
 		t.Fatal("hook Provides mismatch")
 	}
 	t.Setenv("MQTT_BROKER_PASSWORD", "secret")
-	if !h.OnConnectAuthenticate(&mqtt.Client{}, packets.Packet{Connect: packets.ConnectParams{Password: []byte("secret")}}) {
-		t.Fatal("expected MQTT auth success")
+	if h.OnConnectAuthenticate(&mqtt.Client{}, packets.Packet{Connect: packets.ConnectParams{Password: []byte("secret")}}) {
+		t.Fatal("legacy shared password must be rejected")
 	}
 	if h.OnConnectAuthenticate(&mqtt.Client{}, packets.Packet{Connect: packets.ConnectParams{Password: []byte("wrong")}}) {
 		t.Fatal("expected MQTT auth failure")
 	}
-	if !h.OnACLCheck(&mqtt.Client{}, "any/topic", true) {
-		t.Fatal("ACL should allow")
+	if h.OnACLCheck(&mqtt.Client{}, "any/topic", true) {
+		t.Fatal("unauthenticated ACL must deny")
 	}
 }

@@ -169,9 +169,9 @@ func parseFlags() config {
 		templateWait:   envDurationDefault("AIRQUALITY_TEMPLATE_WAIT", defaultTemplateWait),
 		publishTimeout: envDurationDefault("AIRQUALITY_PUBLISH_TIMEOUT", defaultPublishTimeout),
 		mqttURL:        envDefault("MQTT_BROKER", "tcp://127.0.0.1:1883"),
-		mqttUsername:   envDefault("MQTT_USERNAME", "airquality"),
-		mqttPassword:   envDefault("MQTT_BROKER_PASSWORD", "xact"),
-		mqttClientID:   envDefault("MQTT_CLIENT_ID", fmt.Sprintf("xact-airquality-%d", time.Now().UnixNano())),
+		mqttUsername:   os.Getenv("MQTT_USERNAME"),
+		mqttPassword:   os.Getenv("MQTT_BROKER_PASSWORD"),
+		mqttClientID:   os.Getenv("MQTT_CLIENT_ID"),
 		mqttQoS:        envIntDefault("MQTT_QOS", 1),
 	}
 
@@ -191,6 +191,12 @@ func parseFlags() config {
 	flag.IntVar(&cfg.mqttQoS, "mqtt-qos", cfg.mqttQoS, "MQTT publish QoS")
 
 	flag.Parse()
+	if cfg.mqttUsername == "" {
+		cfg.mqttUsername = cfg.tenant
+	}
+	if cfg.mqttClientID == "" {
+		cfg.mqttClientID = fmt.Sprintf("%s:airquality-%d", cfg.tenant, time.Now().UnixNano())
+	}
 
 	return cfg
 }

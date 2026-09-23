@@ -79,11 +79,6 @@ setAuthHeadersProvider(getAuthHeaders);
 
 // Theme is initialized by the ThemeManager singleton constructor (imported by preferences-dialog)
 
-// Store connection configuration
-const NATS_CONFIG = {
-  kvBucket: (import.meta as any).env.VITE_NATS_KV_BUCKET || 'rtdb',
-};
-
 // Initialize store connection
 async function initializeStore(): Promise<void> {
   try {
@@ -92,7 +87,7 @@ async function initializeStore(): Promise<void> {
     // Fetch WebSocket NATS credentials from the REST API (authenticated endpoint)
     const natsCfg = await fetchNATSConfig();
     const wsUrl = natsCfg.natsWsUrl || `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${natsCfg.natsWsPath}`;
-    await store.storeConnectNats(wsUrl, NATS_CONFIG.kvBucket, natsCfg.username, natsCfg.password);
+    await store.storeConnectNats(wsUrl, natsCfg.username, natsCfg.password, natsCfg.inboxPrefix);
 
     // Load tree structure and metadata from REST API
     // Use depth=-1 to fetch entire subtree in a single request (instead of thousands of sequential requests)

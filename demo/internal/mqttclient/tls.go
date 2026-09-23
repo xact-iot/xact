@@ -31,7 +31,7 @@ func NormalizeBrokerURL(broker string) string {
 //
 // MQTT uses normal TLS server authentication: clients do not need certificates
 // unless the broker explicitly requires mutual TLS. XACT authenticates MQTT
-// clients with MQTT_BROKER_PASSWORD, so these settings only control how the
+// clients with a tenant ingest API key in MQTT_BROKER_PASSWORD, so these settings only control how the
 // client verifies the broker certificate.
 func TLSConfigFromEnv(brokerURL string) *tls.Config {
 	if !IsTLSBrokerURL(brokerURL) {

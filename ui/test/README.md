@@ -104,7 +104,8 @@ describe('MirrorStore', () => {
   beforeAll(async () => {
     store = new MirrorStore();
     // Only pass URL and bucket name - NATS is handled internally
-    await store.storeConnectNats('ws://localhost:9222', 'rtdb');
+    const cfg = await fetchNATSConfig();
+    await store.storeConnectNats('ws://localhost:9222', cfg.username, cfg.password, cfg.inboxPrefix);
   });
 
   afterAll(async () => {

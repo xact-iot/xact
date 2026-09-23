@@ -58,10 +58,11 @@ type TLSConfig struct {
 
 // NATSBrowserConfig holds the WebSocket NATS credentials served to browsers.
 type NATSBrowserConfig struct {
-	Username   string `json:"username"`
-	Password   string `json:"password"`
-	NATSWSPath string `json:"natsWsPath"`
-	NATSWSURL  string `json:"natsWsUrl,omitempty"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	InboxPrefix string `json:"inboxPrefix"`
+	NATSWSPath  string `json:"natsWsPath"`
+	NATSWSURL   string `json:"natsWsUrl,omitempty"`
 }
 
 // NATSInternalConfig holds the internal NATS credentials for test harness connections.
@@ -193,7 +194,9 @@ func NewServer(config ServerConfig, treeOps *tree.TreeWithOperations, treeSync *
 		}
 		s.meHandlers = api.NewMeHandlers(database, func(ctx context.Context) (int, bool) {
 			claims, ok := GetClaimsFromContext(ctx)
-			if !ok {
+			// Agent owner IDs are for attribution; personal account endpoints
+			// require a user session, not a delegated credential.
+			if !ok || claims.TokenType == "agent" {
 				return 0, false
 			}
 			id, err := strconv.Atoi(claims.UserID)
@@ -870,9 +873,19 @@ func (s *Server) handleNATSConfigWithSchema() openAPIHandler {
 }
 
 func (s *Server) handleNATSConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	claims, ok := GetClaimsFromContext(r.Context())
+	bearer := requestBearer(r)
+	if !ok || bearer == "" || !nats.ValidBrowserSubjectToken(claims.TenantID) {
+		unauthorized(w)
+		return
+	}
 	s.natsCfgMu.RLock()
 	cfg := s.natsBrowserConfig
 	s.natsCfgMu.RUnlock()
+	cfg.Username = "browser"
+	cfg.Password = bearer
+	cfg.InboxPrefix = nats.BrowserInboxPrefix(bearer)
 
 	// Explicit WebSocket configuration takes precedence over the static-file
 	// serving mode. A deployment can serve its own UI while a reverse proxy

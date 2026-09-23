@@ -199,9 +199,9 @@ func (db *SQLiteDB) UpdateUser(ctx context.Context, user *sqldb.User) error {
 	result, err := db.db.ExecContext(ctx, `
 		UPDATE users SET
 			first_name = ?, last_name = ?, email = ?,
-			notification_options = ?, active = ?, updated_at = ?
+			notification_options = ?, token_version = token_version + CASE WHEN active <> ? THEN 1 ELSE 0 END, active = ?, updated_at = ?
 		WHERE id = ?
-	`, user.FirstName, user.LastName, user.Email, string(opts), active, now, user.ID)
+	`, user.FirstName, user.LastName, user.Email, string(opts), active, active, now, user.ID)
 	if err != nil {
 		if duplicateErr := sqliteUserWriteError(err); duplicateErr != err {
 			return duplicateErr
@@ -459,4 +459,16 @@ func scanUserRow(rows *sql.Rows) (*sqldb.User, error) {
 		u.LastLogin = &t
 	}
 	return &u, nil
+}
+
+// ClaimBootstrapAdminPassword atomically claims an unset bootstrap account once.
+func (db *SQLiteDB) ClaimBootstrapAdminPassword(ctx context.Context, id int, passwordHash string) (bool, error) {
+	result, err := db.db.ExecContext(ctx,
+		"UPDATE users SET password_hash = ?, token_version = token_version + 1, updated_at = ? WHERE id = ? AND login_name = 'admin' AND active = 1 AND password_hash = ?",
+		passwordHash, formatTimestamp(time.Now()), id, sqldb.UnsetBootstrapAdminHash)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n == 1, err
 }

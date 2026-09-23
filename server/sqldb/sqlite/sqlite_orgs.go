@@ -397,11 +397,16 @@ func (db *SQLiteDB) CreateAgentToken(ctx context.Context, orgName string, userID
 	}
 
 	result, err := db.db.ExecContext(ctx, `
-		INSERT INTO org_agent_tokens (org_id, user_id, name, token_secret, token_hash, token_prefix, token_last4, roles, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, orgID, userID, name, tokenSecret, tokenHash, tokenPrefix, tokenLast4, string(rolesJSON), now, expires)
+		INSERT INTO org_agent_tokens (org_id, user_id, name, token_secret, token_hash, token_prefix, token_last4, roles, created_at, expires_at, user_token_version)
+		SELECT ?, u.id, ?, ?, ?, ?, ?, ?, ?, ?, u.token_version
+		FROM users u JOIN user_organisations uo ON uo.user_id = u.id
+		WHERE u.id = ? AND uo.org_id = ? AND u.active = 1
+	`, orgID, name, tokenSecret, tokenHash, tokenPrefix, tokenLast4, string(rolesJSON), now, expires, userID, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("creating agent token: %w", err)
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		return nil, fmt.Errorf("agent token owner is no longer active in this organisation")
 	}
 	id, _ := result.LastInsertId()
 
@@ -484,6 +489,8 @@ func (db *SQLiteDB) ResolveAgentToken(ctx context.Context, raw string) (*sqldb.A
 		JOIN organisations o ON o.id = k.org_id
 		LEFT JOIN users u ON u.id = k.user_id
 		WHERE k.token_hash = ?
+		  AND u.active = 1 AND k.user_token_version > 0 AND k.user_token_version = u.token_version
+		  AND EXISTS (SELECT 1 FROM user_organisations uo WHERE uo.user_id = k.user_id AND uo.org_id = k.org_id)
 		  AND (k.expires_at IS NULL OR k.expires_at = '' OR k.expires_at > ?)
 	`, tokenHash, formatTimestamp(time.Now()))
 	tok, err := scanAgentToken(row)

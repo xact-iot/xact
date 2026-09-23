@@ -816,6 +816,7 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 			id           SERIAL PRIMARY KEY,
 			org_id       INTEGER NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
 			user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			user_token_version INTEGER NOT NULL DEFAULT 0,
 			name         TEXT NOT NULL,
 			token_secret TEXT NOT NULL,
 			token_hash   TEXT NOT NULL UNIQUE,
@@ -828,6 +829,7 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		);
 		ALTER TABLE org_agent_tokens DROP COLUMN IF EXISTS token;
 		ALTER TABLE org_agent_tokens ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+		ALTER TABLE org_agent_tokens ADD COLUMN IF NOT EXISTS user_token_version INTEGER NOT NULL DEFAULT 0;
 		ALTER TABLE org_agent_tokens ADD COLUMN IF NOT EXISTS token_secret TEXT NOT NULL DEFAULT '';
 		ALTER TABLE org_agent_tokens ADD COLUMN IF NOT EXISTS token_hash TEXT;
 		ALTER TABLE org_agent_tokens ADD COLUMN IF NOT EXISTS token_prefix TEXT NOT NULL DEFAULT '';

@@ -23,10 +23,12 @@ Provision 100 devices and run a maximum-rate NATS burst:
 NATS_INTERNAL_PASSWORD=... ./benchmark -method nats -messages 50000 -devices 100 -concurrency 8
 ```
 
+Set `MQTT_BROKER_PASSWORD` to an ingest API key for the selected tenant. The default MQTT username is the tenant slug and the generated client ID includes its prefix. For an explicit client ID, use `<tenant>:<device-id>`.
+
 Run a 60 second maximum-rate MQTT test:
 
 ```sh
-./benchmark -method mqtt -mode sustained -duration 60s -mqtt-url tcp://127.0.0.1:1883 -mqtt-password xact
+./benchmark -method mqtt -mode sustained -duration 60s -mqtt-url tcp://127.0.0.1:1883 -mqtt-password "$MQTT_BROKER_PASSWORD"
 ```
 
 Run REST ingest at a target rate:

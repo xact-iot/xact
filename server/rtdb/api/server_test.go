@@ -1102,6 +1102,7 @@ func TestLoginEndpoint(t *testing.T) {
 }
 
 func TestBootstrapAdminPasswordSetup(t *testing.T) {
+	t.Setenv("XACT_BOOTSTRAP_SETUP_TOKEN", "test-operator-setup-token-32-characters")
 	treeOps := tree.NewTreeWithOperations(nil)
 
 	t.Run("status reports setup required", func(t *testing.T) {
@@ -1125,7 +1126,7 @@ func TestBootstrapAdminPasswordSetup(t *testing.T) {
 		db := newUnsetAdminTestDB()
 		srv := NewServer(ServerConfig{}, treeOps, nil, nil, "test-secret", db, "")
 		req := httptest.NewRequest("POST", "/api/v1/bootstrap/admin/password",
-			bytes.NewReader([]byte(`{"password":"new-admin-password"}`)))
+			bytes.NewReader([]byte(`{"password":"new-admin-password","setupToken":"test-operator-setup-token-32-characters"}`)))
 		rr := httptest.NewRecorder()
 		srv.Router().ServeHTTP(rr, req)
 		if rr.Code != http.StatusOK {
@@ -1146,7 +1147,7 @@ func TestBootstrapAdminPasswordSetup(t *testing.T) {
 	t.Run("rejects setup after password is set", func(t *testing.T) {
 		srv := NewServer(ServerConfig{}, treeOps, nil, nil, "test-secret", newTestDB("admin", "existing-password"), "")
 		req := httptest.NewRequest("POST", "/api/v1/bootstrap/admin/password",
-			bytes.NewReader([]byte(`{"password":"new-admin-password"}`)))
+			bytes.NewReader([]byte(`{"password":"new-admin-password","setupToken":"test-operator-setup-token-32-characters"}`)))
 		rr := httptest.NewRecorder()
 		srv.Router().ServeHTTP(rr, req)
 		if rr.Code != http.StatusConflict {
@@ -1302,4 +1303,11 @@ func generateTestTokenWithRoles(secret []byte, userID string, roles []string) st
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, _ := token.SignedString(secret)
 	return tokenString
+}
+
+func (d *testDB) ClaimBootstrapAdminPassword(ctx context.Context, id int, hash string) (bool, error) {
+	if d.user == nil || d.user.ID != id || !sqldb.IsBootstrapAdminPasswordUnset(d.hash) {
+		return false, nil
+	}
+	return true, d.SetUserPassword(ctx, id, hash)
 }

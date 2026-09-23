@@ -26,9 +26,8 @@ func validateProductionSecrets() error {
 
 	requireSecret("JWT_SECRET")
 	requireSecret("NATS_INTERNAL_PASSWORD")
-	requireSecret("NATS_BROWSER_TOKEN")
 
-	if envEnabledDefault("EMBEDDED_MQTT_SERVER", true) || envEnabledDefault("MQTT_CLIENT_ENABLED", true) {
+	if !envEnabledDefault("EMBEDDED_MQTT_SERVER", true) && envEnabledDefault("MQTT_CLIENT_ENABLED", true) {
 		requireSecret("MQTT_BROKER_PASSWORD")
 	}
 	if value := strings.TrimSpace(os.Getenv("XACT_BOOTSTRAP_ADMIN_PASSWORD")); value != "" && isKnownDefaultSecret(value) {

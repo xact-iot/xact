@@ -22,7 +22,7 @@ func Start() {
 
 	mqttPassword := os.Getenv("MQTT_BROKER_PASSWORD")
 	if mqttPassword == "" {
-		mqttPassword = "xact"
+		log.Fatal("MQTT_BROKER_PASSWORD must contain this tenant’s ingest API key")
 	}
 
 	pollInterval := DefaultPollInterval

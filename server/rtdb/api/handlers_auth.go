@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -22,11 +25,13 @@ type LoginRequest struct {
 
 type BootstrapAdminStatusResponse struct {
 	SetupRequired bool `json:"setupRequired"`
+	SetupEnabled  bool `json:"setupEnabled"`
 	PasswordSet   bool `json:"passwordSet"`
 }
 
 type SetBootstrapAdminPasswordRequest struct {
-	Password string `json:"password"`
+	SetupToken string `json:"setupToken"`
+	Password   string `json:"password"`
 }
 
 // LoginResponse represents a login response
@@ -123,6 +128,7 @@ func (s *Server) handleBootstrapAdminStatusWithSchema() openAPIHandler {
 }
 
 func (s *Server) handleBootstrapAdminStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if s.db == nil {
 		http.Error(w, `{"error":"database not available"}`, http.StatusServiceUnavailable)
 		return
@@ -136,6 +142,7 @@ func (s *Server) handleBootstrapAdminStatus(w http.ResponseWriter, r *http.Reque
 	setupRequired := user != nil && sqldb.IsBootstrapAdminPasswordUnset(hash)
 	json.NewEncoder(w).Encode(BootstrapAdminStatusResponse{
 		SetupRequired: setupRequired,
+		SetupEnabled:  setupRequired && len(os.Getenv("XACT_BOOTSTRAP_SETUP_TOKEN")) >= 32,
 		PasswordSet:   user != nil && !setupRequired,
 	})
 }
@@ -145,6 +152,7 @@ func (s *Server) handleSetBootstrapAdminPasswordWithSchema() openAPIHandler {
 }
 
 func (s *Server) handleSetBootstrapAdminPassword(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if s.db == nil {
 		http.Error(w, `{"error":"database not available"}`, http.StatusServiceUnavailable)
 		return
@@ -153,6 +161,12 @@ func (s *Server) handleSetBootstrapAdminPassword(w http.ResponseWriter, r *http.
 	var req SetBootstrapAdminPasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	expectedToken := os.Getenv("XACT_BOOTSTRAP_SETUP_TOKEN")
+	provided, expected := sha256.Sum256([]byte(req.SetupToken)), sha256.Sum256([]byte(expectedToken))
+	if len(expectedToken) < 32 || subtle.ConstantTimeCompare(provided[:], expected[:]) != 1 {
+		http.Error(w, `{"error":"valid operator setup token required"}`, http.StatusForbidden)
 		return
 	}
 	if len(strings.TrimSpace(req.Password)) < 8 {
@@ -180,8 +194,20 @@ func (s *Server) handleSetBootstrapAdminPassword(w http.ResponseWriter, r *http.
 		http.Error(w, `{"error":"failed to hash password"}`, http.StatusInternalServerError)
 		return
 	}
-	if err := s.db.SetUserPassword(r.Context(), user.ID, passwordHash); err != nil {
+	claimer, ok := s.db.(interface {
+		ClaimBootstrapAdminPassword(context.Context, int, string) (bool, error)
+	})
+	if !ok {
+		http.Error(w, `{"error":"atomic setup unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+	claimed, err := claimer.ClaimBootstrapAdminPassword(r.Context(), user.ID, passwordHash)
+	if err != nil {
 		http.Error(w, `{"error":"failed to set password"}`, http.StatusInternalServerError)
+		return
+	}
+	if !claimed {
+		http.Error(w, `{"error":"admin password is already set"}`, http.StatusConflict)
 		return
 	}
 
@@ -286,7 +312,7 @@ func (s *Server) handleMyOrgs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Also check the AllowedOrgs from the JWT in case they have SystemAdmin elsewhere
-	if !isSystemAdmin {
+	if !isSystemAdmin && claims.TokenType != "agent" {
 		orgs, err := s.db.GetUserOrgs(r.Context(), userID)
 		if err == nil {
 			for _, org := range orgs {
@@ -302,7 +328,7 @@ func (s *Server) handleMyOrgs(w http.ResponseWriter, r *http.Request) {
 
 	var orgNames []string
 	var orgsByName = map[string]sqldb.Organisation{}
-	if isSystemAdmin {
+	if isSystemAdmin && claims.TokenType != "agent" {
 		allOrgs, err := s.db.ListOrganisations(r.Context())
 		if err != nil {
 			http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
@@ -319,6 +345,9 @@ func (s *Server) handleMyOrgs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, o := range orgs {
+			if claims.TokenType == "agent" && o.OrgName != claims.TenantID {
+				continue
+			}
 			orgNames = append(orgNames, o.OrgName)
 			if org, err := s.db.GetOrganisation(r.Context(), o.OrgName); err == nil && org != nil {
 				orgsByName[o.OrgName] = *org
@@ -356,6 +385,11 @@ func (s *Server) handleSwitchOrg(w http.ResponseWriter, r *http.Request) {
 	claims, ok := GetClaimsFromContext(r.Context())
 	if !ok {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	if claims.TokenType == "agent" {
+		http.Error(w, `{"error":"agent tokens cannot create user sessions"}`, http.StatusForbidden)
 		return
 	}
 

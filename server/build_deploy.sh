@@ -278,16 +278,14 @@ create_package() {
     rm -rf "$PLATFORM_DIR"
     mkdir -p "$PLATFORM_DIR"/{plugins,data,certs,logs,web,mobile}
 
-    local MQTT_SECRET
+    local BOOTSTRAP_SETUP_SECRET
     local JWT_SECRET_VALUE
     local API_KEY_HASH_SECRET_VALUE
     local NATS_INTERNAL_SECRET
-    local NATS_BROWSER_SECRET
-    MQTT_SECRET="$(random_hex 24)"
+    BOOTSTRAP_SETUP_SECRET="$(random_hex 32)"
     JWT_SECRET_VALUE="$(random_hex 32)"
     API_KEY_HASH_SECRET_VALUE="$(random_hex 32)"
     NATS_INTERNAL_SECRET="$(random_hex 32)"
-    NATS_BROWSER_SECRET="$(random_hex 32)"
 
     cp "$DEPLOY_DIR/intermediate/server/${XACT_BIN}" "$PLATFORM_DIR/xact${SUFFIX}"
     cp "$DEPLOY_DIR/intermediate/server/${RESTORE_BIN}" "$PLATFORM_DIR/restore${SUFFIX}"
@@ -308,6 +306,8 @@ XACT_ENV=production
 SQLITE_PATH=./data/xact.db
 XACT_BOOTSTRAP_ADMIN_PASSWORD=
 XACT_BOOTSTRAP_ADMIN_PASSWORD_FILE=
+# Operator-only token for claiming an unset admin account. Remove after setup.
+XACT_BOOTSTRAP_SETUP_TOKEN=${BOOTSTRAP_SETUP_SECRET}
 
 # Clustered
 CLUSTERED=no
@@ -319,7 +319,10 @@ ENABLE_AUTH_PLUGIN=no
 # Embedded MQTT Broker
 EMBEDDED_MQTT_SERVER=yes
 MQTT_BROKER_URL=mqtt://127.0.0.1:1883
-MQTT_BROKER_PASSWORD=${MQTT_SECRET}
+# Devices use tenant API keys, tenant usernames, and tenant-prefixed client IDs.
+# The embedded ingest client receives a process-local credential automatically.
+# Password below is used only when connecting to an external broker.
+MQTT_BROKER_PASSWORD=
 
 # Evaluation defaults: serve the app directly over HTTP on the local network.
 # For production, set ENABLE_HTTPS=yes with certificates in HTTP_CERTS_DIR.
@@ -334,7 +337,7 @@ CORS_ALLOWED_ORIGINS=
 # MQTT Ingest Client
 MQTT_CLIENT_ENABLED=yes
 MQTT_CLIENT_ID=xact-ingest
-MQTT_CLIENT_USERNAME=a
+MQTT_CLIENT_USERNAME=
 # For MQTT over TLS, set MQTT_BROKER_URL to mqtts:// or ssl://. Local
 # self-signed certs can be trusted with MQTT_CLIENT_TLS_CA_FILE=./certs/server.crt.
 MQTT_CLIENT_TLS_CA_FILE=
@@ -354,7 +357,6 @@ NATS_DEBUG=false
 NATS_TRACE=false
 NATS_LOG_FILE=./logs/nats.log
 NATS_INTERNAL_PASSWORD=${NATS_INTERNAL_SECRET}
-NATS_BROWSER_TOKEN=${NATS_BROWSER_SECRET}
 NATS_BROWSER_ALLOW_COMMANDS=no
 EXPOSE_NATS_INTERNAL_CONFIG=no
 # Same-origin WebSocket path used by reverse-proxy deployments. Standalone

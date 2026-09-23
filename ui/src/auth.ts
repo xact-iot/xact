@@ -18,6 +18,7 @@ export interface AuthResponse {
 
 export interface BootstrapAdminStatus {
   setupRequired: boolean;
+  setupEnabled: boolean;
   passwordSet: boolean;
 }
 
@@ -53,11 +54,11 @@ export async function getBootstrapAdminStatus(): Promise<BootstrapAdminStatus> {
   return response.json();
 }
 
-export async function setBootstrapAdminPassword(password: string): Promise<AuthResponse> {
+export async function setBootstrapAdminPassword(password: string, setupToken: string): Promise<AuthResponse> {
   const response = await fetch(`${API_BASE_URL}/v1/bootstrap/admin/password`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ password, setupToken }),
   });
 
   if (!response.ok) {
