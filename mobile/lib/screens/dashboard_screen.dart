@@ -5,6 +5,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../models/models.dart';
 import '../services/api_client.dart';
+import '../services/web_session.dart';
 import '../widgets/common.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -32,10 +33,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String? _error;
   bool _authInjected = false;
   int _progress = 0;
+  late final int _sessionGeneration;
 
   @override
   void initState() {
     super.initState();
+    _sessionGeneration = widget.api.generation;
     _selected = widget.initialDashboardId;
     _load();
   }
@@ -66,8 +69,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ?.id ??
                   dashboards.firstOrNull?.id;
       }
-      if (mounted) setState(() => _dashboards = dashboards);
-      if (dashboards.isNotEmpty) _createWebView();
+      if (!_current) return;
+      setState(() => _dashboards = dashboards);
+      if (dashboards.isNotEmpty) await _createWebView();
     } catch (error) {
       if (mounted) setState(() => _error = '$error');
     } finally {
@@ -75,38 +79,76 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  void _createWebView() {
+  bool get _current => mounted && widget.api.generation == _sessionGeneration;
+
+  Future<void> _createWebView() async {
+    await WebSession.clear();
+    if (!_current) return;
+    _authInjected = false;
+    final bootstrap = widget.api.dashboardBootstrapUri;
+    final dashboard = Uri.parse(widget.api.dashboardUrl(_selected));
     late final WebViewController controller;
     controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFF081521))
       ..setNavigationDelegate(
         NavigationDelegate(
+          onNavigationRequest: (request) {
+            if (request.url == 'about:blank') {
+              return NavigationDecision.navigate;
+            }
+            final uri = Uri.tryParse(request.url);
+            final allowed =
+                _current &&
+                uri != null &&
+                uri.userInfo.isEmpty &&
+                uri.scheme == 'https' &&
+                uri.origin == bootstrap.origin &&
+                (uri == bootstrap ||
+                    (uri.path == dashboard.path &&
+                        uri.query == dashboard.query));
+            return allowed
+                ? NavigationDecision.navigate
+                : NavigationDecision.prevent;
+          },
           onProgress: (value) {
             if (mounted) setState(() => _progress = value);
           },
-          onPageFinished: (_) async {
-            if (_authInjected) return;
+          onPageFinished: (url) async {
+            if (!_current || _authInjected || Uri.tryParse(url) != bootstrap) {
+              return;
+            }
             _authInjected = true;
             final token = jsonEncode(widget.session.token);
             final user = jsonEncode(jsonEncode(widget.session.user.toJson()));
             final target = jsonEncode(widget.api.dashboardUrl(_selected));
             // Store the session and navigate in one JavaScript task so the
             // web app cannot begin another load between those operations.
-            await controller.runJavaScript('''
-localStorage.setItem('xact_auth_token', $token);
-localStorage.setItem('xact_auth_user', $user);
-location.replace($target);
+            try {
+              await controller.runJavaScript('''
+if (location.href === ${jsonEncode(bootstrap.toString())}) {
+  sessionStorage.setItem('xact_auth_token', $token);
+  sessionStorage.setItem('xact_auth_user', $user);
+  location.replace($target);
+}
 ''');
+            } catch (_) {
+              if (_current) {
+                setState(
+                  () => _error = 'Could not open the dashboard securely.',
+                );
+              }
+            }
           },
         ),
       );
     _web = controller;
-    controller.loadRequest(Uri.parse('${widget.api.serverUrl}/'));
+    WebSession.register(controller);
+    await controller.loadRequest(bootstrap);
   }
 
   Future<void> _select(int? id) async {
-    if (id == null || id == _selected) return;
+    if (!_current || id == null || id == _selected) return;
     setState(() => _selected = id);
     widget.onDashboardChanged(id);
     await _web?.loadRequest(Uri.parse(widget.api.dashboardUrl(id)));

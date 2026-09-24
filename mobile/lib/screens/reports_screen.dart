@@ -42,9 +42,12 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
 
   Future<void> _open(ReportInfo report) async {
+    final generation = widget.api.generation;
     setState(() => _downloading = report.id);
     try {
       final file = await widget.api.downloadReport(report);
+      if (!mounted) return;
+      widget.api.requireCurrentSession(generation);
       final result = await OpenFilex.open(file.path, type: 'application/pdf');
       if (result.type != ResultType.done && mounted) {
         showMessage(context, result.message);

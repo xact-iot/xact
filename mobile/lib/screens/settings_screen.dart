@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -80,9 +81,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
       await widget.controller.setNotifications(enabled);
       if (enabled) {
-        await widget.notifications.start();
+        await widget.notifications.start(widget.controller.session!);
       } else {
-        widget.notifications.stop();
+        await widget.notifications.endSession();
       }
     } catch (error) {
       if (mounted) {
@@ -128,7 +129,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     return 'Enter the server URL';
                   }
                   if (!XactApiClient.isValidServerUrl(value)) {
-                    return 'Enter a valid HTTP or HTTPS URL';
+                    return 'Enter a valid HTTPS URL';
                   }
                   return null;
                 },
@@ -221,7 +222,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
     try {
+      final generation = widget.controller.api.generation;
       final apk = await widget.controller.api.downloadApk(release);
+      if (!mounted) return;
+      widget.controller.api.requireCurrentSession(generation);
+      await const MethodChannel(
+        'com.xact.iot.mobile/security',
+      ).invokeMethod<void>('verifyUpdate', {'path': apk.path});
+      if (!mounted) return;
+      widget.controller.api.requireCurrentSession(generation);
       final result = await OpenFilex.open(
         apk.path,
         type: 'application/vnd.android.package-archive',
@@ -303,7 +312,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
                 IconButton(
-                  onPressed: widget.controller.logout,
+                  onPressed: () async {
+                    try {
+                      await widget.controller.logout();
+                    } catch (_) {
+                      if (context.mounted) {
+                        showMessage(
+                          context,
+                          'Sign-out cleanup failed. Please retry.',
+                        );
+                      }
+                    }
+                  },
                   tooltip: 'Sign out',
                   icon: const Icon(Icons.logout_rounded),
                 ),

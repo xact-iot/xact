@@ -44,7 +44,7 @@ func TestParseFirebaseClientConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Configured || cfg.ProjectID != "xact-server" || cfg.AppID != "1:123456:android:abc" || cfg.APIKey != "AIza-public" || cfg.MessagingSenderID != "123456" {
+	if !cfg.Configured || !cfg.SessionScopedPush || cfg.ProjectID != "xact-server" || cfg.AppID != "1:123456:android:abc" || cfg.APIKey != "AIza-public" || cfg.MessagingSenderID != "123456" {
 		t.Fatalf("config = %#v", cfg)
 	}
 	if _, err := ParseFirebaseClientConfig(`{"project_info":{},"client":[]}`); err == nil || !strings.Contains(err.Error(), AndroidPackageName) {
@@ -71,6 +71,7 @@ func TestFCMSenderGetsOAuthTokenAndSendsMessage(t *testing.T) {
 
 	var tokenCalls atomic.Int32
 	var messageCalls atomic.Int32
+	var scoped atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/token":
@@ -97,8 +98,17 @@ func TestFCMSenderGetsOAuthTokenAndSendsMessage(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatal(err)
 			}
-			if payload.Message.Token != "device-token" || payload.Message.Notification["title"] != "Alert" || payload.Message.Data["device"] != "pump" {
+			if payload.Message.Token != "device-token" || payload.Message.Data["device"] != "pump" {
 				t.Fatalf("payload = %#v", payload)
+			}
+			if scoped.Load() {
+				if payload.Message.Notification != nil || payload.Message.Data["binding"] != "session-binding" ||
+					payload.Message.Data["userId"] != "42" || payload.Message.Data["orgName"] != "default" ||
+					payload.Message.Data["title"] != "Alert" || payload.Message.Data["body"] != "Pump is hot" {
+					t.Fatalf("scoped push must require app-side session validation: %#v", payload)
+				}
+			} else if payload.Message.Notification["title"] != "Alert" {
+				t.Fatalf("legacy payload = %#v", payload)
 			}
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -120,6 +130,12 @@ func TestFCMSenderGetsOAuthTokenAndSendsMessage(t *testing.T) {
 	}
 	if tokenCalls.Load() != 1 || messageCalls.Load() != 2 {
 		t.Fatalf("token calls=%d message calls=%d", tokenCalls.Load(), messageCalls.Load())
+	}
+	scoped.Store(true)
+	target.FCMBinding = "session-binding"
+	target.UserID = 42
+	if err := sender.Send(context.Background(), target, "Alert", "Pump is hot"); err != nil {
+		t.Fatal(err)
 	}
 	target.FCMProjectID = "different-project"
 	if err := sender.Send(context.Background(), target, "Alert", "Body"); err == nil || !strings.Contains(err.Error(), "belongs to project") {

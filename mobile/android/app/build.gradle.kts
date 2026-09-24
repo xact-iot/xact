@@ -1,8 +1,18 @@
+import java.util.Properties
+import java.security.KeyStore
+import java.security.cert.X509Certificate
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+val releaseProperties = Properties()
+val releasePropertiesFile = rootProject.file("key.properties")
+if (releasePropertiesFile.isFile) releasePropertiesFile.inputStream().use { releaseProperties.load(it) }
+val releaseSigningReady = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+    .all { !releaseProperties.getProperty(it).isNullOrBlank() }
 
 android {
     namespace = "com.xact.iot.mobile"
@@ -25,13 +35,43 @@ android {
         versionName = flutter.versionName
     }
 
-    buildTypes {
-        release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+    signingConfigs {
+        if (releaseSigningReady) {
+            create("production") {
+                storeFile = rootProject.file(releaseProperties.getProperty("storeFile"))
+                storePassword = releaseProperties.getProperty("storePassword")
+                keyAlias = releaseProperties.getProperty("keyAlias")
+                keyPassword = releaseProperties.getProperty("keyPassword")
+            }
         }
     }
+
+    buildTypes {
+        release {
+            signingConfig = if (releaseSigningReady) signingConfigs.getByName("production") else null
+        }
+    }
+}
+
+val validateProductionSigning by tasks.registering {
+    doLast {
+        check(releaseSigningReady) {
+            "Release signing is required. Configure android/key.properties with a dedicated production keystore."
+        }
+        val keystoreFile = rootProject.file(releaseProperties.getProperty("storeFile"))
+        check(keystoreFile.isFile && keystoreFile.name != "debug.keystore" &&
+            releaseProperties.getProperty("keyAlias") != "androiddebugkey") {
+            "Release builds must use a dedicated production signing key, not the Android debug key."
+        }
+        val keystore = KeyStore.getInstance(keystoreFile, releaseProperties.getProperty("storePassword").toCharArray())
+        val certificate = keystore.getCertificate(releaseProperties.getProperty("keyAlias")) as? X509Certificate
+        check(certificate != null && !certificate.subjectX500Principal.name.contains("CN=Android Debug", ignoreCase = true)) {
+            "An Android debug signing certificate cannot be used for production."
+        }
+    }
+}
+tasks.configureEach {
+    if (name == "preReleaseBuild") dependsOn(validateProductionSigning)
 }
 
 kotlin {

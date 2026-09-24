@@ -21,7 +21,10 @@ void main() {
 
   test('validates XACT server URLs', () {
     expect(XactApiClient.isValidServerUrl('xact.example.com'), isTrue);
-    expect(XactApiClient.isValidServerUrl('http://10.0.2.2:8080/xact'), isTrue);
+    expect(
+      XactApiClient.isValidServerUrl('http://10.0.2.2:8080/xact'),
+      isFalse,
+    );
     expect(XactApiClient.isValidServerUrl('ftp://xact.example.com'), isFalse);
     expect(XactApiClient.isValidServerUrl('not a host'), isFalse);
     expect(XactApiClient.isValidServerUrl(''), isFalse);
@@ -29,10 +32,10 @@ void main() {
 
   test('uses dashboard-only presentation for embedded dashboards', () {
     final api = XactApiClient()
-      ..configure(serverUrl: 'http://10.0.2.2:8080/xact', token: 'token');
+      ..configure(serverUrl: 'https://xact.example.com/xact', token: 'token');
     expect(
       api.dashboardUrl(76),
-      'http://10.0.2.2:8080/xact/?embedded=dashboard#76',
+      'https://xact.example.com/xact/?embedded=dashboard#76',
     );
     api.close();
   });

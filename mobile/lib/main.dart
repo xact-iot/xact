@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 import 'app.dart';
 import 'services/notification_service.dart';
@@ -10,8 +11,10 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final controller = SessionController();
   final notifications = NotificationService(controller.api);
-  await notifications.initialize();
+  controller.endNotifications = notifications.endSession;
   await controller.restore();
+  FirebaseMessaging.onBackgroundMessage(handleBackgroundPush);
+  await notifications.initialize();
   runApp(XactMobileApp(controller: controller, notifications: notifications));
   final restored = controller.session;
   if (restored != null) {

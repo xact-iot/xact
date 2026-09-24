@@ -41,6 +41,28 @@ describe('auth helpers', () => {
     vi.unstubAllGlobals();
     localStorage.clear();
     logout();
+    sessionStorage.clear();
+    history.replaceState(null, '', '/xact/');
+  });
+
+  it('uses only ephemeral credentials in embedded mobile dashboards', async () => {
+    logout();
+    history.replaceState(null, '', '/xact/?embedded=dashboard');
+    const oldToken = jwt({ exp: Math.floor(Date.now() / 1000) + 3600, tenant_id: 'old-org' });
+    localStorage.setItem('xact_auth_token', oldToken);
+    expect(initializeAuth()).toBe(false);
+    expect(getAuthToken()).toBeNull();
+    const token = jwt({ exp: Math.floor(Date.now() / 1000) + 3600, tenant_id: 'current-org' });
+    const user = { id: '2', username: 'mobile', tenant_id: 'current-org', roles: ['User'], allowed_orgs: ['current-org'] };
+    vi.stubGlobal('fetch', vi.fn(async () => response({ token, user })));
+    await login('mobile', 'synthetic');
+    expect(sessionStorage.getItem('xact_auth_token')).toBe(token);
+    expect(localStorage.getItem('xact_auth_token')).toBe(oldToken);
+    expect(getCurrentUser()?.tenant_id).toBe('current-org');
+    expect(initializeAuth()).toBe(true);
+    logout();
+    expect(sessionStorage.getItem('xact_auth_token')).toBeNull();
+    expect(getAuthToken()).toBeNull();
   });
 
   it('logs in, stores auth state, builds headers, and logs out', async () => {

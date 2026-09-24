@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
@@ -19,6 +20,7 @@ class XactApiException implements Exception {
 class FirebaseClientConfig {
   const FirebaseClientConfig({
     required this.configured,
+    this.sessionScopedPush = false,
     this.projectId = '',
     this.appId = '',
     this.apiKey = '',
@@ -28,6 +30,7 @@ class FirebaseClientConfig {
   factory FirebaseClientConfig.fromJson(Map<String, dynamic> json) =>
       FirebaseClientConfig(
         configured: json['configured'] == true,
+        sessionScopedPush: json['sessionScopedPush'] == true,
         projectId: '${json['projectId'] ?? ''}',
         appId: '${json['appId'] ?? ''}',
         apiKey: '${json['apiKey'] ?? ''}',
@@ -35,6 +38,7 @@ class FirebaseClientConfig {
       );
 
   final bool configured;
+  final bool sessionScopedPush;
   final String projectId;
   final String appId;
   final String apiKey;
@@ -62,11 +66,38 @@ class XactApiClient {
   String _serverUrl = '';
   String? _token;
   String _tenantId = '';
+  int _generation = 0;
+  Completer<void> _abort = Completer<void>();
 
   String get serverUrl => _serverUrl;
   String? get token => _token;
+  int get generation => _generation;
+
+  void invalidatePendingRequests() {
+    _generation++;
+    _abort.complete();
+    _abort = Completer<void>();
+  }
+
+  void requireCurrentSession(int generation) {
+    if (generation != _generation) {
+      throw const XactApiException(
+        'The session has changed. Please try again.',
+      );
+    }
+  }
 
   void configure({required String serverUrl, String? token}) {
+    if (serverUrl.isNotEmpty) {
+      final candidate = Uri.parse(
+        serverUrl.contains('://') ? serverUrl : 'https://$serverUrl',
+      );
+      requireSecureUri(candidate);
+      if (candidate.hasQuery) {
+        throw const XactApiException('Enter a server URL without a query.');
+      }
+    }
+    invalidatePendingRequests();
     _serverUrl = token == null
         ? normalizeServerUrl(serverUrl)
         : serverUrl.trim().replaceAll(RegExp(r'/+$'), '');
@@ -79,6 +110,12 @@ class XactApiClient {
     if (value.isEmpty) return '';
     if (!value.contains('://')) value = 'https://$value';
     var uri = Uri.parse(value);
+    requireSecureUri(uri);
+    if (uri.hasQuery || uri.hasFragment) {
+      throw const XactApiException(
+        'Enter an HTTPS server URL without a query or fragment.',
+      );
+    }
     var path = uri.path.replaceAll(RegExp(r'/+$'), '');
     if (path.isEmpty) path = '/xact';
     uri = uri.replace(path: path, query: null, fragment: null);
@@ -91,10 +128,21 @@ class XactApiClient {
     }
     try {
       final uri = Uri.parse(normalizeServerUrl(input));
-      return (uri.scheme == 'http' || uri.scheme == 'https') &&
-          uri.host.isNotEmpty;
+      return uri.scheme == 'https' && uri.host.isNotEmpty;
     } catch (_) {
       return false;
+    }
+  }
+
+  static void requireSecureUri(Uri uri, {String scheme = 'https'}) {
+    if (uri.scheme != scheme ||
+        uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty ||
+        uri.hasFragment ||
+        RegExp(r'\s').hasMatch(uri.toString())) {
+      throw XactApiException(
+        'A secure $scheme URL without embedded credentials is required.',
+      );
     }
   }
 
@@ -177,12 +225,11 @@ class XactApiClient {
     for (final candidate in candidates) {
       final base = candidate.replaceAll(RegExp(r'/+$'), '');
       try {
-        final response = await _client
-            .get(
-              Uri.parse('$base/api/v1/mobile/firebase-config'),
-              headers: const {'Accept': 'application/json'},
-            )
-            .timeout(const Duration(seconds: 12));
+        final response = await _sendLimited(
+          'GET',
+          Uri.parse('$base/api/v1/mobile/firebase-config'),
+          headers: const {'Accept': 'application/json'},
+        );
         if (response.statusCode == 404) continue;
         _ensureSuccess(response);
         dynamic decoded;
@@ -397,18 +444,24 @@ class XactApiClient {
   }
 
   Future<File> downloadReport(ReportInfo report) async {
+    final generation = _generation;
     final response = await _request(
       'POST',
       '/api/v1/reports/generate',
       body: {'templateId': report.id, 'variables': <String, String>{}},
+      maxBytes: 64 * 1024 * 1024,
     );
-    final directory = await getTemporaryDirectory();
-    final safeName = report.name.replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_');
-    final file = File(
-      '${directory.path}/${safeName.isEmpty ? 'report' : safeName}.pdf',
-    );
-    await file.writeAsBytes(response.bodyBytes, flush: true);
-    return file;
+    requireCurrentSession(generation);
+    final directory = await _downloadDirectory(generation);
+    final file = File('${directory.path}/report.pdf');
+    try {
+      await file.writeAsBytes(response.bodyBytes, flush: true);
+      requireCurrentSession(generation);
+      return file;
+    } catch (_) {
+      if (await directory.exists()) await directory.delete(recursive: true);
+      rethrow;
+    }
   }
 
   Future<Map<String, dynamic>> natsConfig() =>
@@ -430,7 +483,11 @@ class XactApiClient {
     );
   }
 
-  Future<void> setFcmRegistrationToken(String token, String projectId) async {
+  Future<void> setFcmRegistrationToken(
+    String token,
+    String projectId,
+    String binding,
+  ) async {
     final profile = await myProfile();
     final options = profile['notificationOptions'] is Map<String, dynamic>
         ? Map<String, dynamic>.from(profile['notificationOptions'] as Map)
@@ -438,6 +495,27 @@ class XactApiClient {
     options['fcmEnabled'] = token.isNotEmpty;
     options['fcmToken'] = token;
     options['fcmProjectId'] = projectId;
+    options['fcmBinding'] = binding;
+    await _jsonMap(
+      'PUT',
+      '/api/v1/me/',
+      body: {'notificationOptions': options},
+    );
+  }
+
+  Future<void> removeFcmRegistration(String token, String binding) async {
+    final profile = await myProfile();
+    final options = Map<String, dynamic>.from(
+      profile['notificationOptions'] as Map? ?? {},
+    );
+    // Do not remove a registration another device has subsequently installed.
+    if (options['fcmToken'] != token || options['fcmBinding'] != binding) {
+      return;
+    }
+    options.remove('fcmToken');
+    options.remove('fcmBinding');
+    options.remove('fcmProjectId');
+    options['fcmEnabled'] = false;
     await _jsonMap(
       'PUT',
       '/api/v1/me/',
@@ -459,15 +537,110 @@ class XactApiClient {
   }
 
   Future<File> downloadApk(MobileRelease release) async {
-    final releaseUri = Uri.parse(release.downloadUrl);
-    final target = releaseUri.hasScheme ? releaseUri : uri(release.downloadUrl);
-    final response = await _client.get(target, headers: _headers);
-    _ensureSuccess(response);
-    final directory = await getTemporaryDirectory();
-    final file = File('${directory.path}/xact-${release.version}.apk');
-    await file.writeAsBytes(response.bodyBytes, flush: true);
-    return file;
+    final generation = _generation;
+    final apiOrigin = Uri.parse(_serverUrl).origin;
+    final bearer = _token;
+    var target = Uri.parse(release.downloadUrl);
+    if (!target.hasScheme) target = uri(release.downloadUrl);
+    requireSecureUri(target);
+    final directory = await _downloadDirectory(generation);
+    final file = File('${directory.path}/update.apk');
+    final abort = Completer<void>();
+    try {
+      await (() async {
+        for (var redirects = 0; redirects <= 5; redirects++) {
+          requireCurrentSession(generation);
+          requireSecureUri(target);
+          final request =
+              http.AbortableRequest(
+                  'GET',
+                  target,
+                  abortTrigger: Future.any([_abort.future, abort.future]),
+                )
+                ..followRedirects = false
+                ..headers['Accept'] = 'application/vnd.android.package-archive';
+          if (target.origin == apiOrigin && bearer != null) {
+            request.headers['Authorization'] = 'Bearer $bearer';
+          }
+          final response = await _client.send(request);
+          if ([301, 302, 303, 307, 308].contains(response.statusCode)) {
+            await response.stream.listen(null).cancel();
+            final location = response.headers['location'];
+            if (location == null) {
+              throw const XactApiException('Invalid update redirect.');
+            }
+            target = target.resolve(location);
+            continue;
+          }
+          const maxBytes = 256 * 1024 * 1024;
+          if (response.statusCode != 200 ||
+              (response.contentLength ?? 0) > maxBytes) {
+            await response.stream.listen(null).cancel();
+            throw const XactApiException(
+              'The update download is unavailable or too large.',
+            );
+          }
+          final sink = file.openWrite();
+          var size = 0;
+          try {
+            await for (final chunk in response.stream) {
+              requireCurrentSession(generation);
+              size += chunk.length;
+              if (size > maxBytes) {
+                throw const XactApiException('The update is too large.');
+              }
+              sink.add(chunk);
+              await sink.flush();
+            }
+          } finally {
+            await sink.close();
+          }
+          if (size == 0) throw const XactApiException('The update is empty.');
+          requireCurrentSession(generation);
+          return;
+        }
+        throw const XactApiException('Too many update redirects.');
+      })().timeout(const Duration(minutes: 2));
+      return file;
+    } catch (_) {
+      abort.complete();
+      if (await directory.exists()) await directory.delete(recursive: true);
+      rethrow;
+    } finally {
+      if (!abort.isCompleted) abort.complete();
+    }
   }
+
+  Future<Directory> _downloadDirectory(int generation) async {
+    final cache = await getTemporaryDirectory();
+    requireCurrentSession(generation);
+    final exports = await Directory(
+      '${cache.path}/xact_exports',
+    ).create(recursive: true);
+    final directory = await exports.createTemp('download-');
+    if (generation != _generation) {
+      await directory.delete(recursive: true);
+      requireCurrentSession(generation);
+    }
+    return directory;
+  }
+
+  Future<void> clearDownloads() async {
+    final cache = await getTemporaryDirectory();
+    final exports = Directory('${cache.path}/xact_exports');
+    if (await exports.exists()) await exports.delete(recursive: true);
+    // Migrate files written by the old client into the logout retention policy.
+    await for (final entry in cache.list(followLinks: false)) {
+      final name = entry.uri.pathSegments.last;
+      if (entry is File &&
+          (name.endsWith('.pdf') ||
+              (name.startsWith('xact-') && name.endsWith('.apk')))) {
+        await entry.delete();
+      }
+    }
+  }
+
+  Uri get dashboardBootstrapUri => uri('/api/v1/mobile/bootstrap');
 
   String dashboardUrl(int? dashboardId) {
     final suffix = dashboardId == null
@@ -521,6 +694,7 @@ class XactApiClient {
     Map<String, dynamic>? body,
     Map<String, dynamic>? query,
     bool authenticated = true,
+    int maxBytes = 16 * 1024 * 1024,
   }) async {
     if (_serverUrl.isEmpty) {
       throw const XactApiException('Enter the XACT server URL.');
@@ -528,23 +702,19 @@ class XactApiClient {
     final headers = Map<String, String>.from(_headers);
     if (!authenticated) headers.remove('Authorization');
     final target = uri(path, query);
+    final generation = _generation;
     final attempts = method == 'GET' ? 2 : 1;
     for (var attempt = 0; attempt < attempts; attempt++) {
       try {
-        final Future<http.Response> request = switch (method) {
-          'POST' => _client.post(
-            target,
-            headers: headers,
-            body: jsonEncode(body ?? {}),
-          ),
-          'PUT' => _client.put(
-            target,
-            headers: headers,
-            body: jsonEncode(body ?? {}),
-          ),
-          _ => _client.get(target, headers: headers),
-        };
-        final response = await request.timeout(const Duration(seconds: 25));
+        requireCurrentSession(generation);
+        final response = await _sendLimited(
+          method,
+          target,
+          headers: headers,
+          body: body == null ? null : jsonEncode(body),
+          maxBytes: maxBytes,
+        );
+        requireCurrentSession(generation);
         _ensureSuccess(response);
         return response;
       } on XactApiException {
@@ -571,6 +741,49 @@ class XactApiClient {
     throw const XactApiException('Could not reach the XACT server.');
   }
 
+  Future<http.Response> _sendLimited(
+    String method,
+    Uri target, {
+    required Map<String, String> headers,
+    String? body,
+    int maxBytes = 16 * 1024 * 1024,
+  }) async {
+    requireSecureUri(target);
+    final abort = Completer<void>();
+    final request =
+        http.AbortableRequest(
+            method,
+            target,
+            abortTrigger: Future.any([_abort.future, abort.future]),
+          )
+          ..followRedirects = false
+          ..headers.addAll(headers);
+    if (body != null) request.body = body;
+    try {
+      return await (() async {
+        final response = await _client.send(request);
+        if ((response.contentLength ?? 0) > maxBytes) {
+          await response.stream.listen(null).cancel();
+          throw const XactApiException('The server response is too large.');
+        }
+        final bytes = BytesBuilder(copy: false);
+        await for (final chunk in response.stream) {
+          if (bytes.length + chunk.length > maxBytes) {
+            throw const XactApiException('The server response is too large.');
+          }
+          bytes.add(chunk);
+        }
+        return http.Response.bytes(
+          bytes.takeBytes(),
+          response.statusCode,
+          headers: response.headers,
+        );
+      })().timeout(const Duration(seconds: 25));
+    } finally {
+      abort.complete();
+    }
+  }
+
   void _ensureSuccess(http.Response response) {
     if (response.statusCode >= 200 && response.statusCode < 300) return;
     var message = 'Request failed (${response.statusCode}).';
@@ -581,7 +794,10 @@ class XactApiClient {
     throw XactApiException(message, statusCode: response.statusCode);
   }
 
-  void close() => _client.close();
+  void close() {
+    invalidatePendingRequests();
+    _client.close();
+  }
 
   String _tenantFromToken(String? token) {
     if (token == null) return '';

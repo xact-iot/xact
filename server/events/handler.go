@@ -53,6 +53,7 @@ type NotificationTarget struct {
 	FCMOn        bool
 	FCMToken     string
 	FCMProjectID string
+	FCMBinding   string
 	Device       string
 	OrgName      string
 }
@@ -66,6 +67,7 @@ type NotificationOptions struct {
 	FCMEnabled      bool   `json:"fcmEnabled"`
 	FCMToken        string `json:"fcmToken"`
 	FCMProjectID    string `json:"fcmProjectId"`
+	FCMBinding      string `json:"fcmBinding"`
 }
 
 // RecipientRecord is a minimal user record returned by the RecipientResolver.
@@ -457,6 +459,7 @@ func recordToTarget(r RecipientRecord) NotificationTarget {
 	t.FCMOn = opts.FCMEnabled
 	t.FCMToken = opts.FCMToken
 	t.FCMProjectID = opts.FCMProjectID
+	t.FCMBinding = opts.FCMBinding
 	return t
 }
 

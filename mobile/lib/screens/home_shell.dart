@@ -44,8 +44,10 @@ class _HomeShellState extends State<HomeShell> {
     _realtime = RealtimeService(widget.controller.api);
     _realtime.connect(widget.controller.session!.user);
     widget.notifications.bindRealtime(_realtime);
+    if (widget.controller.notificationsEnabled) {
+      widget.notifications.start(widget.controller.session!);
+    }
     widget.notifications.onDeviceSelected = _openDeviceByName;
-    if (widget.controller.notificationsEnabled) widget.notifications.start();
   }
 
   @override

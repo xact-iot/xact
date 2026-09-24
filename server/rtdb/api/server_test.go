@@ -981,6 +981,18 @@ func TestFirebaseClientConfigEndpointIsPublic(t *testing.T) {
 	}
 }
 
+func TestMobileBootstrapEndpointIsPublic(t *testing.T) {
+	for _, prefix := range []string{"", "/xact"} {
+		s := NewServer(ServerConfig{ProxyPath: prefix}, tree.NewTreeWithOperations(nil), nil, nil, "test-secret", newTestDB("admin", "password"), "")
+		path := prefix + "/api/v1/mobile/bootstrap"
+		rr := httptest.NewRecorder()
+		s.Router().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		if rr.Code != http.StatusOK || rr.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("bootstrap %s: %d %s", path, rr.Code, rr.Body.String())
+		}
+	}
+}
+
 func TestLoginEndpoint(t *testing.T) {
 	treeOps := tree.NewTreeWithOperations(nil)
 

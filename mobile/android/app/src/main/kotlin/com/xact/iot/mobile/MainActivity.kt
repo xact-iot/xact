@@ -3,6 +3,11 @@ package com.xact.iot.mobile
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
+import android.os.Build
+import java.io.File
+import java.security.MessageDigest
 import android.os.Process
 import android.os.SystemClock
 import io.flutter.embedding.android.FlutterActivity
@@ -12,6 +17,20 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.xact.iot.mobile/security")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "verifyUpdate") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                try {
+                    val path = call.argument<String>("path") ?: error("Missing update")
+                    verifyUpdate(File(path))
+                    result.success(null)
+                } catch (_: Exception) {
+                    result.error("invalid_update", "The update's package, version, or signature could not be verified.", null)
+                }
+            }
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "com.xact.iot.mobile/firebase_bootstrap",
@@ -69,5 +88,28 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun verifyUpdate(file: File) {
+        val exports = File(cacheDir, "xact_exports").canonicalFile
+        require(file.canonicalFile.path.startsWith(exports.path + File.separator) && file.isFile)
+        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+        val candidate = packageManager.getPackageArchiveInfo(file.path, flags) ?: error("Invalid APK")
+        val installed = packageManager.getPackageInfo(packageName, flags)
+        require(candidate.packageName == packageName)
+        val candidateVersion = if (Build.VERSION.SDK_INT >= 28) candidate.longVersionCode else candidate.versionCode.toLong()
+        val installedVersion = if (Build.VERSION.SDK_INT >= 28) installed.longVersionCode else installed.versionCode.toLong()
+        require(candidateVersion > installedVersion)
+        require(signers(candidate).isNotEmpty() && signers(candidate) == signers(installed))
+    }
+
+    @Suppress("DEPRECATION")
+    private fun signers(info: PackageInfo): Set<String> {
+        val signatures = if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners else info.signatures
+        return signatures?.map { signature ->
+            MessageDigest.getInstance("SHA-256").digest(signature.toByteArray())
+                .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        }?.toSet() ?: emptySet()
     }
 }

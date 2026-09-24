@@ -109,7 +109,7 @@ func TestNotificationDispatchTargetsEnabledChannelsAndLogsResult(t *testing.T) {
 		{FirstName: "Ada", LastName: "Lovelace", Email: "ada@example.test", NotificationOptions: json.RawMessage(`{"emailEnabled":true}`)},
 		{Email: "bot@example.test", NotificationOptions: json.RawMessage(`{"telegramEnabled":true,"telegramId":"123"}`)},
 		{ID: 42, FirstName: "Mobile", LastName: "Operator", NotificationOptions: json.RawMessage(`{"mobileEnabled":true}`)},
-		{ID: 43, FirstName: "Android", LastName: "Operator", NotificationOptions: json.RawMessage(`{"mobileEnabled":true,"fcmEnabled":true,"fcmToken":"device-token","fcmProjectId":"firebase-project"}`)},
+		{ID: 43, FirstName: "Android", LastName: "Operator", NotificationOptions: json.RawMessage(`{"mobileEnabled":true,"fcmEnabled":true,"fcmToken":"device-token","fcmProjectId":"firebase-project","fcmBinding":"session-binding"}`)},
 		{ID: 44, FirstName: "REST", LastName: "API", Email: "api@example.test", NotificationOptions: json.RawMessage(`{"emailEnabled":false,"telegramEnabled":false,"mobileEnabled":false,"fcmEnabled":false}`)},
 	}}
 	email := &recordingNotifier{name: "email"}
@@ -132,7 +132,7 @@ func TestNotificationDispatchTargetsEnabledChannelsAndLogsResult(t *testing.T) {
 	if len(mobile.targets) != 1 || mobile.targets[0].UserID != 42 || mobile.targets[0].Device != "pump" || mobile.targets[0].OrgName != "default" {
 		t.Fatalf("mobile targets = %#v", mobile.targets)
 	}
-	if len(fcm.targets) != 1 || fcm.targets[0].UserID != 43 || fcm.targets[0].FCMToken != "device-token" || fcm.targets[0].FCMProjectID != "firebase-project" {
+	if len(fcm.targets) != 1 || fcm.targets[0].UserID != 43 || fcm.targets[0].FCMToken != "device-token" || fcm.targets[0].FCMProjectID != "firebase-project" || fcm.targets[0].FCMBinding != "session-binding" {
 		t.Fatalf("FCM targets = %#v", fcm.targets)
 	}
 	writer.flush()

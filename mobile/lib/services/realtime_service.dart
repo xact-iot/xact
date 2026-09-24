@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/models.dart';
 import 'api_client.dart';
+import 'nats_parser.dart';
 
 class TagUpdate {
   const TagUpdate({
@@ -32,55 +32,84 @@ class MobileNotification {
 }
 
 class RealtimeService {
-  RealtimeService(this.api);
+  RealtimeService(this.api, {WebSocketChannel Function(Uri)? connectChannel})
+    : _connectChannel =
+          connectChannel ??
+          ((uri) => WebSocketChannel.connect(uri, protocols: const ['nats']));
   final XactApiClient api;
+  final WebSocketChannel Function(Uri) _connectChannel;
 
   final _updates = StreamController<TagUpdate>.broadcast();
   final _notifications = StreamController<MobileNotification>.broadcast();
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _subscription;
-  final List<int> _buffer = [];
+  late final _parser = NatsParser(
+    onMessage: _handleMessage,
+    onControl: (line) {
+      if (line == 'PING') _send('PONG\r\n');
+      if (line == 'PONG') _connected = true;
+    },
+  );
   String _org = '';
+  String _userId = '';
   bool _connected = false;
+  bool _disposed = false;
+  int _generation = 0;
 
   Stream<TagUpdate> get updates => _updates.stream;
   Stream<MobileNotification> get notifications => _notifications.stream;
   bool get connected => _connected;
 
   Future<void> connect(XactUser user) async {
-    await disconnect();
+    if (_disposed) return;
+    final generation = ++_generation;
+    final sessionGeneration = api.generation;
+    await _closeConnection();
+    bool current() =>
+        !_disposed &&
+        generation == _generation &&
+        sessionGeneration == api.generation;
+    if (!current()) return;
     _org = user.tenantId;
+    _userId = user.id;
     try {
+      if ([
+        user.tenantId,
+        user.id,
+      ].any((v) => v.isEmpty || RegExp(r'[\s.*>/\\]').hasMatch(v))) {
+        return;
+      }
       final config = await api.natsConfig();
+      if (!current()) return;
       final path = '${config['natsWsPath'] ?? ''}';
       var url = '${config['natsWsUrl'] ?? ''}';
       if (url.isEmpty) {
         final base = Uri.parse(api.serverUrl);
-        url = base
-            .replace(
-              scheme: base.scheme == 'https' ? 'wss' : 'ws',
-              path: path,
-              query: null,
-              fragment: null,
-            )
-            .toString();
+        url = base.replace(scheme: 'wss', path: path).toString();
       }
-      final channel = WebSocketChannel.connect(
-        Uri.parse(url),
-        protocols: const ['nats'],
-      );
-      await channel.ready.timeout(const Duration(seconds: 12));
+      final uri = Uri.parse(url);
+      XactApiClient.requireSecureUri(uri, scheme: 'wss');
+      final channel = _connectChannel(uri);
       _channel = channel;
+      await channel.ready.timeout(const Duration(seconds: 12));
+      if (!current()) {
+        await channel.sink.close();
+        return;
+      }
       _subscription = channel.stream.listen(
         _receive,
-        onDone: () => _connected = false,
-        onError: (_) => _connected = false,
+        onDone: () {
+          if (current()) unawaited(disconnect());
+        },
+        onError: (_) {
+          if (current()) unawaited(disconnect());
+        },
         cancelOnError: false,
       );
       final connect = jsonEncode({
         'verbose': false,
         'pedantic': false,
-        'tls_required': url.startsWith('wss:'),
+        'tls_required': true,
         'name': 'xact-mobile',
         'lang': 'dart',
         'version': '1.0',
@@ -91,64 +120,32 @@ class RealtimeService {
       _send('CONNECT $connect\r\n');
       _send('SUB xact.internal.bcast.tagvalue.$_org.> 1\r\nPING\r\n');
       _send('SUB xact.internal.bcast.mobile.$_org.${user.id} 2\r\n');
-      _connected = true;
     } catch (_) {
-      await disconnect();
+      if (current()) await disconnect();
     }
   }
 
   void _send(String value) => _channel?.sink.add(value);
 
   void _receive(dynamic frame) {
-    if (frame is String) {
-      _buffer.addAll(utf8.encode(frame));
-    } else if (frame is Uint8List) {
-      _buffer.addAll(frame);
-    } else if (frame is List<int>) {
-      _buffer.addAll(frame);
-    }
-    _parse();
-  }
-
-  void _parse() {
-    while (true) {
-      final lineEnd = _indexOfCrlf(_buffer);
-      if (lineEnd < 0) return;
-      final line = utf8.decode(
-        _buffer.sublist(0, lineEnd),
-        allowMalformed: true,
-      );
-      if (line.startsWith('MSG ')) {
-        final parts = line.split(' ');
-        if (parts.length < 4) {
-          _buffer.removeRange(0, lineEnd + 2);
-          continue;
-        }
-        final size = int.tryParse(parts.last);
-        if (size == null || _buffer.length < lineEnd + 2 + size + 2) return;
-        final payloadStart = lineEnd + 2;
-        final payload = _buffer.sublist(payloadStart, payloadStart + size);
-        _buffer.removeRange(0, payloadStart + size + 2);
-        _handleMessage(parts[1], payload);
-        continue;
+    try {
+      if (frame is String && frame.length <= NatsParser.maxBuffer) {
+        _parser.add(utf8.encode(frame));
+      } else if (frame is List<int>) {
+        _parser.add(frame);
+      } else {
+        throw const FormatException('Invalid NATS frame');
       }
-      _buffer.removeRange(0, lineEnd + 2);
-      if (line == 'PING') _send('PONG\r\n');
+    } catch (_) {
+      unawaited(disconnect());
     }
-  }
-
-  int _indexOfCrlf(List<int> bytes) {
-    for (var i = 0; i < bytes.length - 1; i++) {
-      if (bytes[i] == 13 && bytes[i + 1] == 10) return i;
-    }
-    return -1;
   }
 
   void _handleMessage(String subject, List<int> payload) {
     const prefix = 'xact.internal.bcast.tagvalue.';
     final orgPrefix = '$prefix$_org.';
-    final mobileSubject = 'xact.internal.bcast.mobile.$_org.';
-    if (subject.startsWith(mobileSubject)) {
+    final mobileSubject = 'xact.internal.bcast.mobile.$_org.$_userId';
+    if (subject == mobileSubject) {
       try {
         final data = jsonDecode(utf8.decode(payload)) as Map<String, dynamic>;
         _notifications.add(
@@ -181,15 +178,26 @@ class RealtimeService {
   }
 
   Future<void> disconnect() async {
+    _generation++;
+    await _closeConnection();
+  }
+
+  Future<void> _closeConnection() async {
     _connected = false;
-    await _subscription?.cancel();
+    final subscription = _subscription;
+    final channel = _channel;
     _subscription = null;
-    await _channel?.sink.close();
     _channel = null;
-    _buffer.clear();
+    _parser.clear();
+    await subscription?.cancel();
+    try {
+      await channel?.sink.close().timeout(const Duration(seconds: 2));
+    } catch (_) {}
   }
 
   Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
     await disconnect();
     await _updates.close();
     await _notifications.close();

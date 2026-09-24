@@ -11,6 +11,19 @@ import (
 	"testing"
 )
 
+func TestMobileBootstrapIsInertAndNotCacheable(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	new(Server).handleMobileBootstrap(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/mobile/bootstrap", nil))
+	if recorder.Code != http.StatusOK || recorder.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("bootstrap status/headers: %d %v", recorder.Code, recorder.Header())
+	}
+	if recorder.Header().Get("Content-Type") != "text/html; charset=utf-8" ||
+		!bytes.Contains([]byte(recorder.Header().Get("Content-Security-Policy")), []byte("default-src 'none'")) ||
+		bytes.Contains(recorder.Body.Bytes(), []byte("<script")) || bytes.Contains(recorder.Body.Bytes(), []byte("localStorage")) {
+		t.Fatalf("bootstrap must not run the web app: %s", recorder.Body.String())
+	}
+}
+
 func mobileRequest(method, target string, body []byte, roles ...string) *http.Request {
 	req := httptest.NewRequest(method, target, bytes.NewReader(body))
 	claims := &JWTClaims{TenantID: "default", Roles: roles}

@@ -3,6 +3,13 @@ const API_BASE_URL = '/xact/api';
 
 let authToken: string | null = null;
 
+// Embedded mobile dashboards receive an ephemeral native-session handoff.
+// They must never fall back to a previous browser account's persistent token.
+function authStorage(): Storage {
+  return new URLSearchParams(window.location.search).get('embedded') === 'dashboard'
+    ? sessionStorage : localStorage;
+}
+
 export interface AuthResponse {
   token: string;
   token_type: string;
@@ -24,8 +31,8 @@ export interface BootstrapAdminStatus {
 
 function storeAuthResponse(data: AuthResponse): AuthResponse {
   authToken = data.token;
-  localStorage.setItem('xact_auth_token', authToken);
-  localStorage.setItem('xact_auth_user', JSON.stringify(data.user));
+  authStorage().setItem('xact_auth_token', authToken);
+  authStorage().setItem('xact_auth_user', JSON.stringify(data.user));
   return data;
 }
 
@@ -72,15 +79,16 @@ export async function setBootstrapAdminPassword(password: string, setupToken: st
 
 export function logout(): void {
   authToken = null;
-  localStorage.removeItem('xact_auth_token');
-  localStorage.removeItem('xact_auth_user');
+  authStorage().removeItem('xact_auth_token');
+  authStorage().removeItem('xact_auth_user');
   clearPersistentNavigationState();
 }
 
 function clearPersistentNavigationState(): void {
   try {
     if (typeof history !== 'undefined' && typeof window !== 'undefined') {
-      history.replaceState(null, '', '/xact/');
+      const path = authStorage() === sessionStorage ? '/xact/?embedded=dashboard' : '/xact/';
+      history.replaceState(null, '', path);
     }
   } catch {
     // Ignore navigation cleanup failures; auth state has already been cleared.
@@ -89,7 +97,7 @@ function clearPersistentNavigationState(): void {
 
 export function getAuthToken(): string | null {
   if (!authToken) {
-    authToken = localStorage.getItem('xact_auth_token');
+    authToken = authStorage().getItem('xact_auth_token');
   }
   return authToken;
 }
@@ -109,7 +117,7 @@ export function isAuthenticated(): boolean {
 }
 
 export function getCurrentUser(): AuthResponse['user'] | null {
-  const userStr = localStorage.getItem('xact_auth_user');
+  const userStr = authStorage().getItem('xact_auth_user');
   if (!userStr) return null;
   try {
     return JSON.parse(userStr);
@@ -164,14 +172,14 @@ export async function switchOrg(orgName: string): Promise<void> {
 
 // Returns true if a valid token exists, false if the user needs to log in.
 export function initializeAuth(): boolean {
-  const existingToken = localStorage.getItem('xact_auth_token');
+  const existingToken = authStorage().getItem('xact_auth_token');
   if (existingToken && !isTokenExpired(existingToken)) {
     authToken = existingToken;
     return true;
   }
   // Clear expired token
-  localStorage.removeItem('xact_auth_token');
-  localStorage.removeItem('xact_auth_user');
+  authStorage().removeItem('xact_auth_token');
+  authStorage().removeItem('xact_auth_user');
   authToken = null;
   return false;
 }

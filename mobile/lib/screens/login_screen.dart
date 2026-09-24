@@ -31,6 +31,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
+    _error = widget.controller.lastError;
     widget.controller.savedServer().then((value) {
       if (mounted && value != null) setState(() => _server.text = value);
     });
@@ -141,7 +142,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             return 'Enter the server URL';
                           }
                           if (!XactApiClient.isValidServerUrl(value)) {
-                            return 'Enter a valid server URL';
+                            return 'Enter a valid HTTPS server URL';
                           }
                           return null;
                         },
@@ -233,11 +234,13 @@ class _LoginScreenState extends State<LoginScreen> {
                             color: Colors.white.withValues(alpha: .35),
                           ),
                           const SizedBox(width: 7),
-                          Text(
-                            'Credentials are sent only to your server',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.white.withValues(alpha: .35),
+                          Flexible(
+                            child: Text(
+                              'Credentials are sent only to your server',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.white.withValues(alpha: .35),
+                              ),
                             ),
                           ),
                         ],

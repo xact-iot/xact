@@ -18,29 +18,33 @@ class XactMobileApp extends StatelessWidget {
   final NotificationService notifications;
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: 'XACT Mobile',
-    debugShowCheckedModeBanner: false,
-    theme: buildXactTheme(),
-    home: AnimatedBuilder(
-      animation: controller,
-      builder: (context, _) {
-        if (controller.initializing) {
-          return const Scaffold(body: LoadingView(label: 'Starting XACT'));
-        }
-        final session = controller.session;
-        if (session == null) {
-          return LoginScreen(
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: controller,
+    builder: (context, _) => MaterialApp(
+      // Discard every route, including pushed detail screens, on account change.
+      key: ValueKey(controller.api.generation),
+      title: 'XACT Mobile',
+      debugShowCheckedModeBanner: false,
+      theme: buildXactTheme(),
+      home: Builder(
+        builder: (context) {
+          if (controller.initializing) {
+            return const Scaffold(body: LoadingView(label: 'Starting XACT'));
+          }
+          final session = controller.session;
+          if (session == null) {
+            return LoginScreen(
+              controller: controller,
+              notifications: notifications,
+            );
+          }
+          return HomeShell(
+            key: ValueKey('${session.user.tenantId}:${session.token}'),
             controller: controller,
             notifications: notifications,
           );
-        }
-        return HomeShell(
-          key: ValueKey('${session.user.tenantId}:${session.token}'),
-          controller: controller,
-          notifications: notifications,
-        );
-      },
+        },
+      ),
     ),
   );
 }

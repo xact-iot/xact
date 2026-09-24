@@ -39,6 +39,7 @@ const AndroidPackageName = "com.xact.iot.mobile"
 // the binary Android client needs for runtime Firebase initialization.
 type FirebaseClientConfig struct {
 	Configured        bool   `json:"configured"`
+	SessionScopedPush bool   `json:"sessionScopedPush"`
 	ProjectID         string `json:"projectId,omitempty"`
 	AppID             string `json:"appId,omitempty"`
 	APIKey            string `json:"apiKey,omitempty"`
@@ -81,6 +82,7 @@ func ParseFirebaseClientConfig(data string) (FirebaseClientConfig, error) {
 		}
 		cfg := FirebaseClientConfig{
 			Configured:        true,
+			SessionScopedPush: true,
 			ProjectID:         strings.TrimSpace(document.ProjectInfo.ProjectID),
 			AppID:             strings.TrimSpace(client.ClientInfo.MobileSDKAppID),
 			APIKey:            strings.TrimSpace(apiKey),
@@ -172,7 +174,7 @@ func (s *FCMSender) Send(ctx context.Context, target events.NotificationTarget, 
 		return err
 	}
 
-	payload := map[string]any{"message": map[string]any{
+	message := map[string]any{
 		"token":        target.FCMToken,
 		"notification": map[string]string{"title": subject, "body": body},
 		"data":         map[string]string{"device": target.Device, "orgName": target.OrgName},
@@ -180,7 +182,19 @@ func (s *FCMSender) Send(ctx context.Context, target events.NotificationTarget, 
 			"priority":     "high",
 			"notification": map[string]string{"channel_id": "xact_alerts"},
 		},
-	}}
+	}
+	if target.FCMBinding != "" {
+		// The app must check its current session before displaying sensitive data.
+		// A notification payload would be displayed by Android even after logout.
+		delete(message, "notification")
+		message["android"] = map[string]any{"priority": "high", "ttl": "300s"}
+		message["data"] = map[string]string{
+			"title": subject, "body": body, "device": target.Device,
+			"orgName": target.OrgName, "userId": fmt.Sprint(target.UserID),
+			"binding": target.FCMBinding,
+		}
+	}
+	payload := map[string]any{"message": message}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("fcm: marshal message: %w", err)

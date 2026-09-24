@@ -352,6 +352,7 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 		api.Get("/openapi.json", s.handleOpenAPIWithSchema())
 		api.Get("/api/v1/openapi.json", s.handleOpenAPIWithSchema())
 		api.Post("/login", s.handleLoginWithSchema())
+		api.Get("/api/v1/mobile/bootstrap", s.handleMobileBootstrapWithSchema())
 		if s.notificationHandlers != nil {
 			api.Get("/api/v1/mobile/firebase-config", s.notificationHandlers.HandleGetFirebaseClientConfigWithSchema())
 		}

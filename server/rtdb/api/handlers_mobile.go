@@ -10,6 +10,23 @@ import (
 
 const mobileAppConfigName = "mobile-app"
 
+func (s *Server) handleMobileBootstrapWithSchema() openAPIHandler {
+	return openAPIHandler{Handler: s.handleMobileBootstrap, Responses: map[string]any{
+		"200": map[string]any{"description": "Native mobile session bootstrap", "content": map[string]any{
+			"text/html": map[string]any{"schema": map[string]any{"type": "string"}},
+		}},
+	}, Tags: []string{"mobile"}}
+}
+
+// An inert, same-origin document for the native WebView's session handoff.
+// Loading the full UI here would execute a previous account's stored session.
+func (s *Server) handleMobileBootstrap(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+	_, _ = w.Write([]byte("<!doctype html><html><head><meta charset=\"utf-8\"><title>XACT</title></head><body></body></html>"))
+}
+
 type mobileAppConfig struct {
 	DeviceParentNodes    []string `json:"deviceParentNodes"`
 	DefaultDashboardName string   `json:"defaultDashboardName"`
