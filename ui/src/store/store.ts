@@ -775,6 +775,35 @@ export class MirrorStore {
         });
     }
 
+    /** Apply only the tag values approved by the public dashboard endpoint. */
+    public applyPublicSnapshot(org: string, values: Record<string, {
+        value: any; units?: string; description?: string; status?: string; timestamp?: number;
+    }>): boolean {
+        if (this.orgName && this.orgName !== org) {
+            this.root = new Node('root', null);
+        }
+        this.orgName = org;
+        let added = false;
+        for (const [path, data] of Object.entries(values)) {
+            if (!path.startsWith(org + '.') || !data) continue;
+            const parts = path.split('.');
+            let node: Node = this.root!;
+            for (const [index, part] of parts.entries()) {
+                if (!part) { node = this.root!; break; }
+                const existing = node.getChildren().has(part);
+                node = node.getOrCreateChild(part);
+                if (!existing) added = true;
+                node.setNodeType(index === parts.length - 1 ? 'leaf' : 'node');
+            }
+            if (node === this.root) continue;
+            node.setShared({ units: data.units ?? '', description: data.description ?? '' });
+            node.setStatus(data.status ?? '');
+            if (data.timestamp) node.setTimestamp(data.timestamp);
+            if (node.getRawValue() !== data.value) node.setValue(data.value);
+        }
+        return added;
+    }
+
     /** Returns the current organisation name (e.g. "default"). */
     public getOrg(): string {
         return this.orgName;

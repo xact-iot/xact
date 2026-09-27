@@ -323,6 +323,7 @@ type DashboardMeta struct {
 	Variation   string `json:"variation"`
 	DeviceType  string `json:"deviceType"`
 	Permission  string `json:"permission"`
+	IsPublic    bool   `json:"isPublic"`
 	IsCategory  bool   `json:"isCategory"`
 	ParentID    *int   `json:"parentId,omitempty"`
 	SortOrder   int    `json:"sortOrder"`
@@ -559,6 +560,7 @@ type Dashboard struct {
 	Variation   string          `json:"variation"`
 	DeviceType  string          `json:"deviceType"`
 	Permission  string          `json:"permission"`
+	IsPublic    bool            `json:"isPublic"`
 	IsCategory  bool            `json:"isCategory"`
 	ParentID    *int            `json:"parentId,omitempty"`
 	SortOrder   int             `json:"sortOrder"`

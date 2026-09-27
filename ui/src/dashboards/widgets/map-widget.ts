@@ -68,6 +68,9 @@ interface LayerConfig {
   defaultGlyph?: string;
   defaultColor?: string;
   defaultSize?: number;
+  /** Rotate the zoomed-out icon using a heading in degrees from each device. */
+  iconRotationEnabled?: boolean;
+  iconRotationTag?: string;
   /** Template rendered as a div marker when zoom >= zoomThreshold; shown as hover tooltip when zoomed out. */
   divTemplate?: string;
   /** @deprecated migrated to divTemplate */ divTemplateIn?: string;
@@ -452,6 +455,10 @@ export class AreaMapWidget extends BaseComponent {
   }
 
   private async loadAndInit(): Promise<void> {
+    if (document.body.dataset.publicDashboard === 'true') {
+      await this.initMap();
+      return;
+    }
     // Start the KV watcher immediately so device lat/lon values stream in while
     // Leaflet is loading.  Without this, values arrive after refreshLayers() runs
     // and markers are either missing or placed at (0,0).
@@ -472,6 +479,10 @@ export class AreaMapWidget extends BaseComponent {
   }
 
   private async loadDashboards(): Promise<void> {
+    if (document.body.dataset.publicDashboard === 'true') {
+      this.dashboards = [];
+      return;
+    }
     try {
       this.dashboards = await AreaMapWidget.fetchDashboards();
     } catch (err) {
@@ -1008,6 +1019,16 @@ export class AreaMapWidget extends BaseComponent {
       unsubs.push(unsub);
     }
 
+    if (layer.iconRotationEnabled && layer.iconRotationTag?.trim()) {
+      const tagPath = this.resolveDeviceTag(devicePath, layer.iconRotationTag);
+      if (this.shouldSubscribeTagReference(tagPath)) {
+        const unsub = store.subscribeTagReference(tagPath, () => {
+          if (this.devices.has(devicePath)) this.updateDeviceMarker(devicePath);
+        });
+        unsubs.push(unsub);
+      }
+    }
+
     // Refresh interval
     let interval: ReturnType<typeof setInterval> | undefined;
     if ((layer.refreshInterval ?? 0) > 0) {
@@ -1339,6 +1360,14 @@ export class AreaMapWidget extends BaseComponent {
     return null;
   }
 
+  private getIconRotation(layer: LayerConfig, devicePath: string): number {
+    if (!layer.iconRotationEnabled || !layer.iconRotationTag?.trim()) return 0;
+    const value = getMirrorStore().resolveTagReference(this.resolveDeviceTag(devicePath, layer.iconRotationTag));
+    if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) return 0;
+    const degrees = Number(value);
+    return Number.isFinite(degrees) ? ((degrees % 360) + 360) % 360 : 0;
+  }
+
   private makeIconHtml(rule: IconRule | null, layer: LayerConfig, devicePath: string): string {
     const template = layer.divTemplate ?? layer.divTemplateIn ?? '';
     const zoom = this.map?.getZoom() ?? 0;
@@ -1390,6 +1419,10 @@ export class AreaMapWidget extends BaseComponent {
       ? svg
       : `<span style="font-size:${esc(String(size))}px;text-shadow:0 1px 3px rgba(0,0,0,0.5);line-height:1;">${esc(fallbackGlyph)}</span>`;
     const iconDiv = `<div class="xact-map-icon-wrap ${animClass}" style="color:${esc(String(color))};text-align:center;line-height:1;">${glyphHtml}</div>`;
+    // Rotate outside the animated element so pulse and shake keep their own transforms.
+    const rotatedIcon = layer.iconRotationEnabled
+      ? `<div class="xact-map-icon-rotation" style="transform:rotate(${this.getIconRotation(layer, devicePath)}deg);transform-origin:center center;">${iconDiv}</div>`
+      : iconDiv;
 
     // Hover tooltip sits above the icon; positioned relative to the marker root which matches icon dimensions
     let hoverContent: string;
@@ -1411,7 +1444,7 @@ export class AreaMapWidget extends BaseComponent {
     }
     const hoverTip = hoverContent ? `<div class="xact-map-hover-tip">${hoverContent}</div>` : '';
 
-    return `<div class="xact-map-marker-root${selectedClass}" style="width:${esc(String(size))}px;height:${esc(String(size))}px;">${iconDiv}${hoverTip}</div>`;
+    return `<div class="xact-map-marker-root${selectedClass}" style="width:${esc(String(size))}px;height:${esc(String(size))}px;">${rotatedIcon}${hoverTip}</div>`;
   }
 
 
@@ -1612,6 +1645,7 @@ export class AreaMapWidget extends BaseComponent {
   // ── Device click panel ─────────────────────────────────────────────────────
 
   private onDeviceClick(devicePath: string): void {
+    if (document.body.dataset.publicDashboard === 'true') return;
     this.clearClickPanelWidget();
     this.setUiDeviceContext(devicePath);
     this.selectedDevicePath = devicePath;
@@ -2236,6 +2270,19 @@ export class AreaMapWidget extends BaseComponent {
           <div id="le-rules-list" style="min-width:420px;">${rulesHtml}</div>
         </div>
       </div>
+      <div style="margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid color-mix(in srgb,var(--accent-color) 8%,var(--border-color));">
+        <span style="${subHeadStyle}">Icon Rotation</span>
+        <label style="display:flex;align-items:center;gap:6px;margin:10px 0;font-size:13px;">
+          <input id="le-icon-rotation-enabled" type="checkbox" ${layer.iconRotationEnabled ? 'checked' : ''}>
+          Rotate icon from tag (degrees clockwise)
+        </label>
+        <label style="${labelStyle}" for="le-icon-rotation-tag">Rotation Tag</label>
+        <div style="display:flex;gap:4px;align-items:center;">
+          <input id="le-icon-rotation-tag" type="text" value="${esc(layer.iconRotationTag ?? '')}" placeholder="e.g. meta.heading" style="${fieldStyle}flex:1;min-width:0;">
+          <button id="le-icon-rotation-browse" title="Browse tags" style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--border-color) 40%,transparent);border:1px solid var(--border-color);border-radius:3px;cursor:pointer;font-size:12px;padding:0;">✏️</button>
+        </div>
+        <div style="font-size:11px;opacity:0.65;margin-top:5px;">0° points up, 90° right. The selected icon should point up at 0°.</div>
+      </div>
       <div style="margin-bottom:12px;padding-top:16px;border-top:1px solid color-mix(in srgb,var(--accent-color) 8%,var(--border-color));">
         <div style="display:flex;gap:8px;margin-bottom:16px;">
           <div style="flex:1;">
@@ -2532,6 +2579,19 @@ export class AreaMapWidget extends BaseComponent {
       });
     });
 
+    overlay.querySelector<HTMLElement>('#le-icon-rotation-browse')?.addEventListener('click', () => {
+      const input = overlay.querySelector<HTMLInputElement>('#le-icon-rotation-tag');
+      if (!input) return;
+      const layer = this.config.layers.find(l => l.id === this.cfgEditLayerId);
+      const exampleDevice = layer ? this.resolvePattern(layer.pathPattern)[0] ?? '' : '';
+      getTreeBrowserDialog().open(exampleDevice, 'Select Rotation Tag', (selectedPath) => {
+        const relDevice = getMirrorStore().toRelative(exampleDevice);
+        input.value = relDevice && selectedPath.startsWith(relDevice + '.')
+          ? selectedPath.substring(relDevice.length + 1)
+          : selectedPath;
+      }, /* includeLeaves= */ true);
+    });
+
     // Zoom widget configure button
     overlay.querySelector<HTMLElement>('#le-dw-configure')?.addEventListener('click', () => {
       const layer = this.config.layers.find(l => l.id === this.cfgEditLayerId);
@@ -2628,6 +2688,8 @@ export class AreaMapWidget extends BaseComponent {
     layer.offsetY = parseFloat(overlay.querySelector<HTMLInputElement>('#le-offset-y')?.value ?? '0') || 0;
 
     if (layer.itemType === 'icon') {
+      layer.iconRotationEnabled = overlay.querySelector<HTMLInputElement>('#le-icon-rotation-enabled')?.checked ?? false;
+      layer.iconRotationTag = (overlay.querySelector<HTMLInputElement>('#le-icon-rotation-tag')?.value ?? '').trim();
       layer.zoomThreshold = parseInt(overlay.querySelector<HTMLInputElement>('#le-zoom-threshold')?.value ?? '13') || 13;
       layer.refreshInterval = parseInt(overlay.querySelector<HTMLInputElement>('#le-refresh-interval')?.value ?? '0') || 0;
       layer.divWidgetWidth = parseInt(overlay.querySelector<HTMLInputElement>('#le-dw-width')?.value ?? '280') || 280;

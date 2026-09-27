@@ -123,6 +123,7 @@ function dashboardMetaToConfigs(dashboards: DashboardMeta[]): DashboardConfig[] 
       variation: p.variation,
       deviceType: p.deviceType,
       permission: p.permission || '',
+      isPublic: p.isPublic || false,
     };
     if (p.isCategory) config.children = [];
     byId.set(p.id, config);
@@ -201,7 +202,7 @@ async function saveDashboardConfigs(configs: DashboardConfig[], reconcileTarget 
     // Flatten configs to ordered rows, carrying serverId through.
     type DashboardPayload = {
       name: string; description: string; icon: string; variation: string;
-      deviceType: string; permission: string; isCategory: boolean; sortOrder: number;
+      deviceType: string; permission: string; isPublic: boolean; isCategory: boolean; sortOrder: number;
       parentId?: number | null; widgets?: any[];
     };
     type FlatConfig = { config: DashboardConfig; payload: DashboardPayload; parent?: DashboardConfig };
@@ -213,7 +214,7 @@ async function saveDashboardConfigs(configs: DashboardConfig[], reconcileTarget 
         payload: {
           name: c.name, description: c.description, icon: c.icon,
           variation: c.variation, deviceType: c.deviceType, permission: c.permission || '',
-          isCategory: c.children !== undefined,
+          isPublic: !!c.isPublic, isCategory: c.children !== undefined,
           sortOrder: order++, parentId: null,
         },
       });
@@ -224,7 +225,7 @@ async function saveDashboardConfigs(configs: DashboardConfig[], reconcileTarget 
             payload: {
               name: child.name, description: child.description, icon: child.icon,
               variation: child.variation, deviceType: child.deviceType, permission: child.permission || '',
-              isCategory: child.children !== undefined,
+              isPublic: !!child.isPublic, isCategory: child.children !== undefined,
               sortOrder: order++,
             },
             parent: c,
@@ -270,6 +271,7 @@ async function saveDashboardConfigs(configs: DashboardConfig[], reconcileTarget 
     reconcileDashboardServerIds(configs, reconcileTarget);
   } catch (err) {
     console.error('XACT: Failed to save dashboard configs:', err);
+    void showAlert('Could not save dashboard settings: ' + (err as Error).message, { title: 'Dashboard save failed' });
   }
 }
 
@@ -359,7 +361,7 @@ function waitForLogin(): Promise<void> {
 }
 
 // App initialization
-document.addEventListener('DOMContentLoaded', async () => {
+async function initializeApp(): Promise<void> {
   const app = document.getElementById('app');
   if (!app) {
     console.error('XACT: #app element not found');
@@ -368,6 +370,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Show login page if no valid token exists
   if (!initializeAuth()) {
+    document.getElementById('loading')?.classList.add('hidden');
     app.querySelector('app-header')?.clearUser();
     await waitForLogin();
   }
@@ -815,7 +818,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const profileDialog = document.querySelector('profile-dialog') as import('./components/profile-dialog').ProfileDialog;
   header?.addEventListener('user-action', ((e: CustomEvent) => {
     const { action } = e.detail;
-    if (action === 'profile') {
+    if (action === 'login') {
+      void waitForLogin().then(() => window.location.reload());
+    } else if (action === 'profile') {
       profileDialog?.open();
     } else if (action === 'preferences') {
       prefsDialog?.open();
@@ -842,4 +847,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   mediaQuery.addEventListener('change', handleResize);
   handleResize(); // Initial check
-});
+}
+
+// The entry module imports this file asynchronously, possibly after DOMContentLoaded.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => { void initializeApp(); }, { once: true });
+} else {
+  void initializeApp();
+}

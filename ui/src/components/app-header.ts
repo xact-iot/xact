@@ -32,7 +32,8 @@ export class AppHeader extends BaseComponent {
     if (user && !this.username) {
       this.username = user.username;
     }
-    const displayName = this.username || 'Not signed in';
+    const signedIn = isAuthenticated() && !!(user || this.username);
+    const displayName = signedIn ? (this.username || user?.username || 'Not signed in') : 'Not signed in';
     const avatarLetter = displayName.charAt(0).toUpperCase();
 
     this.innerHTML = `
@@ -62,10 +63,7 @@ export class AppHeader extends BaseComponent {
           </button>
           <div id="user-dropdown" class="hidden absolute right-0 top-full mt-1 w-44 rounded-lg border shadow-lg py-1"
                style="background-color: var(--header-bg); border-color: var(--border-color);">
-            <button class="dropdown-item w-full text-left px-4 py-2 text-sm hover:opacity-80 transition-colors" data-action="profile">Profile</button>
-            <button class="dropdown-item w-full text-left px-4 py-2 text-sm hover:opacity-80 transition-colors" data-action="preferences">Preferences</button>
-            <div class="border-t my-1" style="border-color: var(--border-color);"></div>
-            <button class="dropdown-item w-full text-left px-4 py-2 text-sm hover:opacity-80 transition-colors" data-action="logout">Logout</button>
+            ${this.renderUserDropdownHTML(signedIn)}
           </div>
         </div>
 
@@ -85,6 +83,26 @@ export class AppHeader extends BaseComponent {
         </div>
       </div>
     `;
+  }
+
+  private renderUserDropdownHTML(signedIn: boolean): string {
+    if (!signedIn) {
+      return `<button class="dropdown-item w-full text-left px-4 py-2 text-sm hover:opacity-80 transition-colors" data-action="login">Login</button>`;
+    }
+    return `
+      <button class="dropdown-item w-full text-left px-4 py-2 text-sm hover:opacity-80 transition-colors" data-action="profile">Profile</button>
+      <button class="dropdown-item w-full text-left px-4 py-2 text-sm hover:opacity-80 transition-colors" data-action="preferences">Preferences</button>
+      <div class="border-t my-1" style="border-color: var(--border-color);"></div>
+      <button class="dropdown-item w-full text-left px-4 py-2 text-sm hover:opacity-80 transition-colors" data-action="logout">Logout</button>`;
+  }
+
+  private refreshUserDropdown(): void {
+    const dropdown = this.querySelector('#user-dropdown');
+    if (!dropdown) return;
+    dropdown.innerHTML = this.renderUserDropdownHTML(isAuthenticated() && !!this.username);
+    dropdown.querySelectorAll('.dropdown-item').forEach(el =>
+      el.addEventListener('click', this.handleDropdownAction)
+    );
   }
 
   private renderTabsHTML(): string {
@@ -284,6 +302,7 @@ export class AppHeader extends BaseComponent {
     const nameEl = this.querySelector('#user-btn span') as HTMLElement | null;
     if (avatarEl) avatarEl.textContent = username.charAt(0).toUpperCase();
     if (nameEl) nameEl.textContent = username;
+    this.refreshUserDropdown();
   }
 
   clearUser(): void {
@@ -292,6 +311,7 @@ export class AppHeader extends BaseComponent {
     const nameEl = this.querySelector('#user-btn span') as HTMLElement | null;
     if (avatarEl) avatarEl.textContent = 'N';
     if (nameEl) nameEl.textContent = 'Not signed in';
+    this.refreshUserDropdown();
   }
 
   setIsOnDashboard(onDashboard: boolean): void {

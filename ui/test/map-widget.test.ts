@@ -382,6 +382,61 @@ describe('area-map-widget coordinate loading', () => {
     expect(marker.remove).toHaveBeenCalled();
   });
 
+  it('rotates the icon from live degree tags without rotating the zoomed widget', async () => {
+    const devicePath = 'default.LA_LongBeach.AirQuality.AQ-B-0149';
+    mockStore.getNodeValue.mockImplementation((path: string) => {
+      if (path.endsWith('.meta.lat')) return 33.7701;
+      if (path.endsWith('.meta.lon')) return -118.1937;
+      return undefined;
+    });
+    let heading: unknown = 90;
+    let headingCallback: (() => void) | undefined;
+    const unsub = vi.fn();
+    mockStore.resolveTagReference.mockImplementation((path: string) => {
+      if (path.endsWith('.meta.heading')) return heading;
+      if (path.endsWith('.meta.online')) return true;
+      return undefined;
+    });
+    mockStore.subscribeTagReference.mockImplementation((path: string, callback: () => void) => {
+      if (path.endsWith('.meta.heading')) headingCallback = callback;
+      callback();
+      return unsub;
+    });
+    let zoom = 10;
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = { getPane: vi.fn(() => ({ style: {} })), getZoom: vi.fn(() => zoom) };
+    await widget.addDevice({
+      ...layer,
+      iconRotationEnabled: true,
+      iconRotationTag: 'meta.heading',
+      zoomWidgetType: 'test-map-child',
+      iconRules: [{ tag: 'meta.online', cond: 'eq', value: 'true', glyph: 'mdi:car', size: 24, color: '#fff', animation: 'pulse' }],
+    }, devicePath);
+
+    const marker = (window as any).L.marker.mock.results[0].value;
+    expect(mockStore.subscribeTagReference).toHaveBeenCalledWith(devicePath + '.meta.heading', expect.any(Function));
+    expect(marker.options.icon.options.html).toContain('transform:rotate(90deg)');
+    expect(marker.options.icon.options.html).toContain('xact-map-hover-tip');
+    expect(marker.options.icon.options.html).toContain('xact-map-anim-pulse');
+
+    heading = '450';
+    headingCallback?.();
+    expect(marker.options.icon.options.html).toContain('transform:rotate(90deg)');
+    heading = -45;
+    headingCallback?.();
+    expect(marker.options.icon.options.html).toContain('transform:rotate(315deg)');
+    heading = 'invalid';
+    headingCallback?.();
+    expect(marker.options.icon.options.html).toContain('transform:rotate(0deg)');
+
+    zoom = 14;
+    widget.updateDeviceMarker(devicePath);
+    expect(marker.options.icon.options.html).toContain('xact-map-dw-card');
+    expect(marker.options.icon.options.html).not.toContain('xact-map-icon-rotation');
+    widget.removeDevice(devicePath);
+    expect(unsub).toHaveBeenCalled();
+  });
+
   it('uses plugin renderers and assigns map panes when plugin objects omit one', async () => {
     mockStore.getNodeValue.mockImplementation((path: string) => {
       if (path.endsWith('.meta.lat')) return 33.7701;
@@ -981,6 +1036,8 @@ describe('area-map-widget coordinate loading', () => {
     overlay.querySelector<HTMLInputElement>('#le-offset-y')!.value = '8';
     overlay.querySelector<HTMLInputElement>('#le-zoom-threshold')!.value = '12';
     overlay.querySelector<HTMLInputElement>('#le-refresh-interval')!.value = '250';
+    overlay.querySelector<HTMLInputElement>('#le-icon-rotation-enabled')!.checked = true;
+    overlay.querySelector<HTMLInputElement>('#le-icon-rotation-tag')!.value = 'meta.heading';
     overlay.querySelector<HTMLInputElement>('#le-dw-width')!.value = '360';
     overlay.querySelector<HTMLSelectElement>('#le-zoom-widget-type')!.value = 'test-map-child';
     overlay.querySelector<HTMLSelectElement>('#le-side-panel-widget-type')!.value = 'html-widget';
@@ -1004,6 +1061,11 @@ describe('area-map-widget coordinate loading', () => {
     treeDialogMock.open.mock.calls.at(-1)![2]('LA_LongBeach.AirQuality.AQ-B-0149.meta.status');
     expect(overlay.querySelector<HTMLInputElement>('.rule-tag')!.value).toBe('meta.status');
 
+    overlay.querySelector<HTMLElement>('#le-icon-rotation-browse')!.click();
+    expect(treeDialogMock.open).toHaveBeenLastCalledWith('default.LA_LongBeach.AirQuality.AQ-B-0149', 'Select Rotation Tag', expect.any(Function), true);
+    treeDialogMock.open.mock.calls.at(-1)![2]('LA_LongBeach.AirQuality.AQ-B-0149.meta.heading');
+    expect(overlay.querySelector<HTMLInputElement>('#le-icon-rotation-tag')!.value).toBe('meta.heading');
+
     widget.collectLayerFromPanel(overlay);
 
     expect(editableLayer).toMatchObject({
@@ -1017,6 +1079,8 @@ describe('area-map-widget coordinate loading', () => {
       offsetY: 8,
       zoomThreshold: 12,
       refreshInterval: 250,
+      iconRotationEnabled: true,
+      iconRotationTag: 'meta.heading',
       divWidgetWidth: 360,
       zoomWidgetType: 'test-map-child',
       sidePanelWidgetType: 'html-widget',

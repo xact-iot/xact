@@ -352,6 +352,14 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 		api.Get("/openapi.json", s.handleOpenAPIWithSchema())
 		api.Get("/api/v1/openapi.json", s.handleOpenAPIWithSchema())
 		api.Post("/login", s.handleLoginWithSchema())
+		if s.dashboardHandlers != nil {
+			api.Get("/api/v1/public/dashboards", s.dashboardHandlers.HandleListPublicDashboardsWithSchema())
+			api.Get("/api/v1/public/{org}/dashboards", s.dashboardHandlers.HandleListPublicDashboardsWithSchema())
+			api.Get("/api/v1/public/{org}/dashboards/{id}", s.dashboardHandlers.HandleGetPublicDashboardWithSchema())
+			api.Get("/api/v1/public/{org}/dashboards/{id}/data",
+				handlerWithSchema(s.handlePublicDashboardData, nil, map[string]publicTagValue{}, "public dashboards"))
+		}
+
 		api.Get("/api/v1/mobile/bootstrap", s.handleMobileBootstrapWithSchema())
 		if s.notificationHandlers != nil {
 			api.Get("/api/v1/mobile/firebase-config", s.notificationHandlers.HandleGetFirebaseClientConfigWithSchema())
@@ -391,6 +399,12 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 			r.Get("/logo.svg", fs.ServeHTTP)
 			r.Get("/favicon.svg", fs.ServeHTTP)
 
+			r.Get("/public", s.serveIndexFallback)
+			r.Get("/public/", s.serveIndexFallback)
+			r.Get("/public/{org}", s.serveIndexFallback)
+			r.Get("/public/{org}/", s.serveIndexFallback)
+			r.Get("/public/{org}/{id}", s.serveIndexFallback)
+			r.Get("/public/{org}/{id}/", s.serveIndexFallback)
 			r.Get("/", s.serveIndexFallback)
 		}
 	})

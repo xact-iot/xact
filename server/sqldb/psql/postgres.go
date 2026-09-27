@@ -193,6 +193,7 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		ALTER TABLE dashboards DROP COLUMN IF EXISTS dashboard_tag;
 		ALTER TABLE dashboards DROP COLUMN IF EXISTS panel_tag;
 		ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS permission TEXT NOT NULL DEFAULT '';
+		ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT FALSE;
 		ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS is_category BOOLEAN NOT NULL DEFAULT FALSE;
 		DO $$
 		BEGIN
@@ -225,6 +226,7 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		ALTER TABLE dashboards ALTER COLUMN variation SET DEFAULT '';
 		ALTER TABLE dashboards ALTER COLUMN device_type SET DEFAULT '';
 		ALTER TABLE dashboards ALTER COLUMN permission SET DEFAULT '';
+		ALTER TABLE dashboards ALTER COLUMN is_public SET DEFAULT FALSE;
 		ALTER TABLE dashboards ALTER COLUMN is_category SET DEFAULT FALSE;
 		ALTER TABLE dashboards ALTER COLUMN sort_order SET DEFAULT 0;
 		ALTER TABLE dashboards ALTER COLUMN widgets SET DEFAULT '[]';
@@ -235,6 +237,7 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		UPDATE dashboards SET variation = '' WHERE variation IS NULL;
 		UPDATE dashboards SET device_type = '' WHERE device_type IS NULL;
 		UPDATE dashboards SET permission = '' WHERE permission IS NULL;
+		UPDATE dashboards SET is_public = FALSE WHERE is_public IS NULL;
 		UPDATE dashboards SET is_category = FALSE WHERE is_category IS NULL;
 		UPDATE dashboards SET sort_order = 0 WHERE sort_order IS NULL;
 		UPDATE dashboards SET widgets = '[]' WHERE widgets IS NULL;
@@ -1559,7 +1562,7 @@ func (db *PostgresDB) resolveOrgID(ctx context.Context, org string) (int, error)
 func (db *PostgresDB) ListDashboards(ctx context.Context, org string) ([]sqldb.DashboardMeta, error) {
 	rows, err := db.pool.Query(ctx, `
 		SELECT p.id, p.name, p.description, p.icon, p.variation,
-		       p.device_type, p.permission, p.is_category, p.parent_id, p.sort_order
+		       p.device_type, p.permission, p.is_public, p.is_category, p.parent_id, p.sort_order
 		FROM dashboards p
 		JOIN organisations o ON o.id = p.org_id
 		WHERE o.name = $1
@@ -1574,7 +1577,7 @@ func (db *PostgresDB) ListDashboards(ctx context.Context, org string) ([]sqldb.D
 	for rows.Next() {
 		var p sqldb.DashboardMeta
 		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Icon,
-			&p.Variation, &p.DeviceType, &p.Permission, &p.IsCategory, &p.ParentID, &p.SortOrder); err != nil {
+			&p.Variation, &p.DeviceType, &p.Permission, &p.IsPublic, &p.IsCategory, &p.ParentID, &p.SortOrder); err != nil {
 			return nil, fmt.Errorf("scanning dashboard row: %w", err)
 		}
 		dashboards = append(dashboards, p)
@@ -1587,12 +1590,12 @@ func (db *PostgresDB) GetDashboard(ctx context.Context, org string, id int) (*sq
 	var p sqldb.Dashboard
 	err := db.pool.QueryRow(ctx, `
 		SELECT p.id, p.name, p.description, p.icon, p.variation,
-		       p.device_type, p.permission, p.is_category, p.parent_id, p.sort_order, p.widgets
+		       p.device_type, p.permission, p.is_public, p.is_category, p.parent_id, p.sort_order, p.widgets
 		FROM dashboards p
 		JOIN organisations o ON o.id = p.org_id
 		WHERE o.name = $1 AND p.id = $2
 	`, org, id).Scan(&p.ID, &p.Name, &p.Description, &p.Icon,
-		&p.Variation, &p.DeviceType, &p.Permission, &p.IsCategory, &p.ParentID, &p.SortOrder, &p.Widgets)
+		&p.Variation, &p.DeviceType, &p.Permission, &p.IsPublic, &p.IsCategory, &p.ParentID, &p.SortOrder, &p.Widgets)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -1615,11 +1618,11 @@ func (db *PostgresDB) CreateDashboard(ctx context.Context, org string, dashboard
 	}
 
 	err = db.pool.QueryRow(ctx, `
-		INSERT INTO dashboards (org_id, name, description, icon, variation, device_type, permission, is_category, parent_id, sort_order, widgets)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO dashboards (org_id, name, description, icon, variation, device_type, permission, is_public, is_category, parent_id, sort_order, widgets)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id
 	`, orgID, dashboard.Name, dashboard.Description, dashboard.Icon,
-		dashboard.Variation, dashboard.DeviceType, dashboard.Permission, dashboard.IsCategory, dashboard.ParentID, dashboard.SortOrder, widgets).Scan(&dashboard.ID)
+		dashboard.Variation, dashboard.DeviceType, dashboard.Permission, dashboard.IsPublic, dashboard.IsCategory, dashboard.ParentID, dashboard.SortOrder, widgets).Scan(&dashboard.ID)
 	if err != nil {
 		return fmt.Errorf("creating dashboard %q: %w", dashboard.Name, err)
 	}
@@ -1641,10 +1644,10 @@ func (db *PostgresDB) UpdateDashboard(ctx context.Context, org string, id int, d
 	tag, err := db.pool.Exec(ctx, `
 		UPDATE dashboards SET
 			name = $3, description = $4, icon = $5, variation = $6,
-			device_type = $7, permission = $8, is_category = $9, parent_id = $10, sort_order = $11, widgets = $12, updated_at = NOW()
+			device_type = $7, permission = $8, is_public = $9, is_category = $10, parent_id = $11, sort_order = $12, widgets = $13, updated_at = NOW()
 		WHERE org_id = $1 AND id = $2
 	`, orgID, id, dashboard.Name, dashboard.Description, dashboard.Icon,
-		dashboard.Variation, dashboard.DeviceType, dashboard.Permission, dashboard.IsCategory, dashboard.ParentID, dashboard.SortOrder, widgets)
+		dashboard.Variation, dashboard.DeviceType, dashboard.Permission, dashboard.IsPublic, dashboard.IsCategory, dashboard.ParentID, dashboard.SortOrder, widgets)
 	if err != nil {
 		return fmt.Errorf("updating dashboard %d: %w", id, err)
 	}

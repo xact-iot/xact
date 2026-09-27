@@ -386,6 +386,7 @@ export interface DashboardMeta {
   variation: string;
   deviceType: string;
   permission: string;
+  isPublic: boolean;
   isCategory: boolean;
   parentId?: number | null;
   sortOrder: number;

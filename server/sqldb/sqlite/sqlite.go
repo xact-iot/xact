@@ -150,11 +150,13 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 			parent_id   INTEGER REFERENCES dashboards(id) ON DELETE CASCADE,
 			sort_order  INTEGER NOT NULL DEFAULT 0,
 			permission  TEXT NOT NULL DEFAULT '',
+			is_public   INTEGER NOT NULL DEFAULT 0,
 			widgets     TEXT NOT NULL DEFAULT '[]',
 			created_at  TEXT NOT NULL,
 			updated_at  TEXT NOT NULL
 		)`,
 		`ALTER TABLE dashboards ADD COLUMN is_category INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE dashboards ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0`,
 		`DROP INDEX IF EXISTS idx_panels_org_name`,
 		`DROP INDEX IF EXISTS idx_dashboards_org_name`,
 		`CREATE INDEX IF NOT EXISTS idx_dashboards_org_name ON dashboards(org_id, name)`,
@@ -1086,7 +1088,7 @@ func parseTimestamp(s string) time.Time {
 func (db *SQLiteDB) ListDashboards(ctx context.Context, org string) ([]sqldb.DashboardMeta, error) {
 	rows, err := db.db.QueryContext(ctx, `
 		SELECT p.id, p.name, p.description, p.icon, p.variation,
-		       p.device_type, p.permission, p.is_category, p.parent_id, p.sort_order
+		       p.device_type, p.permission, p.is_public, p.is_category, p.parent_id, p.sort_order
 		FROM dashboards p
 		JOIN organisations o ON o.id = p.org_id
 		WHERE o.name = ?
@@ -1102,7 +1104,7 @@ func (db *SQLiteDB) ListDashboards(ctx context.Context, org string) ([]sqldb.Das
 		var p sqldb.DashboardMeta
 		var isCategory sqliteBool
 		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Icon,
-			&p.Variation, &p.DeviceType, &p.Permission, &isCategory, &p.ParentID, &p.SortOrder); err != nil {
+			&p.Variation, &p.DeviceType, &p.Permission, &p.IsPublic, &isCategory, &p.ParentID, &p.SortOrder); err != nil {
 			return nil, fmt.Errorf("scanning dashboard row: %w", err)
 		}
 		p.IsCategory = isCategory.Bool
@@ -1118,12 +1120,12 @@ func (db *SQLiteDB) GetDashboard(ctx context.Context, org string, id int) (*sqld
 	var widgetsStr string
 	err := db.db.QueryRowContext(ctx, `
 		SELECT p.id, p.name, p.description, p.icon, p.variation,
-		       p.device_type, p.permission, p.is_category, p.parent_id, p.sort_order, p.widgets
+		       p.device_type, p.permission, p.is_public, p.is_category, p.parent_id, p.sort_order, p.widgets
 		FROM dashboards p
 		JOIN organisations o ON o.id = p.org_id
 		WHERE o.name = ? AND p.id = ?
 	`, org, id).Scan(&p.ID, &p.Name, &p.Description, &p.Icon,
-		&p.Variation, &p.DeviceType, &p.Permission, &isCategory, &p.ParentID, &p.SortOrder, &widgetsStr)
+		&p.Variation, &p.DeviceType, &p.Permission, &p.IsPublic, &isCategory, &p.ParentID, &p.SortOrder, &widgetsStr)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -1147,10 +1149,10 @@ func (db *SQLiteDB) CreateDashboard(ctx context.Context, org string, dashboard *
 	}
 	now := formatTimestamp(time.Now())
 	result, err := db.db.ExecContext(ctx, `
-		INSERT INTO dashboards (org_id, name, description, icon, variation, device_type, permission, is_category, parent_id, sort_order, widgets, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO dashboards (org_id, name, description, icon, variation, device_type, permission, is_public, is_category, parent_id, sort_order, widgets, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, orgID, dashboard.Name, dashboard.Description, dashboard.Icon,
-		dashboard.Variation, dashboard.DeviceType, dashboard.Permission, dashboard.IsCategory, dashboard.ParentID, dashboard.SortOrder,
+		dashboard.Variation, dashboard.DeviceType, dashboard.Permission, dashboard.IsPublic, dashboard.IsCategory, dashboard.ParentID, dashboard.SortOrder,
 		string(widgets), now, now)
 	if err != nil {
 		return fmt.Errorf("creating dashboard %q: %w", dashboard.Name, err)
@@ -1175,10 +1177,10 @@ func (db *SQLiteDB) UpdateDashboard(ctx context.Context, org string, id int, das
 	result, err := db.db.ExecContext(ctx, `
 		UPDATE dashboards SET
 			name = ?, description = ?, icon = ?, variation = ?,
-			device_type = ?, permission = ?, is_category = ?, parent_id = ?, sort_order = ?, widgets = ?, updated_at = ?
+			device_type = ?, permission = ?, is_public = ?, is_category = ?, parent_id = ?, sort_order = ?, widgets = ?, updated_at = ?
 		WHERE org_id = ? AND id = ?
 	`, dashboard.Name, dashboard.Description, dashboard.Icon,
-		dashboard.Variation, dashboard.DeviceType, dashboard.Permission, dashboard.IsCategory, dashboard.ParentID, dashboard.SortOrder,
+		dashboard.Variation, dashboard.DeviceType, dashboard.Permission, dashboard.IsPublic, dashboard.IsCategory, dashboard.ParentID, dashboard.SortOrder,
 		string(widgets), now, orgID, id)
 	if err != nil {
 		return fmt.Errorf("updating dashboard %d: %w", id, err)

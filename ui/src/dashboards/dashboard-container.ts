@@ -127,7 +127,7 @@ export class DashboardContainer extends BaseComponent {
       // 404 means the dashboard hasn't been saved to the server yet - treat it
       // as an empty dashboard and drop into edit mode so the user can add widgets.
       if (err?.message?.includes('404')) {
-        this.dashboardData = { id: 0, name: dashboardRef, description: '', icon: '', variation: '', deviceType: '', permission: '', isCategory: false, sortOrder: 0, widgets: [] as any };
+        this.dashboardData = { id: 0, name: dashboardRef, description: '', icon: '', variation: '', deviceType: '', permission: '', isPublic: false, isCategory: false, sortOrder: 0, widgets: [] as any };
       } else {
         if (loadGeneration === this.loadGeneration && this.isConnected) {
           console.error('Failed to load dashboard:', err);
@@ -165,6 +165,20 @@ export class DashboardContainer extends BaseComponent {
     await this.initGrid();
     this.emitCapabilities();
     this.emitModeChanged();
+  }
+
+  async loadPublicDashboard(dashboard: Dashboard): Promise<void> {
+    ++this.loadGeneration;
+    this.dashboardData = dashboard;
+    this.dashboardName = dashboard.name;
+    this.widgets = Array.isArray(dashboard.widgets) ? cloneWidgets(dashboard.widgets as WidgetData[]) : [];
+    this.savedWidgets = cloneWidgets(this.widgets);
+    this.canEditDashboard = false;
+    this.canInspectDashboard = false;
+    this.mode = 'view';
+    this.dirty = false;
+    this.rerender();
+    await this.initGrid();
   }
 
   hasUnsavedChanges(): boolean {
@@ -761,6 +775,7 @@ export class DashboardContainer extends BaseComponent {
             variation: this.dashboardData.variation ?? '',
             deviceType: this.dashboardData.deviceType ?? '',
             permission: this.dashboardData.permission ?? '',
+            isPublic: this.dashboardData.isPublic ?? false,
             isCategory: false,
             sortOrder: this.dashboardData.sortOrder ?? 0,
             widgets: savedWidgets as any,
