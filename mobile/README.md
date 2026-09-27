@@ -58,6 +58,23 @@ Existing installations signed with the old debug certificate cannot accept an
 ordinary update signed with a different production key; plan a managed
 reinstallation for those devices.
 
+The Docker Image GitHub Action also builds and packages the APK. Configure these
+repository Actions secrets before running it:
+
+| Secret | Value |
+|--------|-------|
+| `XACT_ANDROID_KEYSTORE_BASE64` | Base64 encoding of the existing release `.jks` file |
+| `XACT_ANDROID_STORE_PASSWORD` | Keystore password |
+| `XACT_ANDROID_KEY_ALIAS` | Alias of the signing key in that keystore |
+| `XACT_ANDROID_KEY_PASSWORD` | Signing key password |
+
+On Linux, `base64 -w 0 /secure/path/xact-release.jks` produces the first
+value. The workflow decodes the keystore into the runner's temporary directory,
+outside the repository and Docker build context. Gradle reads the other values
+from the environment; it does not write the passwords to an artifact. Reuse the
+same signing key for every self-hosted release. Android requires the same signer
+for in-place updates even when the app is never published on Play Store.
+
 To publish a self-hosted update through XACT, configure the server with:
 
 ```dotenv

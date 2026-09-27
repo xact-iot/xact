@@ -11,6 +11,19 @@ plugins {
 val releaseProperties = Properties()
 val releasePropertiesFile = rootProject.file("key.properties")
 if (releasePropertiesFile.isFile) releasePropertiesFile.inputStream().use { releaseProperties.load(it) }
+// CI keeps the keystore outside the checkout and passes passwords as secrets.
+val signingEnvironment = mapOf(
+    "storeFile" to System.getenv("XACT_ANDROID_KEYSTORE"),
+    "storePassword" to System.getenv("XACT_ANDROID_STORE_PASSWORD"),
+    "keyAlias" to System.getenv("XACT_ANDROID_KEY_ALIAS"),
+    "keyPassword" to System.getenv("XACT_ANDROID_KEY_PASSWORD"),
+)
+if (signingEnvironment.values.any { !it.isNullOrBlank() }) {
+    require(signingEnvironment.values.all { !it.isNullOrBlank() }) {
+        "All XACT Android signing environment variables must be set together."
+    }
+    signingEnvironment.forEach { (key, value) -> releaseProperties.setProperty(key, value!!) }
+}
 val releaseSigningReady = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
     .all { !releaseProperties.getProperty(it).isNullOrBlank() }
 
