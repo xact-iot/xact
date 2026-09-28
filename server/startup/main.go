@@ -70,7 +70,7 @@ func main() {
 	}
 
 	// Ensure the plugin directory tree exists
-	for _, sub := range []string{"authentication", "widgets", "map-layer", "themes", "visual-script-nodes"} {
+	for _, sub := range []string{"authentication", "widgets", "map-layer", "themes", "visual-script-nodes", "applications"} {
 		if err := os.MkdirAll(filepath.Join(pluginDir, sub), 0o755); err != nil {
 			log.Printf("Warning: could not create plugin dir %s/%s: %v", pluginDir, sub, err)
 		}
@@ -128,6 +128,9 @@ func main() {
 	}
 
 	natsAuth := nats.NewClientAuthenticator(internalPassword)
+	if err := natsAuth.LoadApplicationServices(pluginDir); err != nil {
+		log.Fatalf("Application service configuration: %v", err)
+	}
 
 	opts := &server.Options{
 		Host: natsHost,

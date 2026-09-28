@@ -95,7 +95,8 @@ func publicWidgetConfig(kind string, config map[string]json.RawMessage) (map[str
 			"id": true, "name": true, "pathPattern": true, "enabled": true, "itemType": true,
 			"iconRules": true, "defaultGlyph": true, "defaultColor": true, "defaultSize": true,
 			"iconRotationEnabled": true, "iconRotationTag": true, "zoomThreshold": true,
-			"offsetX": true, "offsetY": true,
+			"showZoomedTooltipAlways": true,
+			"offsetX":                 true, "offsetY": true,
 		}
 		for _, layer := range layers {
 			var itemType string

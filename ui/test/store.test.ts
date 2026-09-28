@@ -801,6 +801,21 @@ describe('MirrorStore tree subscriptions and live tag broadcasts', () => {
     expect(seen).toContain(12.35);
   });
 
+  it('preserves GPS precision in live coordinate broadcasts', async () => {
+    const seen: number[] = [];
+    store.subscribe('default.PUBLIC_BUS.BUS-17.meta.lat', value => seen.push(value));
+    await flushAsyncWork();
+
+    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+      'xact.internal.bcast.tagvalue.default.PUBLIC_BUS.BUS-17.meta.lat',
+      { 'meta.lat': { type: 'value', value: 15.301234, status: 'N', timestamp: 701 } },
+    ));
+    await flushAsyncWork();
+
+    expect(store.getNodeValue('default.PUBLIC_BUS.BUS-17.meta.lat')).toBe(15.301234);
+    expect(seen).toContain(15.301234);
+  });
+
   it('does not start duplicate tag-value or tree subscriptions', async () => {
     store.subscribe('default.Device.temp', () => undefined);
     store.subscribe('default.Device.pressure', () => undefined);

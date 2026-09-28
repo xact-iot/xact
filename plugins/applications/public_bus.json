@@ -1,0 +1,14 @@
+{
+  "id": "public_bus",
+  "name": "Public bus application",
+  "widgets": ["public-bus-config"],
+  "resource": {
+    "id": "public-bus-config",
+    "description": "Public bus configuration",
+    "permissions": [
+      {"name": "read", "description": "View stops, routes, schedules and source status"},
+      {"name": "manage", "description": "Import/activate schedules and manage sources and assignments"}
+    ]
+  },
+  "operations": ["get_status", "list_stops", "list_routes", "list_schedule", "list_archives", "import_start", "activate", "rollback", "set_override", "set_source", "set_assignment"]
+}

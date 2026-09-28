@@ -13,6 +13,7 @@ import { getMirrorStore, type MirrorStore } from '../store/store';
 import { registerWidgetType, type WidgetTypeMeta } from '../dashboards/widgets/widget-registry';
 import { themeManager, type ThemeDefinition, type WidgetDecorationDefinition } from '../themes/theme-manager';
 import { getAuthHeaders } from '../auth';
+import { applications, loadApplications } from './applications';
 
 const BASE_URL = '/xact';
 
@@ -61,6 +62,7 @@ const mapLayerPlugins = new Map<string, MapLayerPlugin>();
  * Plugin scripts (plain JS) access this after the loader has initialised it.
  */
 export interface XACTBridge {
+  applications: typeof applications;
   /**
    * Register a widget with XACT.
    * Calls customElements.define() and adds the widget to the 'Custom' category
@@ -150,6 +152,7 @@ declare global {
 
 function setupBridge(): void {
   window.XACT = {
+    applications,
     registerWidget(meta, klass) {
       if (!customElements.get(meta.type)) {
         customElements.define(meta.type, klass);
@@ -236,6 +239,7 @@ async function loadPluginGroup(plugins: PluginDescriptor[], label: string): Prom
  */
 export async function initPlugins(): Promise<void> {
   setupBridge();
+  await loadApplications().catch(err => console.error("Application registration unavailable", err));
 
   const [widgetPlugins, mapLayerPluginList, themePlugins] = await Promise.all([
     fetchPluginList('/api/v1/plugins/widgets'),

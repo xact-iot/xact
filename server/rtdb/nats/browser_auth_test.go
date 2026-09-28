@@ -181,3 +181,43 @@ func TestBrowserBrokerScopesCommandsAndExpiresConnections(t *testing.T) {
 		t.Fatal("session expiry did not disconnect browser")
 	}
 }
+
+func TestRegisteredApplicationSubjectsAreTenantAndOperationScoped(t *testing.T) {
+	auth := NewClientAuthenticator("internal-secret")
+	auth.SetBrowserAuthenticator(func(_ context.Context, token string) (BrowserSession, bool) {
+		return BrowserSession{Org: "alpha", UserID: "7", ExpiresAt: time.Now().Add(time.Hour), ApplicationSubjects: []string{"xact.app.v1.alpha.demo.*.request.get_status"}}, token == "session"
+	})
+	s := browserTestBroker(t, auth)
+	errs := make(chan error, 8)
+	browser := browserTestConnect(t, s, "browser", "session", natsgo.ErrorHandler(func(_ *natsgo.Conn, _ *natsgo.Subscription, err error) { errs <- err }))
+	worker := browserTestConnect(t, s, "internal", "internal-secret")
+	sub, err := worker.SubscribeSync("xact.app.v1.alpha.demo.default.request.get_status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = worker.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err = browser.Publish("xact.app.v1.alpha.demo.default.request.get_status", []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = sub.NextMsg(time.Second); err != nil {
+		t.Fatalf("registered operation blocked: %v", err)
+	}
+	for _, subject := range []string{"xact.app.v1.beta.demo.default.request.get_status", "xact.app.v1.alpha.other.default.request.get_status", "xact.app.v1.alpha.demo.default.request.set_source", "xact.app.v1.alpha.demo.default.ingest.phone"} {
+		if err = browser.Publish(subject, []byte("{}")); err != nil {
+			t.Fatal(err)
+		}
+		if err = browser.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case e := <-errs:
+			if !strings.Contains(strings.ToLower(e.Error()), "permissions violation") {
+				t.Fatal(e)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("forbidden subject allowed: %s", subject)
+		}
+	}
+}

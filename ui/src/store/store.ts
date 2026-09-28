@@ -1015,7 +1015,9 @@ export class MirrorStore {
             currentNode = currentNode.getOrCreateChild(element);
         }
 
-        const displayValue = typeof tagValue.value === 'number' && !Number.isInteger(tagValue.value)
+        // Coordinates need their full precision for map marker movement.
+        const isCoordinate = path.endsWith('.meta.lat') || path.endsWith('.meta.lon');
+        const displayValue = !isCoordinate && typeof tagValue.value === 'number' && !Number.isInteger(tagValue.value)
             ? parseFloat(tagValue.value.toFixed(2))
             : tagValue.value;
         if (tagValue.timestamp) currentNode.setTimestamp(tagValue.timestamp);

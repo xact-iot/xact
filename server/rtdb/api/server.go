@@ -415,6 +415,9 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 		r.Use(JSONContentType)
 		api := newAPIRoutes(r, &s.openAPIRoutes, "", false)
 
+		// Generic extension discovery and current session permissions.
+		api.Get("/api/v1/applications", handlerWithSchema(s.handleApplications, nil, []map[string]any{}, "applications"))
+		api.Get("/api/v1/applications/{application}/session", handlerWithSchema(s.handleApplicationSession, nil, map[string]any{}, "applications"))
 		// Auth helpers
 		api.Get("/api/v1/auth/my-orgs", s.handleMyOrgsWithSchema())
 		api.Post("/api/v1/auth/switch-org", s.handleSwitchOrgWithSchema())

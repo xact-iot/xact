@@ -11,17 +11,19 @@ import (
 	"unicode"
 
 	"github.com/nats-io/nats-server/v2/server"
+	"github.com/xact-iot/xact/applications"
 )
 
 // BrowserSession is the live, authenticated HTTP session used by a NATS client.
 // Even system administrators are scoped to the session's current organisation.
 type BrowserSession struct {
-	Org          string
-	UserID       string
-	ExpiresAt    time.Time
-	ReadTree     bool
-	ReadTags     bool
-	SendCommands bool
+	Org                 string
+	UserID              string
+	ExpiresAt           time.Time
+	ReadTree            bool
+	ReadTags            bool
+	SendCommands        bool
+	ApplicationSubjects []string
 }
 
 type BrowserAuthenticator func(context.Context, string) (BrowserSession, bool)
@@ -32,6 +34,7 @@ type ClientAuthenticator struct {
 	internalPassword string
 	mu               sync.RWMutex
 	browser          BrowserAuthenticator
+	services         map[string]applications.Service
 }
 
 func NewClientAuthenticator(internalPassword string) *ClientAuthenticator {
@@ -46,6 +49,9 @@ func (a *ClientAuthenticator) SetBrowserAuthenticator(auth BrowserAuthenticator)
 
 func (a *ClientAuthenticator) Check(client server.ClientAuthentication) bool {
 	opts := client.GetOpts()
+	if strings.HasPrefix(opts.Username, "app:") {
+		return a.checkApplication(client)
+	}
 	if opts.Username == "internal" {
 		if a.internalPassword == "" || subtle.ConstantTimeCompare([]byte(opts.Password), []byte(a.internalPassword)) != 1 {
 			return false
@@ -86,6 +92,12 @@ func (a *ClientAuthenticator) Check(client server.ClientAuthentication) bool {
 	}
 	if session.SendCommands {
 		permissions.Publish = &server.SubjectPermission{Allow: []string{CommandSubjectPrefix + session.Org + ".>"}}
+	}
+	if len(session.ApplicationSubjects) > 0 {
+		if len(permissions.Publish.Allow) == 0 {
+			permissions.Publish = &server.SubjectPermission{}
+		}
+		permissions.Publish.Allow = append(permissions.Publish.Allow, session.ApplicationSubjects...)
 	}
 	client.RegisterUser(&server.User{
 		Username:           "browser:" + session.Org + ":" + session.UserID,

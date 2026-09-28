@@ -160,6 +160,18 @@ func publicDeviceTag(org, device, tag string) string {
 	if strings.HasPrefix(tag, org+".") {
 		return tag
 	}
+	// A tag chosen from one example device in a wildcard layer applies to
+	// each device. Keep this in step with the map widget's resolveDeviceTag.
+	if parentEnd := strings.LastIndex(device, "."); parentEnd >= 0 {
+		parent := device[:parentEnd]
+		relativeParent := strings.TrimPrefix(parent, org+".")
+		if parent != org && strings.HasPrefix(tag, relativeParent+".") {
+			afterParent := strings.TrimPrefix(tag, relativeParent+".")
+			if childEnd := strings.Index(afterParent, "."); childEnd >= 0 {
+				return device + "." + afterParent[childEnd+1:]
+			}
+		}
+	}
 	return device + "." + tag
 }
 
