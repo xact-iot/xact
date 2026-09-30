@@ -77,6 +77,7 @@ const NODE_TYPE_LABELS: Record<string, string> = {
 };
 
 const TAGS_MANAGER_MODAL_Z_INDEX = 19000;
+const TREE_PAGE_SIZE = 100;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -163,6 +164,10 @@ export class TagsManagerWidget extends BaseComponent {
   private valueCache: Map<string, CachedValue> = new Map();
   private tagCountCache: Map<string, number> = new Map();
   private matchingTagCountCache: Map<string, number> = new Map();
+  private searchMatchCache: Map<string, boolean> = new Map();
+  private visibleNodeCounts: Map<string, number> = new Map();
+  private visibleLeafCounts: Map<string, number> = new Map();
+  private latestTimestampByNode: Map<string, number> = new Map();
   private treeScrollTop = 0;
   private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private treeUnsubscribe: (() => void) | null = null;
@@ -238,6 +243,9 @@ export class TagsManagerWidget extends BaseComponent {
     }
     const store = getMirrorStore();
     this.treeUnsubscribe = store.subscribeToTreeChanges('', (path, data) => {
+      this.tagCountCache.clear();
+      this.matchingTagCountCache.clear();
+      this.searchMatchCache.clear();
       if (data === null) {
         // A node subtree was deleted. The store discarded those Node objects
         // (and their subscriber lists). Evict the affected paths from
@@ -257,7 +265,12 @@ export class TagsManagerWidget extends BaseComponent {
     // real tree data rather than waiting for NATS events to trickle in.
     const orgRoot = getCurrentUser()?.tenant_id ?? '';
     if (orgRoot) {
-      store.loadTreeFromAPI('', -1).then(() => this.rerender()).catch(() => {});
+      store.loadTreeFromAPI('', -1).then(() => {
+        this.tagCountCache.clear();
+        this.matchingTagCountCache.clear();
+        this.searchMatchCache.clear();
+        this.rerender();
+      }).catch(() => {});
     }
     this.rerender();
   }
@@ -293,6 +306,8 @@ export class TagsManagerWidget extends BaseComponent {
     this.expandedNodes = new Set(Array.isArray(state?.expandedNodes) ? state.expandedNodes : []);
     this.searchQuery = typeof state?.searchQuery === 'string' ? state.searchQuery : '';
     this.statusFilter = typeof state?.statusFilter === 'string' ? state.statusFilter : null;
+    this.searchMatchCache.clear();
+    this.matchingTagCountCache.clear();
     const scrollTop = Number.isFinite(state?.scrollTop) ? state.scrollTop : 0;
     this.rerender();
     // render() first records the old DOM's scroll position. Apply the restored
@@ -395,13 +410,22 @@ export class TagsManagerWidget extends BaseComponent {
   private escapeId(path: string): string { return path.replace(/\./g, '_'); }
 
   private nodeMatchesSearch(path: string, query: string): boolean {
+    const cached = this.searchMatchCache.get(path);
+    if (cached !== undefined) return cached;
     const lq = query.toLowerCase();
     const store = getMirrorStore();
     const name = path.split('.').pop()!;
-    if (name.toLowerCase().includes(lq) || path.toLowerCase().includes(lq)) return true;
-    for (const child of store.listChildrenNames(path)) {
-      if (this.nodeMatchesSearch(path ? `${path}.${child}` : child, query)) return true;
+    if (name.toLowerCase().includes(lq) || path.toLowerCase().includes(lq)) {
+      this.searchMatchCache.set(path, true);
+      return true;
     }
+    for (const child of store.listChildrenNames(path)) {
+      if (this.nodeMatchesSearch(path ? `${path}.${child}` : child, query)) {
+        this.searchMatchCache.set(path, true);
+        return true;
+      }
+    }
+    this.searchMatchCache.set(path, false);
     return false;
   }
 
@@ -428,6 +452,7 @@ export class TagsManagerWidget extends BaseComponent {
       if (!this.isConnected) return;
       const ts = store.getNodeTimestamp(leafPath);
       const status = store.getNodeStatus(leafPath);
+      if (this.valueCache.get(leafPath)?.status !== status) this.matchingTagCountCache.clear();
       this.valueCache.set(leafPath, { value, timestamp: ts, status });
       const eid = this.escapeId(leafPath);
       const rowEl = this.querySelector(`[data-leaf-path="${escapeSelector(leafPath)}"]`);
@@ -489,11 +514,18 @@ export class TagsManagerWidget extends BaseComponent {
     // Direct leaves rendered before child nodes so tags appear just below the "Add Tag" button
     if (leaves.length > 0 && depth > 0) {
       const filtered = leaves.filter(p => this.leafMatchesFilters(p));
-      if (filtered.length > 0) html += this.renderLeafTable(filtered, depth);
+      if (filtered.length > 0) {
+        const limit = this.visibleLeafCounts.get(path) ?? TREE_PAGE_SIZE;
+        html += this.renderLeafTable(filtered.slice(0, limit), depth);
+        if (filtered.length > limit) html += this.renderMoreButton(path, 'leaf', filtered.length - limit, depth);
+      }
     }
 
-    for (const nodePath of nodes) {
-      if (this.searchQuery && !this.nodeMatchesSearch(nodePath, this.searchQuery)) continue;
+    const matchingNodes = this.searchQuery
+      ? nodes.filter(nodePath => this.nodeMatchesSearch(nodePath, this.searchQuery))
+      : nodes;
+    const nodeLimit = this.visibleNodeCounts.get(path) ?? TREE_PAGE_SIZE;
+    for (const nodePath of matchingNodes.slice(0, nodeLimit)) {
 
       const name       = nodePath.split('.').pop()!;
       const isExpanded = this.expandedNodes.has(nodePath);
@@ -521,10 +553,7 @@ export class TagsManagerWidget extends BaseComponent {
                  style="background:color-mix(in srgb,${this.statusFilterColor()} 24%,transparent);color:${this.statusFilterColor()};border:1px solid color-mix(in srgb,${this.statusFilterColor()} 45%,transparent)">${matchCount} ${this.statusFilterLabel()}</span>`
         : '';
 
-      let latestTs = 0;
-      for (const [cp, c] of this.valueCache) {
-        if (cp.startsWith(nodePath + '.') && c.timestamp > latestTs) latestTs = c.timestamp;
-      }
+      const latestTs = this.latestTimestampByNode.get(nodePath) ?? 0;
 
       html += `
         <div class="tv-node-row flex items-center py-1 px-2 cursor-pointer hover:opacity-80"
@@ -562,7 +591,19 @@ export class TagsManagerWidget extends BaseComponent {
       }
     }
 
+    if (matchingNodes.length > nodeLimit) {
+      html += this.renderMoreButton(path, 'node', matchingNodes.length - nodeLimit, depth);
+    }
     return html;
+  }
+
+  private renderMoreButton(path: string, kind: 'node' | 'leaf', remaining: number, depth: number): string {
+    return `<div style="padding-left:${depth * 20 + 8}px" class="py-2">
+      <button class="tv-show-more px-2 py-1 text-xs rounded" data-parent-path="${escapeHtml(path)}" data-kind="${kind}"
+              style="color:var(--accent-color);border:1px solid var(--border-color)">
+        Show more ${kind === 'leaf' ? 'tags' : 'nodes'} (${remaining} remaining)
+      </button>
+    </div>`;
   }
 
   private renderLeafTable(leaves: string[], depth: number): string {
@@ -1101,8 +1142,16 @@ export class TagsManagerWidget extends BaseComponent {
   protected render(): void {
     const currentTreeBody = this.querySelector<HTMLElement>('#tv-tree-body');
     if (currentTreeBody) this.treeScrollTop = currentTreeBody.scrollTop;
-    this.tagCountCache.clear();
-    this.matchingTagCountCache.clear();
+    this.latestTimestampByNode.clear();
+    for (const [path, cached] of this.valueCache) {
+      const parts = path.split('.');
+      for (let i = 1; i < parts.length; i++) {
+        const ancestor = parts.slice(0, i).join('.');
+        if (cached.timestamp > (this.latestTimestampByNode.get(ancestor) ?? 0)) {
+          this.latestTimestampByNode.set(ancestor, cached.timestamp);
+        }
+      }
+    }
 
     const sFilters = [
       { key: 'N', label: 'NORMAL', rgb: '34,197,94',   col: '#22c55e' },
@@ -1161,6 +1210,7 @@ export class TagsManagerWidget extends BaseComponent {
   // ─── Event Wiring ────────────────────────────────────────────────────────────
 
   protected attachEventListeners(): void {
+    this.querySelectorAll('.tv-show-more').forEach(el => el.addEventListener('click', this.handleShowMore));
     this.querySelectorAll('.tv-node-row').forEach(el => el.addEventListener('click', this.handleNodeToggle));
     this.querySelectorAll('.tv-node-action').forEach(el => el.addEventListener('click', this.handleNodeAction));
     this.querySelectorAll('.tv-add-tag-btn').forEach(el => el.addEventListener('click', this.handleAddTagBtn));
@@ -1215,6 +1265,7 @@ export class TagsManagerWidget extends BaseComponent {
   }
 
   protected detachEventListeners(): void {
+    this.querySelectorAll('.tv-show-more').forEach(el => el.removeEventListener('click', this.handleShowMore));
     this.querySelectorAll('.tv-node-row').forEach(el => el.removeEventListener('click', this.handleNodeToggle));
     this.querySelectorAll('.tv-node-action').forEach(el => el.removeEventListener('click', this.handleNodeAction));
     this.querySelectorAll('.tv-add-tag-btn').forEach(el => el.removeEventListener('click', this.handleAddTagBtn));
@@ -1258,15 +1309,19 @@ export class TagsManagerWidget extends BaseComponent {
     if (wasExpanded) this.expandedNodes.delete(path);
     else this.expandedNodes.add(path);
     this.rerender();
-    if (!wasExpanded) {
-      // Scroll expanded node to top of tree body so its children are visible below
-      const nodeRow = this.querySelector(`[data-node-path="${path}"]`) as HTMLElement | null;
-      nodeRow?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+  };
+
+  private handleShowMore = (e: Event): void => {
+    const button = e.currentTarget as HTMLElement;
+    const path = button.dataset.parentPath!;
+    const counts = button.dataset.kind === 'leaf' ? this.visibleLeafCounts : this.visibleNodeCounts;
+    counts.set(path, (counts.get(path) ?? TREE_PAGE_SIZE) + TREE_PAGE_SIZE);
+    this.rerender();
   };
 
   private handleSearchInput = (e: Event): void => {
     this.searchQuery = (e.target as HTMLInputElement).value;
+    this.searchMatchCache.clear();
     if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
     this.searchDebounceTimer = setTimeout(() => {
       this.searchDebounceTimer = null;
@@ -1277,6 +1332,7 @@ export class TagsManagerWidget extends BaseComponent {
   private handleStatusFilter = (e: Event): void => {
     const key = (e.currentTarget as HTMLElement).dataset.status!;
     this.statusFilter = this.statusFilter === key ? null : key;
+    this.matchingTagCountCache.clear();
     this.rerender();
   };
 
@@ -1828,6 +1884,9 @@ export class TagsManagerWidget extends BaseComponent {
     this.deleteTarget = null;
     this.lockedNodes.delete(path);
     getMirrorStore().removeNode(path);
+    this.tagCountCache.clear();
+    this.matchingTagCountCache.clear();
+    this.searchMatchCache.clear();
     this.rerender();
   };
 

@@ -801,6 +801,38 @@ describe('MirrorStore tree subscriptions and live tag broadcasts', () => {
     expect(seen).toContain(12.35);
   });
 
+  it('observes live values under a prefix without hydrating every child tag', async () => {
+    const prefix = 'default.Routes.A.route.coordinates';
+    const seen: string[] = [];
+    const unsubscribe = store.subscribeToTagValueChanges(prefix, path => seen.push(path));
+    await flushAsyncWork();
+
+    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+      `xact.internal.bcast.tagvalue.${prefix}.0`, { '0': { type: 'value', value: 15.3, status: 'N' } },
+    ));
+    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+      'xact.internal.bcast.tagvalue.default.Routes.B.route.coordinates.0', { '0': { type: 'value', value: 14.1, status: 'N' } },
+    ));
+    await flushAsyncWork();
+
+    expect(seen).toEqual([`${prefix}.0`]);
+    expect(store.getNodeValue(`${prefix}.0`)).toBe(15.3);
+    expect(store.getNodeValue('default.Routes.B.route.coordinates.0')).toBeUndefined();
+    expect(store.debugNatsState().desiredTagValuePaths).toEqual([]);
+    expect(apiMock.loadTag).not.toHaveBeenCalled();
+
+    store.applyPublicSnapshot('default', { [`${prefix}.2`]: { value: 15.4 } });
+    expect(seen).toEqual([`${prefix}.0`, `${prefix}.2`]);
+
+    unsubscribe();
+    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+      `xact.internal.bcast.tagvalue.${prefix}.1`, { '1': { type: 'value', value: -61.4, status: 'N' } },
+    ));
+    await flushAsyncWork();
+    expect(seen).toEqual([`${prefix}.0`, `${prefix}.2`]);
+    expect(store.getNodeValue(`${prefix}.1`)).toBeUndefined();
+  });
+
   it('preserves GPS precision in live coordinate broadcasts', async () => {
     const seen: number[] = [];
     store.subscribe('default.PUBLIC_BUS.BUS-17.meta.lat', value => seen.push(value));

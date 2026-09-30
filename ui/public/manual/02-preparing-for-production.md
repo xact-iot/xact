@@ -21,7 +21,7 @@ Review these `.env` settings before exposing XACT beyond localhost:
 | `ENABLE_HTTPS`, `HTTP_CERTS_DIR` | Enable HTTPS directly or terminate TLS at a trusted reverse proxy. |
 | `START_NGINX` | Defaults to `no`. Set `yes` only after preparing `nginx.conf`, certificates, and proxy/TLS settings. |
 | `CORS_ALLOWED_ORIGINS` | Set to the exact UI origins allowed to call the API. In production, no wildcard development CORS is assumed. |
-| `MAX_REQUEST_BODY_BYTES` | Caps API request bodies. Defaults to 8 MiB. |
+| `MAX_REQUEST_BODY_BYTES` | Caps ordinary API request bodies. Defaults to 8 MiB. The public bus GTFS import endpoint allows a 36 MiB JSON request to carry a ZIP of up to 25 MiB after base64 encoding. |
 | `EXPOSE_NATS_INTERNAL_CONFIG` | Keep `no`. Only enable for controlled test harness use; the route still requires `SystemAdmin`. |
 | `NATS_BROWSER_ALLOW_COMMANDS` | Keep `no` to use the server-mediated command endpoint. If enabled, direct publishing is limited to the current organisation and users with tag-write permission. |
 | `EVENT_RETENTION_DAYS` | Production default is `0`, which disables application-side audit/event purging. Set a positive value only when retention policy allows deletion. |

@@ -220,6 +220,54 @@ describe('tags-manager-widget search', () => {
     expect(widget.textContent).not.toContain('mode');
   });
 
+  it('pages large branches while keeping search across all tags', async () => {
+    vi.useFakeTimers();
+    const leafNames = Array.from({ length: 110 }, (_, i) => `tag${String(i).padStart(3, '0')}`);
+    const nodeNames = Array.from({ length: 110 }, (_, i) => `node${String(i).padStart(3, '0')}`);
+    childrenByPath = {
+      default: ['Area'],
+      'default.Area': [...leafNames, ...nodeNames],
+    };
+    nodeTypes = { default: 'node', 'default.Area': 'node' };
+    for (const name of leafNames) nodeTypes[`default.Area.${name}`] = 'leaf';
+    for (const name of nodeNames) nodeTypes[`default.Area.${name}`] = 'node';
+    valuesByPath = {};
+    statusByPath = {};
+    timestampsByPath = {};
+
+    const widget = document.createElement('tags-manager-widget');
+    document.body.appendChild(widget);
+    await flushMicrotasks();
+    await flushMicrotasks();
+    widget.querySelector<HTMLElement>('[data-node-path="default.Area"]')!.click();
+
+    expect(widget.querySelectorAll('.tv-leaf-row')).toHaveLength(100);
+    expect(widget.querySelectorAll('.tv-node-row')).toHaveLength(101);
+    expect(mockStore.subscribe).toHaveBeenCalledTimes(100);
+    expect(widget.textContent).toContain('Show more tags (10 remaining)');
+    expect(widget.textContent).toContain('Show more nodes (10 remaining)');
+
+    const search = widget.querySelector<HTMLInputElement>('#tv-search')!;
+    search.value = 'tag109';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    vi.advanceTimersByTime(200);
+    await flushMicrotasks();
+    expect(widget.querySelectorAll('.tv-leaf-row')).toHaveLength(1);
+    expect(widget.textContent).toContain('tag109');
+
+    const clearSearch = widget.querySelector<HTMLInputElement>('#tv-search')!;
+    clearSearch.value = '';
+    clearSearch.dispatchEvent(new Event('input', { bubbles: true }));
+    vi.advanceTimersByTime(200);
+    await flushMicrotasks();
+    widget.querySelector<HTMLElement>('.tv-show-more[data-kind="leaf"]')!.click();
+    expect(widget.querySelectorAll('.tv-leaf-row')).toHaveLength(110);
+    expect(mockStore.subscribe).toHaveBeenCalledTimes(110);
+
+    widget.querySelector<HTMLElement>('.tv-show-more[data-kind="node"]')!.click();
+    expect(widget.querySelectorAll('.tv-node-row')).toHaveLength(111);
+  }, 10_000);
+
   it('filters UNDEF status without including NORMAL tags', async () => {
     seedTree();
     valuesByPath['default.Area.Device.meta.serial'] = 'SN-001';

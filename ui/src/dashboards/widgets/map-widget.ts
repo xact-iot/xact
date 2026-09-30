@@ -61,7 +61,18 @@ interface LayerConfig {
   name: string;
   pathPattern: string;
   enabled: boolean;
-  itemType: 'icon' | 'plugin';
+  itemType: 'icon' | 'route' | 'plugin';
+  /** Per-route tag paths, relative to each node matched by pathPattern. */
+  routeCoordinatesTag?: string;
+  routeNameTag?: string;
+  /** Style shared by every route in this layer. */
+  routeColor?: string;
+  routeWidth?: number;
+  routeZoom?: number;
+  /** Legacy tag paths, removed when the layer is edited. */
+  routeColorTag?: string;
+  routeWidthTag?: string;
+  routeZoomTag?: string;
   pluginType?: string;
   pluginConfig?: any;
   iconRules?: IconRule[];
@@ -131,8 +142,24 @@ interface DeviceEntry {
   divTagPaths: Set<string>;
   /** Last rendered icon HTML - used to skip unnecessary setIcon calls that would destroy embedded widgets. */
   lastIconHtml?: string;
-  /** Mounted zoomed-in widget; null when zoomed out. */
+  /** Mounted zoom widget in the marker or its hover card. */
   divWidgetEl?: HTMLElement | null;
+  hovered?: boolean;
+}
+
+interface RouteEntry {
+  layer: LayerConfig;
+  path: string;
+  line: any | null;
+  unsubs: Array<() => void>;
+  refreshTimer?: ReturnType<typeof setTimeout>;
+}
+
+interface DenseIconLayerState {
+  layer: LayerConfig;
+  paths: Set<string>;
+  visible: Set<string>;
+  clusters: any[];
 }
 
 interface MapLayerPluginState {
@@ -172,6 +199,9 @@ function ensureAnimStyles(): void {
     .xact-map-hover-tip { display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: 9px; pointer-events: none; z-index: 9999; }
     .xact-map-marker-root:hover .xact-map-hover-tip,
     .xact-map-hover-tip.xact-map-tooltip-permanent { display: block; }
+    .xact-map-hover-tip.xact-map-hover-widget { margin-bottom: 0; padding-bottom: 9px; pointer-events: auto; }
+    .xact-map-hover-tip.xact-map-hover-widget::after { top: calc(100% - 9px); }
+    .xact-map-hover-tip.xact-map-hover-widget::before { top: calc(100% - 2px); }
     .xact-map-device-label { display: block; background: #e5e7eb; color: #000; border: 1px solid #cbd0d5; border-radius: 4px; padding: 2px 6px; white-space: nowrap; font-size: 11px; line-height: 1.2; box-shadow: 0 1px 4px rgba(0,0,0,0.16); }
     .xact-map-hover-tip::after { content: ''; position: absolute; top: 100%; left: 50%; width: 1px; height: 9px; transform: translateX(-50%); background: var(--xact-map-link-color, var(--accent-color, #f59e0b)); opacity: 0.65; }
     .xact-map-hover-tip::before { content: ''; position: absolute; top: calc(100% + 7px); left: 50%; width: 3px; height: 3px; transform: translateX(-50%); border-radius: 50%; background: var(--xact-map-link-color, var(--accent-color, #f59e0b)); opacity: 0.65; }
@@ -217,6 +247,12 @@ const DEVICE_LAYER_TOP_Z_INDEX = 900;
 const DEVICE_LAYER_STEP_Z_INDEX = 10;
 const DEVICE_LAYER_HOVER_Z_INDEX = 950;
 const DEVICE_POSITION_ANIMATION_MS = 2000;
+const ROUTE_WIDTH_GROWTH_PER_ZOOM = 0.25;
+const ROUTE_TAG_DEFAULTS = {
+  coordinates: 'route.coordinates',
+  name: 'route.name',
+} as const;
+const ROUTE_STYLE_DEFAULTS = { color: '#f59e0b', width: 4, zoom: 10 } as const;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -361,9 +397,12 @@ export class AreaMapWidget extends BaseComponent {
 
   // Device tracking
   private devices = new Map<string, DeviceEntry>();
+  private routes = new Map<string, RouteEntry>();
   private pendingDeviceUnsubs = new Map<string, Array<() => void>>();
   private layerUnsubs = new Map<string, Array<() => void>>();
   private mapLayerPlugins = new Map<string, MapLayerPluginState>();
+  private denseIconLayers = new Map<string, DenseIconLayerState>();
+  private denseRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Org area + live subscription for meta-tag updates
   private orgArea: OrgArea | null = null;
@@ -611,6 +650,13 @@ export class AreaMapWidget extends BaseComponent {
       this.cancelDevicePositionAnimation(entry);
     }
     this.devices.clear();
+    this.clearDenseIconLayers();
+    for (const entry of this.routes.values()) {
+      entry.unsubs.forEach(fn => fn());
+      if (entry.refreshTimer !== undefined) clearTimeout(entry.refreshTimer);
+      entry.line?.remove();
+    }
+    this.routes.clear();
     for (const state of this.mapLayerPlugins.values()) {
       state.instance.remove();
     }
@@ -662,6 +708,7 @@ export class AreaMapWidget extends BaseComponent {
 
     // Zoom change → update div icons and zoom indicator
     this.map.on('zoomend', () => this.onZoomChange());
+    this.map.on('moveend', () => this.refreshDenseIconLayers());
 
     // Wait one paint frame so GridStack has applied the widget's CSS dimensions.
     // Without this, the container may still be 0×0 and fitBounds forces maxZoom (19).
@@ -679,6 +726,7 @@ export class AreaMapWidget extends BaseComponent {
       const w = container.offsetWidth, h = container.offsetHeight;
       if (w > 0 && h > 0 && w === prevW && h === prevH) {
         this.fitOrgBounds(); // dimensions stable - safe to fit
+        this.refreshDenseIconLayers();
         return;
       }
       prevW = w; prevH = h;
@@ -750,6 +798,13 @@ export class AreaMapWidget extends BaseComponent {
       if (this.map) entry.marker.remove();
     }
     this.devices.clear();
+    this.clearDenseIconLayers();
+    for (const entry of this.routes.values()) {
+      entry.unsubs.forEach(fn => fn());
+      if (entry.refreshTimer !== undefined) clearTimeout(entry.refreshTimer);
+      entry.line?.remove();
+    }
+    this.routes.clear();
     for (const state of this.mapLayerPlugins.values()) {
       state.instance.remove();
     }
@@ -761,7 +816,7 @@ export class AreaMapWidget extends BaseComponent {
     this.layerUnsubs.clear();
 
     for (const layer of this.config.layers) {
-      if (layer.enabled === false) continue;
+      if (layer.enabled === false && layer.itemType !== 'route') continue;
       await this.initLayer(layer);
     }
     this.updateLegend();
@@ -829,14 +884,28 @@ export class AreaMapWidget extends BaseComponent {
         const changedParts = afterParent.split('.');
         const devicePath = parentPath + '.' + changedParts[0];
         const isDirectDeviceChange = changedParts.length === 1;
+        const dense = this.denseIconLayers.get(layer.id);
+        if (dense) {
+          const wasPresent = dense.paths.has(devicePath);
+          if (data === null && isDirectDeviceChange) dense.paths.delete(devicePath);
+          else dense.paths.add(devicePath);
+          if (!wasPresent || data === null && isDirectDeviceChange || changedParts[1] === 'meta' && (changedParts[2] === 'lat' || changedParts[2] === 'lon')) {
+            this.scheduleDenseIconRefresh();
+          }
+          return;
+        }
         if (data === null && isDirectDeviceChange) {
-          if (this.hasMapLayerPlugin(layer)) {
+          if (layer.itemType === 'route') {
+            this.removeRoute(layer, devicePath);
+          } else if (this.hasMapLayerPlugin(layer)) {
             this.updateMapLayerPluginDevices(layer, devicePath, false);
           } else {
             this.removeDevice(devicePath);
           }
         } else {
-          if (this.hasMapLayerPlugin(layer)) {
+          if (layer.itemType === 'route') {
+            this.addRoute(layer, devicePath);
+          } else if (this.hasMapLayerPlugin(layer)) {
             this.updateMapLayerPluginDevices(layer, devicePath, true);
           } else if (this.devices.has(devicePath)) {
             if (changedParts[1] === 'meta' && (changedParts[2] === 'lat' || changedParts[2] === 'lon')) {
@@ -853,12 +922,214 @@ export class AreaMapWidget extends BaseComponent {
       this.layerUnsubs.get(layer.id)!.push(unsub);
     }
 
-    if (this.hasMapLayerPlugin(layer)) {
+    if (layer.itemType === 'route') {
+      for (const path of paths) this.addRoute(layer, path);
+    } else if (this.hasMapLayerPlugin(layer)) {
       this.mountMapLayerPlugin(layer, paths);
+    } else if (layer.itemType === 'icon' && paths.length >= 500 && layer.pathPattern.trim().endsWith('.*')) {
+      this.denseIconLayers.set(layer.id, { layer, paths: new Set(paths), visible: new Set(), clusters: [] });
+      this.scheduleDenseIconRefresh();
     } else {
       for (const devicePath of paths) {
         await this.addDevice(layer, devicePath);
       }
+    }
+  }
+
+  private clearDenseIconLayers(): void {
+    if (this.denseRefreshTimer !== undefined) clearTimeout(this.denseRefreshTimer);
+    this.denseRefreshTimer = undefined;
+    for (const state of this.denseIconLayers.values()) state.clusters.forEach(marker => marker.remove());
+    this.denseIconLayers.clear();
+  }
+
+  private scheduleDenseIconRefresh(): void {
+    if (this.denseRefreshTimer !== undefined) return;
+    this.denseRefreshTimer = setTimeout(() => {
+      this.denseRefreshTimer = undefined;
+      this.refreshDenseIconLayers();
+    }, 75);
+  }
+
+  private refreshDenseIconLayers(): void {
+    for (const state of this.denseIconLayers.values()) this.renderDenseIconLayer(state);
+  }
+
+  private renderDenseIconLayer(state: DenseIconLayerState): void {
+    if (!this.map) return;
+    state.clusters.forEach(marker => marker.remove());
+    state.clusters = [];
+    if (state.layer.enabled === false) {
+      for (const path of state.visible) this.removeDevice(path);
+      state.visible.clear();
+      return;
+    }
+    const size = this.map.getSize?.();
+    if (!size || size.x <= 0 || size.y <= 0) return;
+    const bounds = this.map.getBounds().pad(0.15);
+    const south = bounds.getSouth(), north = bounds.getNorth();
+    const west = bounds.getWest(), east = bounds.getEast();
+    const zoom = this.map.getZoom();
+    const cellSize = zoom >= 15 ? 36 : 56;
+    const cells = new Map<string, { paths: string[]; lat: number; lon: number }>();
+    for (const path of state.paths) {
+      const position = this.readDevicePosition(path);
+      if (!position || position[0] < south || position[0] > north || position[1] < west || position[1] > east) continue;
+      const pixel = this.map.project(position, zoom);
+      const key = `${Math.floor(pixel.x / cellSize)}:${Math.floor(pixel.y / cellSize)}`;
+      let cell = cells.get(key);
+      if (!cell) { cell = { paths: [], lat: 0, lon: 0 }; cells.set(key, cell); }
+      cell.paths.push(path);
+      cell.lat += position[0];
+      cell.lon += position[1];
+    }
+    const singles = new Set<string>();
+    const L = (window as any).L;
+    for (const cell of cells.values()) {
+      if (cell.paths.length === 1) {
+        singles.add(cell.paths[0]);
+        continue;
+      }
+      const center: [number, number] = [cell.lat / cell.paths.length, cell.lon / cell.paths.length];
+      const count = cell.paths.length;
+      const icon = L.divIcon({ className: '', iconSize: [36, 36], iconAnchor: [18, 18],
+        html: `<div style="width:36px;height:36px;border-radius:50%;background:${esc(state.layer.defaultColor || '#2563eb')};color:white;border:2px solid white;box-shadow:0 1px 5px #0008;display:grid;place-items:center;font:600 12px sans-serif">${count}</div>` });
+      const marker = L.marker(center, { icon, pane: this.getLayerPaneName(state.layer) }).addTo(this.map);
+      marker.bindTooltip?.(`${count} ${state.layer.name}`);
+      if (zoom >= 18 && marker.bindPopup) {
+        const choices = cell.paths.slice(0, 100);
+        const store = getMirrorStore();
+        const html = `<div style="max-height:240px;overflow:auto"><strong>${count} ${esc(state.layer.name)}</strong>` +
+          choices.map((path, index) => `<button type="button" data-stop-index="${index}" style="display:block;width:100%;text-align:left;padding:5px">${esc(String(store.getNodeValue(path + '.meta.name') || path.split('.').pop()))}</button>`).join('') +
+          (count > choices.length ? `<p>Showing ${choices.length} of ${count}</p>` : '') + '</div>';
+        marker.bindPopup(html);
+        marker.on('popupopen', (event: any) => {
+          event.popup?.getElement?.()?.querySelectorAll('[data-stop-index]').forEach((button: HTMLElement) => {
+            button.addEventListener('click', () => {
+              const path = choices[Number(button.dataset.stopIndex)];
+              if (!path) return;
+              state.visible.add(path);
+              void this.addDevice(state.layer, path).then(() => this.onDeviceClick(path));
+              marker.closePopup?.();
+            });
+          });
+        });
+      } else {
+        marker.on('click', () => this.map?.flyTo(center, Math.min(19, zoom + 2)));
+      }
+      state.clusters.push(marker);
+    }
+    if (this.selectedDevicePath && state.paths.has(this.selectedDevicePath)) singles.add(this.selectedDevicePath);
+    for (const path of state.visible) if (!singles.has(path)) this.removeDevice(path);
+    state.visible = singles;
+    for (const path of singles) if (!this.devices.has(path)) void this.addDevice(state.layer, path);
+  }
+
+  private routeKey(layer: LayerConfig, path: string): string {
+    return `${layer.id}:${path}`;
+  }
+
+  private routeTagPath(layer: LayerConfig, path: string, field: keyof typeof ROUTE_TAG_DEFAULTS): string {
+    const property = {
+      coordinates: layer.routeCoordinatesTag,
+      name: layer.routeNameTag,
+    }[field];
+    return this.resolveDeviceTag(path, property?.trim() || ROUTE_TAG_DEFAULTS[field]);
+  }
+
+  private addRoute(layer: LayerConfig, path: string): void {
+    if (!this.map) return;
+    const key = this.routeKey(layer, path);
+    if (this.routes.has(key)) return;
+    const entry: RouteEntry = { layer, path, line: null, unsubs: [] };
+    this.routes.set(key, entry);
+    const store = getMirrorStore();
+    const coordinatePath = this.routeTagPath(layer, path, 'coordinates');
+    const namePath = this.routeTagPath(layer, path, 'name');
+    entry.unsubs.push(store.subscribeToTagValueChanges(coordinatePath, () => this.scheduleRouteUpdate(entry)));
+    entry.unsubs.push(store.subscribeToTagValueChanges(namePath, () => this.scheduleRouteUpdate(entry)));
+    entry.unsubs.push(store.subscribeToTreeChanges(coordinatePath, () => this.scheduleRouteUpdate(entry)));
+    entry.unsubs.push(store.subscribeToTreeChanges(namePath, () => this.scheduleRouteUpdate(entry)));
+    this.updateRoute(entry);
+  }
+
+  private removeRoute(layer: LayerConfig, path: string): void {
+    const key = this.routeKey(layer, path);
+    const entry = this.routes.get(key);
+    if (!entry) return;
+    entry.unsubs.forEach(fn => fn());
+    if (entry.refreshTimer !== undefined) clearTimeout(entry.refreshTimer);
+    entry.line?.remove();
+    this.routes.delete(key);
+  }
+
+  private scheduleRouteUpdate(entry: RouteEntry): void {
+    if (entry.refreshTimer !== undefined) return;
+    entry.refreshTimer = setTimeout(() => {
+      entry.refreshTimer = undefined;
+      if (this.routes.get(this.routeKey(entry.layer, entry.path)) === entry) this.updateRoute(entry);
+    }, 16);
+  }
+
+  private readRouteCoordinates(layer: LayerConfig, path: string): [number, number][] {
+    const store = getMirrorStore();
+    const tagPath = this.routeTagPath(layer, path, 'coordinates');
+    let raw = store.getNodeValue(tagPath);
+    if (typeof raw === 'string') {
+      try { raw = JSON.parse(raw); } catch { return []; }
+    }
+    if (!Array.isArray(raw) && store.getNodeType(tagPath) === 'node') {
+      const names = store.listChildrenNames(tagPath);
+      if (!names.length || names.some(name => !/^(0|[1-9]\d*)$/.test(name))) return [];
+      names.sort((a, b) => Number(a) - Number(b));
+      raw = names.map(name => store.getNodeValue(`${tagPath}.${name}`));
+    }
+    if (!Array.isArray(raw) || raw.length < 4 || raw.length % 2 !== 0) return [];
+    const coordinates: [number, number][] = [];
+    for (let i = 0; i < raw.length; i += 2) {
+      const lat = raw[i];
+      const lon = raw[i + 1];
+      if (typeof lat !== 'number' || !Number.isFinite(lat) || lat < -90 || lat > 90
+        || typeof lon !== 'number' || !Number.isFinite(lon) || lon < -180 || lon > 180) return [];
+      coordinates.push([lat, lon]);
+    }
+    return coordinates;
+  }
+
+  private updateRoute(entry: RouteEntry): void {
+    if (!this.map) return;
+    const { layer, path } = entry;
+    const appearanceZoom = Number(layer.routeZoom ?? ROUTE_STYLE_DEFAULTS.zoom);
+    const baseWidth = Number(layer.routeWidth ?? ROUTE_STYLE_DEFAULTS.width);
+    const zoom = this.map.getZoom();
+    if (layer.enabled === false || !Number.isFinite(zoom)
+      || !Number.isFinite(appearanceZoom) || appearanceZoom < 0
+      || !Number.isFinite(baseWidth) || baseWidth <= 0 || zoom < appearanceZoom) {
+      entry.line?.remove();
+      entry.line = null;
+      return;
+    }
+    const coordinates = this.readRouteCoordinates(layer, path);
+    if (coordinates.length < 2) {
+      entry.line?.remove();
+      entry.line = null;
+      return;
+    }
+    const store = getMirrorStore();
+    const color = layer.routeColor ?? ROUTE_STYLE_DEFAULTS.color;
+    const name = store.getNodeValue(this.routeTagPath(layer, path, 'name'));
+    const weight = baseWidth * (1 + ROUTE_WIDTH_GROWTH_PER_ZOOM * (zoom - appearanceZoom));
+    const style = { color: typeof color === 'string' && color.trim() ? color : ROUTE_STYLE_DEFAULTS.color,
+      weight, pane: this.getLayerPaneName(layer) };
+    const label = typeof name === 'string' && name.trim() ? name : path.split('.').pop() || path;
+    if (entry.line) {
+      entry.line.setLatLngs(coordinates);
+      entry.line.setStyle(style);
+      entry.line.setTooltipContent(esc(label));
+    } else {
+      entry.line = (window as any).L.polyline(coordinates, style)
+        .bindTooltip(esc(label), { sticky: true })
+        .addTo(this.map);
     }
   }
 
@@ -1018,8 +1289,16 @@ export class AreaMapWidget extends BaseComponent {
     marker.on('click', () => this.onDeviceClick(devicePath));
     marker.on('mouseover', () => {
       this.setHoverRaisedLayer(layer, true);
+      const entry = this.devices.get(devicePath);
+      if (entry) entry.hovered = true;
+      this.mountHoverWidget(devicePath);
     });
-    marker.on('mouseout', () => this.setHoverRaisedLayer(layer, false));
+    marker.on('mouseout', () => {
+      this.setHoverRaisedLayer(layer, false);
+      const entry = this.devices.get(devicePath);
+      if (entry) entry.hovered = false;
+      this.unmountHoverWidget(devicePath);
+    });
 
     const unsubs: Array<() => void> = [];
 
@@ -1292,6 +1571,27 @@ export class AreaMapWidget extends BaseComponent {
     }
   }
 
+  private mountHoverWidget(devicePath: string): void {
+    const entry = this.devices.get(devicePath);
+    if (!entry?.hovered || !this.hasZoomWidget(entry.layer) || entry.layer.showZoomedTooltipAlways) return;
+    if ((this.map?.getZoom() ?? 0) >= (entry.layer.zoomThreshold ?? 13)) return;
+    const body = (entry.marker.getElement() as HTMLElement | null)?.querySelector<HTMLElement>('.xact-map-hover-body');
+    if (!body || (entry.divWidgetEl && body.contains(entry.divWidgetEl))) return;
+    const widget = this.createZoomWidget(entry.layer, devicePath);
+    if (!widget) return;
+    body.replaceChildren(widget);
+    entry.divWidgetEl = widget;
+  }
+
+  private unmountHoverWidget(devicePath: string): void {
+    const entry = this.devices.get(devicePath);
+    if (!entry) return;
+    const body = (entry.marker.getElement() as HTMLElement | null)?.querySelector<HTMLElement>('.xact-map-hover-body');
+    if (!body) return;
+    body.replaceChildren();
+    entry.divWidgetEl = null;
+  }
+
   private updateDeviceMarker(devicePath: string): void {
     const entry = this.devices.get(devicePath);
     if (!entry || !this.map) return;
@@ -1303,11 +1603,13 @@ export class AreaMapWidget extends BaseComponent {
       // ran before Leaflet attached the marker element to the DOM.
       if (this.hasZoomWidget(entry.layer)) {
         this.mountDivWidget(devicePath);
+        this.mountHoverWidget(devicePath);
       }
       this.applySelectedMarker();
       return;
     }
     entry.lastIconHtml = iconHtml;
+    entry.divWidgetEl = null;
     const { iconSize, iconAnchor } = this.getIconGeometry(rule, entry.layer);
     entry.marker.setIcon(L.divIcon({
       className: '',
@@ -1317,6 +1619,7 @@ export class AreaMapWidget extends BaseComponent {
     }));
     if (this.hasZoomWidget(entry.layer)) {
       this.mountDivWidget(devicePath);
+      this.mountHoverWidget(devicePath);
     }
     this.applySelectedMarker();
   }
@@ -1343,17 +1646,13 @@ export class AreaMapWidget extends BaseComponent {
     if (!this.map) return;
     const zoomEl = this.querySelector<HTMLElement>('#map-zoom');
     if (zoomEl) zoomEl.textContent = `Z ${this.map.getZoom()}`;
-    const zoom = this.map.getZoom();
-    for (const [, entry] of this.devices) {
-      if (this.hasZoomWidget(entry.layer) && zoom < (entry.layer.zoomThreshold ?? 13)) {
-        entry.divWidgetEl = null;
-      }
-    }
+    for (const entry of this.routes.values()) this.updateRoute(entry);
     for (const [devicePath, entry] of this.devices) {
       if (entry.layer.itemType === 'icon' || (entry.layer.itemType as string) === 'div') {
         this.updateDeviceMarker(devicePath);
       }
     }
+    this.refreshDenseIconLayers();
   }
 
   private getIconGeometry(rule: IconRule | null, layer: LayerConfig): { iconSize: [number, number]; iconAnchor: [number, number] } {
@@ -1461,10 +1760,21 @@ export class AreaMapWidget extends BaseComponent {
       ? `<div class="xact-map-icon-rotation" style="transform:${transform};transform-origin:center center;">${iconDiv}</div>`
       : iconDiv;
 
-    // A compact device label is the only zoomed-out content in both dashboard views.
     const name = esc(devicePath.split('.').pop() ?? devicePath);
-    const tooltipClass = layer.showZoomedTooltipAlways ? ' xact-map-tooltip-permanent' : '';
-    const hoverTip = `<div class="xact-map-hover-tip${tooltipClass}"${layer.showZoomedTooltipAlways ? ' style="display:block"' : ''}><span class="xact-map-device-label">${name}</span></div>`;
+    let hoverTip: string;
+    if (this.hasZoomWidget(layer) && !layer.showZoomedTooltipAlways) {
+      const w = layer.divWidgetWidth ?? 280;
+      hoverTip = `<div class="xact-map-hover-tip xact-map-hover-widget" style="width:${esc(String(w))}px;">`
+        + `<div class="xact-map-dw-card" style="cursor:default;background:var(--panel-bg,#1a1a1a);`
+        + `border:1px solid var(--border-color);color:#f3f4f6;border-radius:6px;overflow:hidden;`
+        + `box-shadow:0 8px 24px rgba(0,0,0,0.55);">`
+        + `<div class="xact-map-dw-header" style="padding:6px 10px;border-bottom:1px solid var(--border-color);`
+        + `font-size:12px;font-weight:700;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${name}">${name}</div>`
+        + `<div class="xact-map-hover-body"></div></div></div>`;
+    } else {
+      const tooltipClass = layer.showZoomedTooltipAlways ? ' xact-map-tooltip-permanent' : '';
+      hoverTip = `<div class="xact-map-hover-tip${tooltipClass}"${layer.showZoomedTooltipAlways ? ' style="display:block"' : ''}><span class="xact-map-device-label">${name}</span></div>`;
+    }
 
     return `<div class="xact-map-marker-root${selectedClass}" style="--xact-map-link-color:${esc(String(color))};width:${esc(String(size))}px;height:${esc(String(size))}px;">${rotatedIcon}${hoverTip}</div>`;
   }
@@ -1755,20 +2065,20 @@ export class AreaMapWidget extends BaseComponent {
     const detailDashboardId = entry?.layer.detailDashboardId ? String(entry.layer.detailDashboardId) : '';
     const deviceNameHtml = detailDashboardId
       ? `<button id="dp-device-link" type="button" title="Click to view device details"
-                 style="display:inline;padding:0;margin:0;border:0;background:transparent;color:#fff;font:inherit;font-weight:700;font-size:15px;text-align:left;cursor:pointer;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px;">
+                 style="display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0;margin:0;border:0;background:transparent;color:#fff;font:inherit;font-weight:700;font-size:15px;text-align:left;cursor:pointer;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px;">
             ${esc(deviceName)}
           </button>`
-      : `<div style="font-weight:700;font-size:15px;color:#fff;">${esc(deviceName)}</div>`;
+      : `<div style="font-weight:700;font-size:15px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(deviceName)}">${esc(deviceName)}</div>`;
 
     panel.innerHTML = `
       <div style="display:flex;flex-direction:column;height:100%;font-size:13px;">
         <!-- Header -->
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border-color);flex-shrink:0;background:rgba(255,255,255,0.04);">
-          <div>
+        <div style="display:flex;align-items:center;gap:8px;min-width:0;padding:12px 16px;border-bottom:1px solid var(--border-color);flex-shrink:0;background:rgba(255,255,255,0.04);">
+          <div style="flex:1 1 0;min-width:0;overflow:hidden;">
             ${deviceNameHtml}
-            ${description ? `<div style="color:#d1d5db;font-size:12px;margin-top:2px;">${esc(description)}</div>` : ''}
+            ${description ? `<div style="color:#d1d5db;font-size:12px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(description)}">${esc(description)}</div>` : ''}
           </div>
-          <div style="display:flex;gap:6px;align-items:center;">
+          <div style="display:flex;gap:6px;align-items:center;flex:0 0 auto;">
             <button id="dp-gear" title="${canConfigureSidePanelWidget ? 'Configure side panel widget' : 'Side panel widget configuration is available in edit mode'}" ${canConfigureSidePanelWidget ? '' : 'disabled'}
                     style="display:${this._editMode ? 'inline-block' : 'none'};font-size:14px;line-height:1;padding:3px 8px;border-radius:4px;cursor:${canConfigureSidePanelWidget ? 'pointer' : 'not-allowed'};background:color-mix(in srgb,var(--accent-color) 12%,transparent);border:1px solid color-mix(in srgb,var(--accent-color) 28%,transparent);color:var(--accent-color);opacity:${canConfigureSidePanelWidget ? '1' : '0.45'};">⚙</button>
             <button id="dp-close"
@@ -1912,6 +2222,10 @@ export class AreaMapWidget extends BaseComponent {
   }
 
   private updateLayerVisibility(layer: LayerConfig): void {
+    if (this.denseIconLayers.has(layer.id)) this.renderDenseIconLayer(this.denseIconLayers.get(layer.id)!);
+    for (const entry of this.routes.values()) {
+      if (entry.layer.id === layer.id) this.updateRoute(entry);
+    }
     for (const [devicePath, entry] of this.devices) {
       if (entry.layer.id !== layer.id) continue;
       if (layer.enabled) {
@@ -1933,9 +2247,14 @@ export class AreaMapWidget extends BaseComponent {
     this.searchQuery = query;
     const results: Array<{ path: string; score: number }> = [];
 
-    for (const devicePath of this.devices.keys()) {
+    const candidates = new Set(this.devices.keys());
+    for (const state of this.denseIconLayers.values()) {
+      if (state.layer.enabled !== false) for (const path of state.paths) candidates.add(path);
+    }
+    for (const devicePath of candidates) {
       const name = devicePath.split('.').pop() ?? devicePath;
-      const score = fuzzyScore(name + ' ' + devicePath, query);
+      const displayName = String(getMirrorStore().getNodeValue(devicePath + '.meta.name') ?? '');
+      const score = fuzzyScore(displayName + ' ' + name + ' ' + devicePath, query);
       if (score >= 0) {
         results.push({ path: devicePath, score });
       }
@@ -2152,8 +2471,9 @@ export class AreaMapWidget extends BaseComponent {
     // Treat legacy 'div' layers as 'icon' in the editor
     const effectiveType = (layer.itemType as string) === 'div' ? 'icon' : layer.itemType;
     const isPlugin = effectiveType === 'plugin';
+    const isRoute = effectiveType === 'route';
 
-    const itemTypeOpts = (['icon', 'plugin'] as const).map(t =>
+    const itemTypeOpts = (['icon', 'route', 'plugin'] as const).map(t =>
       `<option value="${t}" ${effectiveType === t ? 'selected' : ''}>${t}</option>`
     ).join('');
     const zoomWidgetType = this.getZoomWidgetType(layer);
@@ -2239,7 +2559,27 @@ export class AreaMapWidget extends BaseComponent {
           <label style="${labelStyle}">Item Type</label>
           <select id="le-item-type" style="${fieldStyle}width:100%;">${itemTypeOpts}</select>
         </div>
-        ${isPlugin ? `
+        ${isRoute ? `
+        <div style="grid-column:1/-1;font-size:12px;opacity:0.75;">Each matched route node supplies coordinates and a name. Color, width, and appearance zoom apply to the whole layer.</div>
+        ${([
+          ['le-route-coordinates-tag', 'Coordinates array tag', layer.routeCoordinatesTag ?? ROUTE_TAG_DEFAULTS.coordinates],
+          ['le-route-name-tag', 'Name tag', layer.routeNameTag ?? ROUTE_TAG_DEFAULTS.name],
+        ] as const).map(([id, label, value]) => `<div><label style="${labelStyle}" for="${id}">${label}</label><input id="${id}" type="text" value="${esc(value)}" style="${fieldStyle}width:100%;"></div>`).join('')}
+        <div>
+          <label style="${labelStyle}" for="le-route-color">Color</label>
+          <input id="le-route-color" type="color" value="${toHexColor(layer.routeColor ?? ROUTE_STYLE_DEFAULTS.color)}"
+                 style="display:block;width:52px;height:30px;padding:1px 2px;cursor:pointer;border:1px solid var(--border-color);border-radius:3px;background:var(--content-bg);">
+        </div>
+        <div>
+          <label style="${labelStyle}" for="le-route-width">Width (pixels)</label>
+          <input id="le-route-width" type="number" min="0.1" step="0.1" value="${esc(String(layer.routeWidth ?? ROUTE_STYLE_DEFAULTS.width))}" style="${fieldStyle}width:100%;">
+        </div>
+        <div>
+          <label style="${labelStyle}" for="le-route-zoom">Appearance zoom</label>
+          <input id="le-route-zoom" type="number" min="0" max="22" step="1" value="${esc(String(layer.routeZoom ?? ROUTE_STYLE_DEFAULTS.zoom))}" style="${fieldStyle}width:100%;">
+        </div>
+        <div style="grid-column:1/-1;font-size:11px;opacity:0.65;">Coordinates: [lat, lon, lat, lon, …] with at least two points. Width grows by 25% of its appearance width per zoom level.</div>
+        ` : isPlugin ? `
         <div>
           <label style="${labelStyle}">Plugin Type</label>
           <select id="le-plugin-type" style="${fieldStyle}width:100%;">${pluginTypeOptions}</select>
@@ -2276,7 +2616,7 @@ export class AreaMapWidget extends BaseComponent {
         </div>`}
       </div>
 
-      ${!isPlugin ? `
+      ${!isPlugin && !isRoute ? `
       <div style="margin-bottom:16px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid color-mix(in srgb,var(--accent-color) 12%,var(--border-color));">
           <span style="${subHeadStyle}">Icon Rules <span style="font-size:14px;font-weight:400;opacity:0.7;letter-spacing:0;text-transform:none;">· used when zoomed out</span></span>
@@ -2695,6 +3035,20 @@ export class AreaMapWidget extends BaseComponent {
     // Migrate legacy 'div' type to 'icon' on next save
     const selectedType = overlay.querySelector<HTMLSelectElement>('#le-item-type')?.value ?? layer.itemType;
     layer.itemType = (selectedType === 'div' ? 'icon' : selectedType) as LayerConfig['itemType'];
+    if (layer.itemType === 'route') {
+      layer.routeCoordinatesTag = overlay.querySelector<HTMLInputElement>('#le-route-coordinates-tag')?.value.trim() || ROUTE_TAG_DEFAULTS.coordinates;
+      layer.routeNameTag = overlay.querySelector<HTMLInputElement>('#le-route-name-tag')?.value.trim() || ROUTE_TAG_DEFAULTS.name;
+      layer.routeColor = toHexColor(overlay.querySelector<HTMLInputElement>('#le-route-color')?.value ?? layer.routeColor ?? ROUTE_STYLE_DEFAULTS.color);
+      const widthValue = overlay.querySelector<HTMLInputElement>('#le-route-width')?.value.trim();
+      const zoomValue = overlay.querySelector<HTMLInputElement>('#le-route-zoom')?.value.trim();
+      const width = widthValue ? Number(widthValue) : NaN;
+      const zoom = zoomValue ? Number(zoomValue) : NaN;
+      layer.routeWidth = Number.isFinite(width) && width > 0 ? width : ROUTE_STYLE_DEFAULTS.width;
+      layer.routeZoom = Number.isFinite(zoom) && zoom >= 0 && zoom <= 22 ? Math.round(zoom) : ROUTE_STYLE_DEFAULTS.zoom;
+      delete layer.routeColorTag;
+      delete layer.routeWidthTag;
+      delete layer.routeZoomTag;
+    }
     const previousPluginType = layer.pluginType ?? '';
     layer.pluginType = overlay.querySelector<HTMLSelectElement>('#le-plugin-type')?.value ?? layer.pluginType;
     if ((layer.pluginType ?? '') !== previousPluginType) {

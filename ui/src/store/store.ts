@@ -181,6 +181,7 @@ class Node {
 
 // Callback type for tree structure changes
 type TreeChangeCallback = (path: string, eventData: any) => void;
+type TagValueChangeCallback = (path: string) => void;
 export type NatsConnectionState = 'unknown' | 'connecting' | 'connected' | 'disconnected';
 type NatsConnectionStateCallback = (state: NatsConnectionState) => void;
 
@@ -188,6 +189,7 @@ export class MirrorStore {
     private nc: nats.NatsConnection | null = null;
     private root: Node | null = null;
     private desiredTagValuePaths: Set<string> = new Set();
+    private tagValuePrefixSubscriptions: Map<string, Set<TagValueChangeCallback>> = new Map();
     private watchedTagValuePaths: Map<string, nats.Subscription> = new Map();
     private tagValueSubscription: nats.Subscription | null = null;
     private hydratedTagValuePaths: Set<string> = new Set();
@@ -225,6 +227,8 @@ export class MirrorStore {
                 this.watchTagValuePath(path);
                 this.hydrateTagValuePath(path);
             }
+            const prefix = this.tagValuePrefixSubscriptions.keys().next().value;
+            if (prefix) this.watchTagValuePath(prefix);
         } catch (err) {
             this.setNatsConnectionState('disconnected');
             console.error("Error connecting:", err);
@@ -365,6 +369,35 @@ export class MirrorStore {
         }
 
         return currentNode.subscribe(callback);
+    }
+
+    // Observe live values below a path without hydrating every child tag.
+    // The initial subtree is already loaded by the application's REST snapshot.
+    public subscribeToTagValueChanges(prefix: Path, callback: TagValueChangeCallback): () => void {
+        if (!prefix || this.orgName && prefix.split('.')[0] !== this.orgName) return () => {};
+        let callbacks = this.tagValuePrefixSubscriptions.get(prefix);
+        if (!callbacks) {
+            callbacks = new Set();
+            this.tagValuePrefixSubscriptions.set(prefix, callbacks);
+        }
+        callbacks.add(callback);
+        this.watchTagValuePath(prefix);
+        return () => {
+            callbacks!.delete(callback);
+            if (callbacks!.size === 0) this.tagValuePrefixSubscriptions.delete(prefix);
+        };
+    }
+
+    private tagValuePrefixListenersFor(path: Path): TagValueChangeCallback[] {
+        const listeners: TagValueChangeCallback[] = [];
+        for (let prefixPath = path; prefixPath; ) {
+            const callbacks = this.tagValuePrefixSubscriptions.get(prefixPath);
+            if (callbacks) listeners.push(...callbacks);
+            const dot = prefixPath.lastIndexOf('.');
+            if (dot < 0) break;
+            prefixPath = prefixPath.slice(0, dot);
+        }
+        return listeners;
     }
 
     // Get the value at a given path. Enum tags resolve to their display text.
@@ -799,7 +832,10 @@ export class MirrorStore {
             node.setShared({ units: data.units ?? '', description: data.description ?? '' });
             node.setStatus(data.status ?? '');
             if (data.timestamp) node.setTimestamp(data.timestamp);
-            if (node.getRawValue() !== data.value) node.setValue(data.value);
+            if (node.getRawValue() !== data.value) {
+                node.setValue(data.value);
+                for (const callback of this.tagValuePrefixListenersFor(path)) callback(path);
+            }
         }
         return added;
     }
@@ -995,8 +1031,8 @@ export class MirrorStore {
         // Prepend the org to get the full store path ("default.NASA.ISS.env.cabin_pressure").
         const prefix = `xact.internal.bcast.tagvalue.${org}.`;
         const path = org + "." + msg.subject.replace(prefix, "");
-        const wanted = this.desiredTagValuePaths.has(path);
-        if (!wanted) return;
+        const listeners = this.tagValuePrefixListenersFor(path);
+        if (!this.desiredTagValuePaths.has(path) && listeners.length === 0) return;
 
         let data: Record<string, { type: string; value: any; status?: string; timestamp?: number }>;
         try {
@@ -1023,6 +1059,7 @@ export class MirrorStore {
         if (tagValue.timestamp) currentNode.setTimestamp(tagValue.timestamp);
         currentNode.setStatus(tagValue.status ?? '');
         currentNode.setValue(displayValue);
+        for (const callback of listeners) callback(path);
     }
 
     private processIncomingNats(e: { key: string; value: Uint8Array }) {

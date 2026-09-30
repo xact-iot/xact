@@ -12,8 +12,10 @@
 import { getMirrorStore, type MirrorStore } from '../store/store';
 import { registerWidgetType, type WidgetTypeMeta } from '../dashboards/widgets/widget-registry';
 import { themeManager, type ThemeDefinition, type WidgetDecorationDefinition } from '../themes/theme-manager';
-import { getAuthHeaders } from '../auth';
+import { getAuthHeaders, getCurrentUser } from '../auth';
+import { getOrganisation, type OrgArea } from '../api';
 import { applications, loadApplications } from './applications';
+import { loadLeaflet } from '../utils/vendor-loaders';
 
 const BASE_URL = '/xact';
 
@@ -63,6 +65,8 @@ const mapLayerPlugins = new Map<string, MapLayerPlugin>();
  */
 export interface XACTBridge {
   applications: typeof applications;
+  loadLeaflet: typeof loadLeaflet;
+  getOrganisationArea(): Promise<OrgArea | null>;
   /**
    * Register a widget with XACT.
    * Calls customElements.define() and adds the widget to the 'Custom' category
@@ -153,6 +157,11 @@ declare global {
 function setupBridge(): void {
   window.XACT = {
     applications,
+    loadLeaflet,
+    async getOrganisationArea() {
+      const name = getCurrentUser()?.tenant_id;
+      return name ? (await getOrganisation(name)).area ?? null : null;
+    },
     registerWidget(meta, klass) {
       if (!customElements.get(meta.type)) {
         customElements.define(meta.type, klass);

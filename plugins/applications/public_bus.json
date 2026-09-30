@@ -1,14 +1,59 @@
 {
   "id": "public_bus",
   "name": "Public bus application",
-  "widgets": ["public-bus-config"],
+  "widgets": [
+    "public-bus-config"
+  ],
   "resource": {
     "id": "public-bus-config",
     "description": "Public bus configuration",
     "permissions": [
-      {"name": "read", "description": "View stops, routes, schedules and source status"},
-      {"name": "manage", "description": "Import/activate schedules and manage sources and assignments"}
+      {
+        "name": "read",
+        "description": "View stops, routes, schedules and source status"
+      },
+      {
+        "name": "manage",
+        "description": "Import/activate schedules and manage sources and assignments"
+      }
     ]
   },
-  "operations": ["get_status", "list_stops", "list_routes", "list_schedule", "list_archives", "import_start", "activate", "rollback", "set_override", "set_source", "set_assignment"]
+  "operations": [
+    "get_status",
+    "list_stops",
+    "list_routes",
+    "list_schedule",
+    "list_archives",
+    "import_start",
+    "activate",
+    "rollback",
+    "set_override",
+    "set_source",
+    "set_assignment",
+    "create_stop",
+    "update_stop",
+    "delete_stop",
+    "create_route",
+    "update_route",
+    "delete_route",
+    "create_schedule",
+    "update_schedule",
+    "delete_schedule"
+  ],
+  "services": [
+    {
+      "username": "app:public_bus",
+      "password_env": "PUBLIC_BUS_NATS_PASSWORD",
+      "publish": [
+        "xact.internal.ingest_request.default.PUBLIC_BUS_STOP.*",
+        "xact.internal.ingest_request.default.PUBLIC_BUS_ROUTE.*",
+        "xact.internal.ingest_request.default.PUBLIC_BUS.*"
+      ],
+      "subscribe": [
+        "xact.app.v1.default.public_bus.default.request.*",
+        "xact.app.v1.default.public_bus.default.ingest.*",
+        "_INBOX.app_public_bus.>"
+      ]
+    }
+  ]
 }

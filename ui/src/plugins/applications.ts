@@ -19,6 +19,17 @@ export const applications = {
   if(!r.ok) throw new Error(r.status===401?'Session expired':'Application authorization unavailable');
   return r.json();
  },
+ async upload(applicationId: string, file: File, options: {scope?: string}={}): Promise<{archive: string; filename: string}> {
+  const scope=options.scope||'default';
+  if(applicationId!=='public_bus'||!manifests.has(applicationId)||!token.test(scope)||!file.name.toLowerCase().endsWith('.zip')) throw new Error('Choose a GTFS ZIP file');
+  if(file.size>25*1024*1024) throw new Error('GTFS ZIP exceeds 25 MB');
+  const params=new URLSearchParams({scope,filename:file.name});
+  const r=await fetch(`/xact/api/v1/applications/public_bus/upload?${params}`,{method:'POST',headers:{...getAuthHeaders(),'Content-Type':'application/zip'},body:file,cache:'no-store'});
+  const response=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(response?.error?.message||`GTFS upload failed (${r.status})`);
+  if(typeof response.archive!=='string') throw new Error('Invalid GTFS upload response');
+  return response;
+ },
  async request(applicationId: string, operation: string, payload: unknown={}, options: {scope?: string; requestId?: string; revision?: number; timeoutMs?: number}={}): Promise<any> {
   const m=manifests.get(applicationId), bearer=getAuthToken(), user=getCurrentUser();
   const scope=options.scope||'default';

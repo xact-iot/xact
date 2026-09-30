@@ -39,7 +39,7 @@
           if(generation!==this.generation) return;
           this.rows=data.rows||[]; this.total=data.total||0;
         }
-        this.message=status.active?'Configuration connected':'Import a schedule, review it, then activate it.'; this.error=false;
+        this.message=status.active?'Configuration connected':'Add stops and routes, then create schedule entries.'; this.error=false;
       } catch(error) { if(generation!==this.generation) return; this.message=error.message;this.error=true; }
       finally { if(generation===this.generation) { this.busy=false;if(showBusy||!this.modal) this.render(); } }
     }
@@ -50,7 +50,7 @@
       catch(error) { this.message=error.message;this.error=true;this.busy=false;this.render(); }
     }
     render() {
-      const disabled=this.busy?'disabled':''; const manage=this.permissions.manage&&!this.busy; const editActive=manage&&(!this.selectedDataset||this.selectedDataset===this.status?.state?.active_dataset);
+      const disabled=this.busy?'disabled':''; const manage=this.permissions.manage&&!this.busy;
       const state=this.status?.state||{}; const feeds=this.status?.feeds||[];
       const selected=this.selectedDataset||state.active_dataset||'';
       const oldDialog=this.shadowRoot.querySelector('dialog[open]');
@@ -74,8 +74,8 @@
         ${this.error||!this.status?.active? `<div class="notice ${this.error?'error':''}" role="status" aria-live="polite">${escape(this.message)}</div>`:''}
         <div class="tabs" role="tablist" aria-label="Bus configuration tabs">${tabs.map(([id,label])=>`<button role="tab" id="tab-${id}" aria-controls="panel" aria-selected="${this.tab===id}" tabindex="${this.tab===id?'0':'-1'}" data-tab="${id}" ${disabled}>${label}</button>`).join('')}</div>
         ${this.tab==='sources'? `<div class="table-wrap source-panel" id="panel" role="tabpanel" aria-labelledby="tab-sources">${this.sourcePanel(manage)}</div>`:`
-          <div class="filters"><label class="grow">Search<input data-field="query" value="${escape(this.filter.query)}" placeholder="Name or ID" ${disabled}></label>${this.tab!=='routes'?`<label>Route ID<input data-field="route_id" value="${escape(this.filter.route_id)}" ${disabled}></label>`:''}${this.tab==='schedule'?`<label>Service date<input type="date" data-field="date" value="${escape(this.filter.date)}" ${disabled}></label><label>Stop ID<input data-field="stop_id" value="${escape(this.filter.stop_id)}" ${disabled}></label>`:''}<button data-action="search" ${disabled}>Apply filters</button><button class="primary" data-action="add-record" ${!editActive?'disabled':''}>Add ${this.tab==='stops'?'stop':this.tab==='routes'?'route':'schedule entry'}</button></div>
-          <div class="table-wrap" id="panel" role="tabpanel" aria-labelledby="tab-${this.tab}">${this.table(editActive)}</div>
+          <div class="filters"><label class="grow">Search<input data-field="query" value="${escape(this.filter.query)}" placeholder="Name or ID" ${disabled}></label>${this.tab!=='routes'?`<label>Route ID<input data-field="route_id" value="${escape(this.filter.route_id)}" ${disabled}></label>`:''}${this.tab==='schedule'?`<label>Service date<input type="date" data-field="date" value="${escape(this.filter.date)}" ${disabled}></label><label>Stop ID<input data-field="stop_id" value="${escape(this.filter.stop_id)}" ${disabled}></label>`:''}<button data-action="search" ${disabled}>Apply filters</button><button class="primary" data-action="add-record" ${!manage?'disabled':''}>Add ${this.tab==='stops'?'stop':this.tab==='routes'?'route':'schedule entry'}</button></div>
+          <div class="table-wrap" id="panel" role="tabpanel" aria-labelledby="tab-${this.tab}">${this.table(manage)}</div>
           <div class="pager"><span class="muted">${this.total?this.offset+1:0}–${Math.min(this.offset+this.rows.length,this.total)} of ${this.total}</span><div><button data-action="previous" ${this.offset===0||this.busy?'disabled':''}>Previous</button> <button data-action="next" ${this.offset+50>=this.total||this.busy?'disabled':''}>Next</button></div></div>`}
         ${feeds.some(f=>f.id==='translink')?'<p class="footnote">Route and arrival data used in this product or service is provided by permission of TransLink. TransLink assumes no responsibility for the accuracy or currency of the Data used in this product or service.</p>':''}
       </div>
@@ -96,17 +96,14 @@
     importPanel(manage) {
       const jobs=this.status?.jobs||[];
       return `<div class="dialog-body"><div class="dialog-header"><h2>Import schedule</h2><button data-action="close-dialog" aria-label="Close">×</button></div>
-        <label>Configured feed<select data-import="source_id" ${!manage?'disabled':''}><option value="">Choose a feed</option>${(this.status?.feeds||[]).map(f=>`<option value="${escape(f.id)}">${escape(f.name)}</option>`).join('')}</select></label>
-        <label>Or GTFS ZIP file from this computer<input data-import="file" type="file" accept=".zip,application/zip" ${!manage?'disabled':''}></label>
-        <label>Or ZIP filename in the app import directory<input data-import="archive" placeholder="vancouver_transit.zip" ${!manage?'disabled':''}></label>
-        <label>Route IDs (optional)<input data-import="route_ids" placeholder="Comma-separated; blank imports all bus routes" ${!manage?'disabled':''}></label>
-        <p class="muted">Choose a local ZIP, a configured feed, or a staged ZIP filename. Imports appear in Schedules for review and activation.</p>
-        <div class="dialog-actions"><button class="primary" data-action="import" ${!manage?'disabled':''}>Import schedule</button></div>
+        <label>Schedule ZIP from this computer<input type="file" data-import="file" accept=".zip,application/zip" ${!manage?'disabled':''}></label>
+        <p class="muted">ZIP files up to 25 MiB. Import replaces previous GTFS records and keeps manual records.</p>
+        <div class="dialog-actions"><button class="primary" data-action="import" ${!manage?'disabled':''}>Upload and import</button></div>
         ${jobs.slice(0,5).map(j=>`<p><span class="badge">${escape(j.status)}</span> ${escape(j.dataset_id?.slice(0,8)||j.id.slice(0,8))} ${escape(j.error||'')}</p>`).join('')}</div>`;
     }
     table(manage) {
       if(!this.rows.length) return '<div class="empty">No records match. Import a schedule or adjust the filters.</div>';
-      if(this.tab==='schedule') return `<table><thead><tr><th>Route / Trip</th><th>Destination</th><th>Stop</th><th>Arrival</th><th>Departure</th><th>Service</th><th>Actions</th></tr></thead><tbody>${this.rows.map(r=>`<tr><td>${escape(r.route_id)}<br><small>${escape(r.trip_id)}</small></td><td>${escape(r.headsign)}</td><td>${escape(r.sequence)} · ${escape(r.stop_name)}<br><small>${escape(r.stop_id)}</small></td><td>${escape(r.arrival)||'—'}</td><td>${escape(r.departure)||'—'}</td><td>${escape(r.service_id)}${r.pickup?' · No regular pickup':''}</td><td><button data-edit="${this.rows.indexOf(r)}" ${!manage||r.origin==='gtfs'?'disabled':''}>Edit</button> <button data-delete="${this.rows.indexOf(r)}" ${!manage||r.origin==='gtfs'?'disabled':''}>Delete</button></td></tr>`).join('')}</tbody></table>`;
+      if(this.tab==='schedule') return `<table><thead><tr><th>Route / Trip</th><th>Destination</th><th>Stop</th><th>Arrival</th><th>Departure</th><th>Service</th><th>Actions</th></tr></thead><tbody>${this.rows.map(r=>`<tr><td>${escape(r.route_id)}<br><small>${escape(r.trip_id)}</small></td><td>${escape(r.headsign)}</td><td>${escape(r.sequence)} · ${escape(r.stop_name)}<br><small>${escape(r.stop_id)}</small></td><td>${escape(r.arrival)||'—'}</td><td>${escape(r.departure)||'—'}</td><td>${escape(r.service_id)}${r.pickup?' · No regular pickup':''}</td><td><button data-edit="${this.rows.indexOf(r)}" ${!manage?'disabled':''}>Edit</button> <button data-delete="${this.rows.indexOf(r)}" ${!manage?'disabled':''}>Delete</button></td></tr>`).join('')}</tbody></table>`;
       return `<table><thead><tr><th>${this.tab==='stops'?'Stop':'Route'}</th><th>${this.tab==='stops'?'Location / Routes':'Type'}</th><th>Display name override</th><th>Enabled</th><th>Actions</th></tr></thead><tbody>${this.rows.map((r,i)=>`<tr><td>${escape(r.name)}<br><small>${escape(r.code||r.short_name||'')} · ${escape(r.id)}</small></td><td>${this.tab==='stops'?`${Number(r.lat).toFixed(5)}, ${Number(r.lon).toFixed(5)}<br><small>${escape((r.routes||[]).join(', '))}</small>`:escape(r.type)}</td><td><input aria-label="Display name for ${escape(r.name)}" data-name="${i}" value="${escape(r.display_name)}" ${!manage?'disabled':''}><button data-save="${i}" ${!manage?'disabled':''}>Save</button></td><td><input aria-label="Enable ${escape(r.name)}" type="checkbox" data-toggle="${i}" ${r.enabled?'checked':''} ${!manage?'disabled':''}></td><td><button data-edit="${i}" ${!manage?'disabled':''}>Edit</button> <button data-delete="${i}" ${!manage?'disabled':''}>Delete</button></td></tr>`).join('')}</tbody></table>`;
     }
     sourcePanel(manage) {
@@ -141,7 +138,7 @@
       return `<label>${escape(label)}<input name="${name}" type="${type}" value="${escape(value)}" ${attributes}></label>`;
     }
     openEditor(row=null) {
-      if(!this.permissions.manage||this.busy||this.tab==='sources'||this.selectedDataset&&this.selectedDataset!==this.status?.state?.active_dataset||row?.origin==='gtfs'&&this.tab==='schedule') return;
+      if(!this.permissions.manage||this.busy||this.tab==='sources') return;
       this.closeEditor();
       const kind=this.tab==='stops'?'stop':this.tab==='routes'?'route':'schedule';
       this.editorKind=kind;this.editorOriginal=row;
@@ -261,27 +258,24 @@
       } catch(error) {dialog.querySelector('.bus-editor-error').textContent=error.message||'Could not save.';save.disabled=false;}
     }
     deleteRecord(row) {
-      if(!this.permissions.manage||this.busy||!row||row.origin==='gtfs'&&this.tab==='schedule'||this.selectedDataset&&this.selectedDataset!==this.status?.state?.active_dataset)return;
+      if(!this.permissions.manage||this.busy||!row)return;
       const kind=this.tab==='stops'?'stop':this.tab==='routes'?'route':'schedule';
       if(!window.confirm(`Delete ${kind} ${row.name||row.trip_id||row.id}?`))return;
       return this.mutate(`delete_${kind}`,{id:row.id});
     }
     async importFile() {
-      const source_id=this.shadowRoot.querySelector('[data-import="source_id"]').value.trim();
-      const archive=this.shadowRoot.querySelector('[data-import="archive"]').value.trim();
-      const file=this.shadowRoot.querySelector('[data-import="file"]').files?.[0];
-      const route_ids=this.shadowRoot.querySelector('[data-import="route_ids"]').value.split(',').map(v=>v.trim()).filter(Boolean);
-      if(Number(!!source_id)+Number(!!archive)+Number(!!file)!==1){this.message='Choose one configured feed, local ZIP, or staged ZIP filename.';this.error=true;this.closeModal();return;}
-      this.closeModal();
-      if(file) {
-        this.busy=true;this.message='Uploading GTFS ZIP…';this.error=false;this.render();
-        try {
-          const staged=await window.XACT.applications.upload('public_bus',file,{scope:this.config.scope});
-          this.busy=false;
-          return this.mutate('import_start',{archive:staged.archive,route_ids});
-        } catch(error) {this.busy=false;this.message=error.message||'Could not upload GTFS ZIP.';this.error=true;this.render();return;}
-      }
-      return this.mutate('import_start',{source_id,archive,route_ids});
+      const file=this.shadowRoot.querySelector('[data-import="file"]').files[0];
+      if(!file){this.message='Choose a schedule ZIP file.';this.error=true;this.closeModal();return;}
+      if(!/\.zip$/i.test(file.name)){this.message='Choose a ZIP file.';this.error=true;this.closeModal();return;}
+      if(file.size>25*1024*1024){this.message='The ZIP file must be 25 MiB or smaller.';this.error=true;this.closeModal();return;}
+      try {
+        const bytes=new Uint8Array(await file.arrayBuffer());
+        let binary='';
+        for(let i=0;i<bytes.length;i+=32768) binary+=String.fromCharCode(...bytes.subarray(i,i+32768));
+        const archive_base64=btoa(binary);
+        this.closeModal();
+        return this.mutate('import_start',{archive_name:file.name,archive_base64});
+      } catch(error) {this.message=error.message||'Could not read the selected file.';this.error=true;this.closeModal();}
     }
   }
   window.XACT.registerWidget({type:'public-bus-config',name:'Public Bus Configuration',icon:'bus',defaultW:18,defaultH:18,minW:6,minH:8},PublicBusConfig);
