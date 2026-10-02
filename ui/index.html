@@ -20,6 +20,7 @@
       z-index: 9999;
     }
     #loading.hidden { display: none; }
+    app-content[aria-busy="true"] > * { visibility: hidden; }
     .spinner {
       width: 40px;
       height: 40px;
@@ -41,7 +42,7 @@
   <div id="app">
     <app-sidebar></app-sidebar>
     <app-header></app-header>
-    <app-content></app-content>
+    <app-content aria-busy="true"></app-content>
     <app-footer></app-footer>
   </div>
   <preferences-dialog></preferences-dialog>

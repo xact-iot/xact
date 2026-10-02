@@ -41,6 +41,7 @@ const mockStore = {
   listChildrenNames: vi.fn(() => []),
   getNodeValue: vi.fn(),
   getNodeShared: vi.fn(() => ({})),
+  getNodeStatus: vi.fn(() => ''),
   resolveTagReference: vi.fn(() => undefined),
   baseTagPath: vi.fn((path: string) => String(path).split(':')[0]),
   getNodeType: vi.fn(() => 'leaf'),
@@ -191,6 +192,8 @@ function flush(): Promise<void> {
 describe('area-map-widget coordinate loading', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockStore.getNodeType.mockReturnValue('leaf');
+    mockStore.getNodeStatus.mockReturnValue('');
     defineTestWidgets();
     Element.prototype.scrollIntoView = vi.fn();
     globalThis.requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
@@ -251,9 +254,118 @@ describe('area-map-widget coordinate loading', () => {
     delete (window as any).XACT;
   });
 
+  it('sets a view before loading layers that request map bounds', async () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.render();
+    widget.config.savedBounds = { north: 55, south: 50, east: -1, west: -5 };
+    let viewReady = false;
+    const map = createMapMock({
+      setView: vi.fn(() => { viewReady = true; }),
+      getBounds: vi.fn(() => {
+        if (!viewReady) throw new Error('Set map center and zoom first.');
+        return { getNorth: () => 55, getSouth: () => 50, getEast: () => -1, getWest: () => -5 };
+      }),
+    });
+    (window as any).L.map.mockReturnValue(map);
+    // Plugins and dense layers both read bounds while refreshLayers is running.
+    const refreshLayers = vi.spyOn(widget, 'refreshLayers').mockImplementation(async () => {
+      widget.getPluginBounds();
+      widget.map.getBounds();
+    });
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      disconnect() {}
+    });
+    try {
+      await expect(widget.initMap()).resolves.toBeUndefined();
+      expect(refreshLayers).toHaveBeenCalledOnce();
+      expect(map.setView).toHaveBeenCalledWith([52.5, -3], 6);
+      expect(map.getBounds).toHaveBeenCalled();
+      // Saved bounds must still override the temporary initial view.
+      widget.config.savedBounds = { north: 55, south: 50, east: -1, west: -5 };
+      widget.fitOrgBounds();
+      expect(map.fitBounds).toHaveBeenCalledWith([[50, -5], [55, -1]]);
+    } finally {
+      widget.destroyMap();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each(['icon', 'plugin'])('hides %s markers below Show at Zoom and restores them at the threshold', async (itemType) => {
+    let zoom = 11;
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock({ getZoom: () => zoom });
+    const gatedLayer = { ...layer, itemType, showAtZoom: 12, pluginType: 'custom-marker' };
+    widget.config.layers = [gatedLayer];
+    widget.ensureDeviceLayerPanes();
+    const pluginMarker = { options: {}, addTo: vi.fn().mockReturnThis(), on: vi.fn(), remove: vi.fn() };
+    (window as any).XACT = { getMapItemType: () => () => pluginMarker };
+    mockStore.getNodeValue.mockImplementation((path: string) => path.endsWith('.meta.lat') ? 49.28 : path.endsWith('.meta.lon') ? -123.12 : undefined);
+    widget.updateDeviceMarker = vi.fn();
+    await widget.addDevice(gatedLayer, 'default.LA_LongBeach.AirQuality.A');
+    const marker = widget.devices.get('default.LA_LongBeach.AirQuality.A').marker;
+    const pane = widget.map.getPane('xact-device-layer-aq');
+    expect(marker.addTo).not.toHaveBeenCalled();
+    expect(pane.style.display).toBe('none');
+    zoom = 12;
+    widget.onZoomChange();
+    expect(marker.addTo).toHaveBeenCalledOnce();
+    expect(pane.style.display).toBe('');
+    zoom = 11;
+    widget.onZoomChange();
+    expect(marker.remove).toHaveBeenCalledOnce();
+    expect(pane.style.display).toBe('none');
+    gatedLayer.enabled = false;
+    zoom = 13;
+    widget.onZoomChange();
+    expect(marker.addTo).toHaveBeenCalledOnce();
+    widget.destroyMap();
+  });
+
+  it('applies Show at Zoom to route polylines and whole plugin panes', async () => {
+    let zoom = 11;
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock({ getZoom: () => zoom });
+    const route = { ...layer, id: 'routes', itemType: 'route', pathPattern: 'Routes.A', routeZoom: 10, showAtZoom: 12 };
+    const plugin = { ...layer, id: 'heatmap', itemType: 'plugin', showAtZoom: 12 };
+    widget.config.layers = [route, plugin];
+    widget.ensureDeviceLayerPanes();
+    mockStore.getNodeValue.mockImplementation((path: string) => path.endsWith('.route.coordinates') ? [49.28, -123.12, 49.29, -123.11] : undefined);
+    await widget.initLayer(route);
+    expect((window as any).L.polyline).not.toHaveBeenCalled();
+    zoom = 12;
+    widget.onZoomChange();
+    expect((window as any).L.polyline).toHaveBeenCalledOnce();
+    expect(widget.map.getPane('xact-device-layer-heatmap').style.display).toBe('');
+    const line = (window as any).L.polyline.mock.results[0].value;
+    zoom = 11;
+    widget.onZoomChange();
+    expect(line.remove).toHaveBeenCalledOnce();
+    expect(widget.map.getPane('xact-device-layer-heatmap').style.display).toBe('none');
+    widget.destroyMap();
+  });
+
+  it('shows and saves Show at Zoom for every layer type', () => {
+    const widget = document.createElement('area-map-widget') as any;
+    for (const itemType of ['icon', 'route', 'plugin']) {
+      const editedLayer = { ...layer, itemType };
+      widget.config.layers = [editedLayer];
+      widget.cfgEditLayerId = editedLayer.id;
+      const overlay = document.createElement('div');
+      overlay.innerHTML = widget.renderConfigPanelHtml();
+      const input = overlay.querySelector<HTMLInputElement>('#le-show-at-zoom')!;
+      expect(input.value).toBe('0');
+      input.value = '14';
+      widget.collectLayerFromPanel(overlay);
+      expect(editedLayer).toMatchObject({ showAtZoom: 14 });
+    }
+  });
+
   it('clusters a dense stop layer and avoids creating thousands of DOM markers', async () => {
+    let zoom = 10;
     const widget = document.createElement('area-map-widget') as any;
     widget.map = createMapMock({
+      getZoom: () => zoom,
       getSize: () => ({ x: 800, y: 600 }),
       getBounds: () => ({ pad: () => ({ getSouth: () => 49, getNorth: () => 50, getWest: () => -124, getEast: () => -122 }) }),
       project: ([lat, lon]: [number, number]) => ({ x: lon * 100, y: lat * 100 }),
@@ -266,7 +378,7 @@ describe('area-map-widget coordinate loading', () => {
       const index = Number(match[1]);
       return match[2] === 'lat' ? 49.2 + (index % 40) * 0.001 : -123.2 + Math.floor(index / 40) * 0.001;
     });
-    const layer = { id: 'stops', name: 'Bus Stops', pathPattern: 'PUBLIC_BUS_STOP.*', itemType: 'icon', enabled: true, iconRules: [], defaultGlyph: 'mdi:bus-stop' };
+    const layer = { id: 'stops', name: 'Bus Stops', pathPattern: 'PUBLIC_BUS_STOP.*', itemType: 'icon', enabled: true, showAtZoom: 0, iconRules: [], defaultGlyph: 'mdi:bus-stop' };
     await widget.initLayer(layer);
     widget.refreshDenseIconLayers();
     const markers = (window as any).L.marker.mock.calls.length;
@@ -276,10 +388,55 @@ describe('area-map-widget coordinate loading', () => {
     const firstCluster = (window as any).L.marker.mock.results[0].value;
     firstCluster.handlers.click();
     expect(widget.map.flyTo).toHaveBeenCalledWith(expect.any(Array), 12);
+    layer.showAtZoom = 11;
+    widget.config.layers = [layer];
+    widget.updateLayerVisibility(layer);
+    expect(widget.denseIconLayers.get('stops').clusters).toHaveLength(0);
+    zoom = 11;
+    widget.onZoomChange();
+    expect(widget.denseIconLayers.get('stops').clusters.length).toBeGreaterThan(0);
     layer.enabled = false;
     widget.updateLayerVisibility(layer);
     expect(widget.denseIconLayers.get('stops').clusters).toHaveLength(0);
     widget.clearDenseIconLayers();
+  });
+
+  it('renders clustered stops under a nested root when coordinate values arrive after the snapshot', async () => {
+    vi.useFakeTimers();
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock({
+      getSize: () => ({ x: 800, y: 600 }),
+      getBounds: () => ({ pad: () => ({ getSouth: () => 49, getNorth: () => 50, getWest: () => -124, getEast: () => -122 }) }),
+      project: ([lat, lon]: [number, number]) => ({ x: lon * 100, y: lat * 100 }),
+    });
+    const root = 'default.PUBLIC_BUS.PUBLIC_BUS_STOP';
+    const names = Array.from({ length: 500 }, (_, i) => `stop${i}`);
+    mockStore.listChildrenNames.mockImplementation((path: string) => path === root ? names : []);
+    let coordinatesReady = false;
+    mockStore.getNodeValue.mockImplementation((path: string) => {
+      if (!coordinatesReady || !path.startsWith(root + '.')) return undefined;
+      return path.endsWith('.meta.lat') ? 49.28 : path.endsWith('.meta.lon') ? -123.12 : undefined;
+    });
+    const stopLayer = { ...layer, id: 'stops', name: 'Stops', pathPattern: 'PUBLIC_BUS.PUBLIC_BUS_STOP.*' };
+    await widget.initLayer(stopLayer);
+    await vi.advanceTimersByTimeAsync(75);
+    expect((window as any).L.marker).not.toHaveBeenCalled();
+    expect(mockStore.subscribeToTagValueChanges).toHaveBeenCalledWith(root, expect.any(Function));
+    const onValue = mockStore.subscribeToTagValueChanges.mock.calls.at(-1)![1] as (path: string) => void;
+    const unsubscribe = mockStore.subscribeToTagValueChanges.mock.results.at(-1)!.value;
+    coordinatesReady = true;
+    // Ignore unrelated data, including a bus with the same leaf name.
+    onValue('default.PUBLIC_BUS.stop0.meta.lat');
+    onValue(root + '.stop0.status.active');
+    await vi.advanceTimersByTimeAsync(75);
+    expect((window as any).L.marker).not.toHaveBeenCalled();
+    onValue(root + '.stop0.meta.lat');
+    onValue(root + '.stop0.meta.lon');
+    await vi.advanceTimersByTimeAsync(75);
+    expect((window as any).L.marker).toHaveBeenCalledOnce();
+    expect(widget.denseIconLayers.get('stops').clusters).toHaveLength(1);
+    widget.destroyMap();
+    expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
   it('lets the user select a stop from a cluster at maximum zoom', async () => {
@@ -392,6 +549,51 @@ describe('area-map-widget coordinate loading', () => {
     expect(leaflet.polyline.mock.results[4].value.remove).toHaveBeenCalled();
   });
 
+  it('cycles each layer palette and keeps assignments through route removal and zoom changes', () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock({ getZoom: () => 12 });
+    const layer = { id: 'routes', itemType: 'route', enabled: true, routeColors: ['#1d4ed8', '#b91c1c'] };
+    mockStore.getNodeValue.mockImplementation((path: string) => path.endsWith('.coordinates') ? [15.3, -61.4, 15.4, -61.5] : undefined);
+    for (const path of ['A', 'B', 'C']) widget.addRoute(layer, path);
+    const polyline = (window as any).L.polyline;
+    expect(polyline.mock.calls.map((call: any[]) => call[1].color)).toEqual(['#1d4ed8', '#b91c1c', '#1d4ed8']);
+    widget.removeRoute(layer, 'B');
+    widget.addRoute(layer, 'D');
+    expect(polyline.mock.lastCall[1].color).toBe('#b91c1c');
+    widget.onZoomChange();
+    expect(polyline.mock.results[2].value.setStyle).toHaveBeenLastCalledWith(expect.objectContaining({ color: '#1d4ed8' }));
+    widget.addRoute({ ...layer, id: 'other' }, 'E');
+    expect(polyline.mock.lastCall[1].color).toBe('#1d4ed8');
+  });
+
+  it('edits one to ten route colors, preserves edits when resizing, and migrates legacy colors', () => {
+    const widget = document.createElement('area-map-widget') as any;
+    const layer = { id: 'routes', name: 'Routes', pathPattern: 'Routes.*', itemType: 'route', enabled: true };
+    widget.config = { ...widget.config, layers: [layer] };
+    widget.cfgEditLayerId = layer.id;
+    const overlay = document.createElement('div');
+    overlay.innerHTML = widget.renderConfigPanelHtml();
+    widget.attachConfigListeners(overlay);
+    expect(overlay.querySelectorAll('.le-route-color')).toHaveLength(10);
+    expect(new Set(Array.from(overlay.querySelectorAll<HTMLInputElement>('.le-route-color'), input => input.value)).size).toBe(10);
+    overlay.querySelector<HTMLInputElement>('#le-route-color-0')!.value = '#123456';
+    for (const count of [1, 3, 10]) {
+      const select = overlay.querySelector<HTMLSelectElement>('#le-route-color-count')!;
+      select.value = String(count);
+      select.dispatchEvent(new Event('change'));
+      expect(overlay.querySelectorAll('.le-route-color')).toHaveLength(count);
+      expect(overlay.querySelector<HTMLInputElement>('#le-route-color-0')!.value).toBe('#123456');
+    }
+    widget.collectLayerFromPanel(overlay);
+    expect(widget.config.layers[0].routeColors).toHaveLength(10);
+    widget.config.layers[0] = { ...layer, routeColors: undefined, routeColor: '#654321' };
+    overlay.innerHTML = widget.renderConfigPanelHtml();
+    expect(overlay.querySelectorAll('.le-route-color')).toHaveLength(1);
+    widget.collectLayerFromPanel(overlay);
+    expect(widget.config.layers[0].routeColors).toEqual(['#654321']);
+    expect(widget.config.layers[0]).not.toHaveProperty('routeColor');
+  });
+
   it('reads numbered RTDB array children and refreshes when a coordinate changes', () => {
     vi.useFakeTimers();
     const widget = document.createElement('area-map-widget') as any;
@@ -428,11 +630,48 @@ describe('area-map-widget coordinate loading', () => {
     values[coordinatesPath + '.2'] = 15.6;
     callbacks[coordinatesPath](coordinatesPath + '.2');
     vi.advanceTimersByTime(16);
-    expect(line.setLatLngs).toHaveBeenLastCalledWith([[15.3, -61.4], [15.6, -61.5]]);
+    expect(line.setLatLngs).not.toHaveBeenCalled();
     values[coordinatesPath + '.3'] = -61.7;
     arrayChange?.();
-    vi.advanceTimersByTime(16);
+    vi.advanceTimersByTime(150);
     expect(line.setLatLngs).toHaveBeenLastCalledWith([[15.3, -61.4], [15.6, -61.7]]);
+  });
+
+  it('keeps route geometry stable until a complete array snapshot arrives', () => {
+    vi.useFakeTimers();
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock();
+    const coordinatePath = 'default.Routes.A.route.coordinates';
+    const previous = [49.283456, -123.114567, 49.294567, -123.125678];
+    const next = [49.303456, -123.134567, 49.314567, -123.145678];
+    const values: Record<string, unknown> = { [coordinatePath]: previous };
+    const callbacks: Record<string, (path: string) => void> = {};
+    mockStore.getNodeValue.mockImplementation((path: string) => values[path]);
+    mockStore.subscribeToTagValueChanges.mockImplementation((path: string, callback: (path: string) => void) => {
+      callbacks[path] = callback;
+      return vi.fn();
+    });
+    widget.addRoute({ ...layer, id: 'routes', itemType: 'route' }, 'default.Routes.A');
+    const line = (window as any).L.polyline.mock.results[0].value;
+    let updating = true;
+    mockStore.getNodeStatus.mockImplementation(() => updating ? 'array-updating' : '');
+    // The first batch after loading a REST snapshot may not yet have a
+    // committed parent broadcast. An explicit start still prevents partial draws.
+    delete values[coordinatePath];
+    callbacks[coordinatePath](coordinatePath);
+    for (let i = 0; i < next.length; i++) {
+      values[`${coordinatePath}.${i}`] = next[i];
+      callbacks[coordinatePath](`${coordinatePath}.${i}`);
+      vi.advanceTimersByTime(200);
+      expect(line.setLatLngs).not.toHaveBeenCalled();
+      expect(line.remove).not.toHaveBeenCalled();
+    }
+    values[coordinatePath] = next;
+    updating = false;
+    callbacks[coordinatePath](coordinatePath);
+    vi.advanceTimersByTime(16);
+    expect(line.setLatLngs).toHaveBeenCalledExactlyOnceWith([[49.303456, -123.134567], [49.314567, -123.145678]]);
+    widget.destroyMap();
   });
 
   it('refreshes a large route without per-coordinate subscriptions or repeated redraws', async () => {
@@ -472,7 +711,7 @@ describe('area-map-widget coordinate loading', () => {
 
     for (let i = 0; i < 50; i++) callbacks[coordinatesPath](`${coordinatesPath}.${i}`);
     expect(line.setLatLngs).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(16);
+    vi.advanceTimersByTime(150);
     expect(line.setLatLngs).toHaveBeenCalledTimes(1);
 
     await widget.refreshLayers();
@@ -495,16 +734,16 @@ describe('area-map-widget coordinate loading', () => {
     overlay.innerHTML = widget.renderConfigPanelHtml();
     expect(overlay.querySelector<HTMLSelectElement>('#le-item-type')?.value).toBe('route');
     expect(overlay.querySelector('#le-default-glyph')).toBeNull();
-    expect(overlay.querySelector<HTMLInputElement>('#le-route-color')?.type).toBe('color');
+    expect(overlay.querySelector<HTMLInputElement>('#le-route-color-0')?.type).toBe('color');
     expect(overlay.querySelector<HTMLInputElement>('#le-route-width')?.type).toBe('number');
     expect(overlay.querySelector<HTMLInputElement>('#le-route-zoom')?.type).toBe('number');
     overlay.querySelector<HTMLInputElement>('#le-route-coordinates-tag')!.value = 'shape.points';
-    overlay.querySelector<HTMLInputElement>('#le-route-color')!.value = '#2277aa';
+    overlay.querySelector<HTMLInputElement>('#le-route-color-0')!.value = '#2277aa';
     overlay.querySelector<HTMLInputElement>('#le-route-width')!.value = '6.5';
     overlay.querySelector<HTMLInputElement>('#le-route-zoom')!.value = '12';
     widget.collectLayerFromPanel(overlay);
     expect(routeLayer).toMatchObject({
-      routeCoordinatesTag: 'shape.points', routeColor: '#2277aa', routeWidth: 6.5, routeZoom: 12,
+      routeCoordinatesTag: 'shape.points', routeColors: ['#2277aa', '#b91c1c', '#15803d', '#7e22ce', '#c2410c', '#0e7490', '#be185d', '#4338ca', '#854d0e', '#334155'], routeWidth: 6.5, routeZoom: 12,
     });
     expect(routeLayer).not.toHaveProperty('routeColorTag');
     expect(routeLayer).not.toHaveProperty('routeWidthTag');
@@ -570,6 +809,31 @@ describe('area-map-widget coordinate loading', () => {
     );
     expect(unsubLat).toHaveBeenCalled();
     expect(unsubLon).toHaveBeenCalled();
+  });
+
+  it('ignores nested bus category containers matched by the bus wildcard', async () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock();
+    const bus = 'default.PUBLIC_BUS.BUS-01';
+    mockStore.getNodeType.mockReturnValue('node');
+    mockStore.listChildrenNames.mockImplementation((path: string) => {
+      if (path === 'default.PUBLIC_BUS') return ['BUS-01', 'PUBLIC_BUS_ROUTE', 'PUBLIC_BUS_STOP'];
+      if (path === bus) return ['meta', 'status'];
+      if (path === 'default.PUBLIC_BUS.PUBLIC_BUS_ROUTE') return ['Route1'];
+      if (path === 'default.PUBLIC_BUS.PUBLIC_BUS_STOP') return ['Stop1'];
+      return [];
+    });
+    mockStore.getNodeValue.mockImplementation((path: string) => {
+      if (path === bus + '.meta.lat') return 49.28;
+      if (path === bus + '.meta.lon') return -123.12;
+      return undefined;
+    });
+    await widget.initLayer({ ...layer, id: 'buses', pathPattern: 'PUBLIC_BUS.*' });
+    expect([...widget.devices.keys()]).toEqual([bus]);
+    expect(widget.pendingDeviceUnsubs.size).toBe(0);
+    expect(mockStore.subscribeTagReference.mock.calls.map(call => call[0])).not.toContain('default.PUBLIC_BUS.PUBLIC_BUS_ROUTE.meta.lon');
+    expect(mockStore.subscribeTagReference.mock.calls.map(call => call[0])).not.toContain('default.PUBLIC_BUS.PUBLIC_BUS_STOP.meta.lat');
+    widget.destroyMap();
   });
 
   it('creates markers from current coordinate tags without raw store subscriptions', async () => {

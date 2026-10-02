@@ -577,6 +577,8 @@ describe('MirrorStore API tree loading', () => {
     await store.loadTreeFromAPI('', -1);
 
     expect(apiMock.loadNode).toHaveBeenCalledWith('', -1);
+    expect(store.getOrg()).toBe('default');
+    expect(store.toAbsolute('Device.temp')).toBe('default.Device.temp');
     expect(store.getNodeConfig('default')).toEqual({ kind: 'org' });
     expect(store.getNodeShared('default')).toEqual({ owner: 'ops' });
     expect(store.getIsArray('default')).toBe(true);
@@ -726,6 +728,22 @@ describe('MirrorStore tree subscriptions and live tag broadcasts', () => {
     expect(store.getNodeValue('default.Device.temp')).toBe(45);
   });
 
+  it('yields to browser tasks while draining a burst of structural messages', async () => {
+    let clock = performance.now() + 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => { clock += 10; return clock; });
+    const handled = vi.spyOn(store as any, 'handleTreeChange');
+    const subscription = nc.subscriptions['rtdb.tree.default.>'];
+    for (let i = 0; i < 3; i++) subscription.push(msg(`rtdb.tree.default.Device.tag${i}`, null));
+    let handledBeforeBrowserTask = 0;
+    await new Promise<void>(resolve => setTimeout(() => {
+      handledBeforeBrowserTask = handled.mock.calls.length;
+      resolve();
+    }, 0));
+    expect(handledBeforeBrowserTask).toBe(1);
+    for (let i = 0; i < 4; i++) await flushAsyncWork();
+    expect(handled).toHaveBeenCalledTimes(3);
+  });
+
   it('sets up live tree subscriptions, applies updates, handles deletes, and logs bad messages', async () => {
     const seen = vi.fn();
     store.subscribeToTreeChanges('default.Device', seen);
@@ -846,6 +864,39 @@ describe('MirrorStore tree subscriptions and live tag broadcasts', () => {
 
     expect(store.getNodeValue('default.PUBLIC_BUS.BUS-17.meta.lat')).toBe(15.301234);
     expect(seen).toContain(15.301234);
+  });
+
+  it('preserves full precision for numeric array elements and complete snapshots', async () => {
+    const path = 'default.Routes.A.shape.points';
+    store.processIncomingNats({ key: path, value: new TextEncoder().encode(JSON.stringify({ type: 'node', isArray: true })) });
+    store.subscribeToTagValueChanges(path, () => undefined);
+    await flushAsyncWork();
+    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+      `xact.internal.bcast.tagvalue.${path}.0`,
+      { 'shape.points.0': { type: 'value', value: 49.283456 } },
+    ));
+    await flushAsyncWork();
+    expect(store.getNodeValue(path + '.0')).toBe(49.283456);
+    const points = [49.283456, -123.114567, 49.294567, -123.125678];
+    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+      `xact.internal.bcast.tagvalue.${path}`,
+      { 'shape.points': { type: 'value', value: points } },
+    ));
+    await flushAsyncWork();
+    expect(store.getNodeValue(path)).toEqual(points);
+    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+      `xact.internal.bcast.tagvalue.${path}`,
+      { points: { type: 'array-start', value: null } },
+    ));
+    await flushAsyncWork();
+    expect(store.getNodeValue(path)).toEqual(points);
+    expect(store.getNodeStatus(path)).toBe('array-updating');
+    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+      `xact.internal.bcast.tagvalue.${path}`,
+      { points: { type: 'value', value: points } },
+    ));
+    await flushAsyncWork();
+    expect(store.getNodeStatus(path)).toBe('');
   });
 
   it('does not start duplicate tag-value or tree subscriptions', async () => {

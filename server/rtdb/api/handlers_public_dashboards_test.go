@@ -105,3 +105,61 @@ func TestPublicMapUsesEachBusHeadingAndKeepsLabelSetting(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicRoutesReturnOnlyConfiguredGeometryAndNames(t *testing.T) {
+	db := securityTestDB(t, false)
+	ops := tree.NewTreeWithOperations(nil)
+	for path, value := range map[string]string{
+		"default.Routes.A.route.name":        "Route A",
+		"default.Custom.B.shape.points":      "[15.4,-61.5,15.41,-61.51]",
+		"default.Custom.B.meta.name":         "Route B",
+		"default.Hidden.C.route.coordinates": "PRIVATE_GEOMETRY",
+		"default.Routes.A.secret":            "PRIVATE_VALUE",
+	} {
+		if err := ops.CreateTag(path, tree.TypeString, tree.TagConfig{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := ops.SetLeafValue(path, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, value := range []float64{15.3, -61.4, 15.31, -61.41} {
+		path := fmt.Sprintf("default.Routes.A.route.coordinates.%d", i)
+		if err := ops.CreateTag(path, tree.TypeFloat, tree.TagConfig{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := ops.SetLeafValue(path, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	array, err := ops.FindNode("default.Routes.A.route.coordinates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	array.SetIsArray(true)
+	dashboard := &sqldb.Dashboard{Name: "Routes", IsPublic: true, Widgets: json.RawMessage(`[{"id":"map","type":"area-map-widget","config":{"layers":[{"itemType":"route","pathPattern":"Routes.*","enabled":true},{"itemType":"route","pathPattern":"Custom.*","enabled":true,"routeCoordinatesTag":"shape.points","routeNameTag":"meta.name"},{"itemType":"route","pathPattern":"Hidden.*","enabled":false}]}}]`)}
+	if err := db.CreateDashboard(context.Background(), "default", dashboard); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(ServerConfig{ProxyPath: "/xact"}, ops, nil, nil, "test-secret", db, "")
+	response := securityRequest(server, "GET", fmt.Sprintf("/xact/api/v1/public/default/dashboards/%d/data", dashboard.ID), "", nil)
+	if response.Code != 200 {
+		t.Fatalf("public routes: %d %s", response.Code, response.Body.String())
+	}
+	var values map[string]publicTagValue
+	if err := json.Unmarshal(response.Body.Bytes(), &values); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"default.Routes.A.route.coordinates", "default.Routes.A.route.name", "default.Custom.B.shape.points", "default.Custom.B.meta.name"} {
+		if _, ok := values[path]; !ok {
+			t.Errorf("missing %s", path)
+		}
+	}
+	if len(values) != 4 {
+		t.Fatalf("unexpected public route tags: %s", response.Body.String())
+	}
+	coordinates, ok := values["default.Routes.A.route.coordinates"].Value.([]any)
+	if !ok || len(coordinates) != 4 || coordinates[0] != 15.3 || coordinates[3] != -61.41 {
+		t.Fatalf("native coordinate array = %#v", values["default.Routes.A.route.coordinates"].Value)
+	}
+}

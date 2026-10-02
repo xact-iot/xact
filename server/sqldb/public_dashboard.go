@@ -93,15 +93,18 @@ func publicWidgetConfig(kind string, config map[string]json.RawMessage) (map[str
 		filtered := make([]map[string]json.RawMessage, 0, len(layers))
 		allowedLayer := map[string]bool{
 			"id": true, "name": true, "pathPattern": true, "enabled": true, "itemType": true,
-			"iconRules": true, "defaultGlyph": true, "defaultColor": true, "defaultSize": true,
+			"showAtZoom": true,
+			"iconRules":  true, "defaultGlyph": true, "defaultColor": true, "defaultSize": true,
 			"iconRotationEnabled": true, "iconRotationTag": true, "zoomThreshold": true,
 			"showZoomedTooltipAlways": true,
 			"offsetX":                 true, "offsetY": true,
+			"routeCoordinatesTag": true, "routeNameTag": true,
+			"routeColors": true, "routeColor": true, "routeWidth": true, "routeZoom": true,
 		}
 		for _, layer := range layers {
 			var itemType string
 			_ = json.Unmarshal(layer["itemType"], &itemType)
-			if itemType != "" && itemType != "icon" {
+			if itemType != "" && itemType != "icon" && itemType != "route" {
 				return nil, errors.New("map plugin layers are not supported on public dashboards")
 			}
 			clean := make(map[string]json.RawMessage)

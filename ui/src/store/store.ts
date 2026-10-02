@@ -644,6 +644,9 @@ export class MirrorStore {
     // When depth is specified, fetches that many levels of children in a single request
     // (depth=-1 fetches entire subtree). When depth is undefined, uses recursive per-node fetching.
     public async loadTreeFromAPI(path: Path = '', depth?: number): Promise<void> {
+        // REST hydration can precede live connection setup. Scope subscriptions
+        // and relative widget paths to the authenticated org immediately.
+        if (!path) this.orgName = getCurrentUser()?.tenant_id ?? 'default';
         try {
             const data = await loadNode(path, depth);
 
@@ -919,8 +922,16 @@ export class MirrorStore {
 
             // Process messages
             (async () => {
+                let sliceStarted = performance.now();
                 for await (const msg of sub) {
                     this.handleTreeChange(msg);
+                    // Large cascade deletes can queue hundreds of thousands of
+                    // messages. Yield the main thread so timers, paint and user
+                    // input are serviced while draining the subscription.
+                    if (performance.now() - sliceStarted >= 8) {
+                        await new Promise<void>(resolve => setTimeout(resolve, 0));
+                        sliceStarted = performance.now();
+                    }
                 }
             })();
         } catch (err) {
@@ -1047,12 +1058,21 @@ export class MirrorStore {
 
         const pathElements = path.split('.');
         let currentNode = this.root!;
+        let parentNode: Node | null = null;
         for (const element of pathElements) {
+            parentNode = currentNode;
             currentNode = currentNode.getOrCreateChild(element);
         }
 
-        // Coordinates need their full precision for map marker movement.
-        const isCoordinate = path.endsWith('.meta.lat') || path.endsWith('.meta.lon');
+        if (tagValue.type === 'array-start') {
+            currentNode.setStatus('array-updating');
+            for (const callback of listeners) callback(path);
+            return; // Retain the previous complete array value.
+        }
+
+        // Array elements can be route coordinates, including custom tag paths.
+        // Preserve their full precision rather than quantising map geometry.
+        const isCoordinate = path.endsWith('.meta.lat') || path.endsWith('.meta.lon') || parentNode?.getIsArray();
         const displayValue = !isCoordinate && typeof tagValue.value === 'number' && !Number.isInteger(tagValue.value)
             ? parseFloat(tagValue.value.toFixed(2))
             : tagValue.value;

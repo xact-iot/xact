@@ -61,11 +61,15 @@ interface LayerConfig {
   name: string;
   pathPattern: string;
   enabled: boolean;
+  /** Hide the whole layer below this map zoom. Defaults to 0. */
+  showAtZoom?: number;
   itemType: 'icon' | 'route' | 'plugin';
   /** Per-route tag paths, relative to each node matched by pathPattern. */
   routeCoordinatesTag?: string;
   routeNameTag?: string;
-  /** Style shared by every route in this layer. */
+  /** Colors assigned to successive routes, cycling through the palette. */
+  routeColors?: string[];
+  /** Legacy single color, migrated to routeColors when edited. */
   routeColor?: string;
   routeWidth?: number;
   routeZoom?: number;
@@ -148,11 +152,14 @@ interface DeviceEntry {
 }
 
 interface RouteEntry {
+  colorIndex: number;
   layer: LayerConfig;
   path: string;
   line: any | null;
   unsubs: Array<() => void>;
   refreshTimer?: ReturnType<typeof setTimeout>;
+  coordinates?: [number, number][];
+  coordinatesPending?: boolean;
 }
 
 interface DenseIconLayerState {
@@ -252,7 +259,21 @@ const ROUTE_TAG_DEFAULTS = {
   coordinates: 'route.coordinates',
   name: 'route.name',
 } as const;
-const ROUTE_STYLE_DEFAULTS = { color: '#f59e0b', width: 4, zoom: 10 } as const;
+// Saturated, darker colors remain visible on the pale OSM base map.
+const ROUTE_DEFAULT_COLORS = [
+  '#1d4ed8', '#b91c1c', '#15803d', '#7e22ce', '#c2410c',
+  '#0e7490', '#be185d', '#4338ca', '#854d0e', '#334155',
+] as const;
+const ROUTE_STYLE_DEFAULTS = { width: 4, zoom: 10 } as const;
+
+function routeColors(layer: LayerConfig): string[] {
+  const colors = Array.isArray(layer.routeColors)
+    ? layer.routeColors.filter(color => typeof color === 'string' && color.trim()).slice(0, 10)
+    : [];
+  if (colors.length) return colors;
+  if (typeof layer.routeColor === 'string' && layer.routeColor.trim()) return [layer.routeColor];
+  return [...ROUTE_DEFAULT_COLORS];
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -398,8 +419,10 @@ export class AreaMapWidget extends BaseComponent {
   // Device tracking
   private devices = new Map<string, DeviceEntry>();
   private routes = new Map<string, RouteEntry>();
+  private nextRouteColorIndex = new Map<string, number>();
   private pendingDeviceUnsubs = new Map<string, Array<() => void>>();
   private layerUnsubs = new Map<string, Array<() => void>>();
+  private layerVisibility = new Map<string, boolean>();
   private mapLayerPlugins = new Map<string, MapLayerPluginState>();
   private denseIconLayers = new Map<string, DenseIconLayerState>();
   private denseRefreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -657,6 +680,7 @@ export class AreaMapWidget extends BaseComponent {
       entry.line?.remove();
     }
     this.routes.clear();
+    this.nextRouteColorIndex.clear();
     for (const state of this.mapLayerPlugins.values()) {
       state.instance.remove();
     }
@@ -690,6 +714,13 @@ export class AreaMapWidget extends BaseComponent {
     });
 
     this.map = L.map(container, { zoomControl: true, attributionControl: false });
+    // Layers and plugins can read bounds during initialization. Give Leaflet
+    // a valid view now; fit the configured bounds after the layout stabilizes.
+    const initialBounds = this.config.savedBounds ?? this.orgArea;
+    const initialCenter = initialBounds
+      ? [(initialBounds.north + initialBounds.south) / 2, (initialBounds.east + initialBounds.west) / 2]
+      : [54.5, -2.0];
+    this.map.setView(initialCenter, 6);
     this.map.createPane('xact-tomtom-pane');
     this.map.getPane('xact-tomtom-pane')!.style.zIndex = '250';
 
@@ -805,6 +836,7 @@ export class AreaMapWidget extends BaseComponent {
       entry.line?.remove();
     }
     this.routes.clear();
+    this.nextRouteColorIndex.clear();
     for (const state of this.mapLayerPlugins.values()) {
       state.instance.remove();
     }
@@ -828,6 +860,12 @@ export class AreaMapWidget extends BaseComponent {
 
   private ensureDeviceLayerPanes(): void {
     if (!this.map) return;
+    // Leaflet's default tooltip and popup panes sit below our device panes.
+    // Keep labels and popups above even the layer raised during hover.
+    const tooltipPane = this.map.getPane('tooltipPane');
+    const popupPane = this.map.getPane('popupPane');
+    if (tooltipPane) tooltipPane.style.zIndex = String(DEVICE_LAYER_HOVER_Z_INDEX + 10);
+    if (popupPane) popupPane.style.zIndex = String(DEVICE_LAYER_HOVER_Z_INDEX + 20);
     const activeLayerIds = new Set(this.config.layers.map(layer => layer.id));
     const panes = this.map.getPanes?.() ?? {};
 
@@ -845,7 +883,12 @@ export class AreaMapWidget extends BaseComponent {
         this.map.createPane(paneName);
       }
       const pane = this.map.getPane(paneName);
-      if (pane) pane.style.zIndex = String(this.getLayerPaneZIndex(layer, index));
+      const visible = this.isLayerVisible(layer);
+      this.layerVisibility.set(layer.id, visible);
+      if (pane) {
+        pane.style.zIndex = String(this.getLayerPaneZIndex(layer, index));
+        pane.style.display = visible ? '' : 'none';
+      }
     });
   }
 
@@ -928,6 +971,18 @@ export class AreaMapWidget extends BaseComponent {
       this.mountMapLayerPlugin(layer, paths);
     } else if (layer.itemType === 'icon' && paths.length >= 500 && layer.pathPattern.trim().endsWith('.*')) {
       this.denseIconLayers.set(layer.id, { layer, paths: new Set(paths), visible: new Set(), clusters: [] });
+      // Coordinates may arrive after the REST snapshot (for example after a
+      // driver restart or a tree move). Clustered stops outside the viewport
+      // have no individual tag subscriptions, so observe values for the layer.
+      const prefix = parentPath;
+      const valueUnsub = store.subscribeToTagValueChanges(prefix, (changedPath: string) => {
+        const coordinate = changedPath.match(/^(.*)\.meta\.(lat|lon)$/);
+        if (!coordinate || !this.denseIconLayers.get(layer.id)?.paths.has(coordinate[1])) return;
+        this.scheduleDenseIconRefresh();
+      });
+      const unsubs = this.layerUnsubs.get(layer.id) ?? [];
+      unsubs.push(valueUnsub);
+      this.layerUnsubs.set(layer.id, unsubs);
       this.scheduleDenseIconRefresh();
     } else {
       for (const devicePath of paths) {
@@ -959,7 +1014,7 @@ export class AreaMapWidget extends BaseComponent {
     if (!this.map) return;
     state.clusters.forEach(marker => marker.remove());
     state.clusters = [];
-    if (state.layer.enabled === false) {
+    if (!this.isLayerVisible(state.layer)) {
       for (const path of state.visible) this.removeDevice(path);
       state.visible.clear();
       return;
@@ -1041,14 +1096,42 @@ export class AreaMapWidget extends BaseComponent {
     if (!this.map) return;
     const key = this.routeKey(layer, path);
     if (this.routes.has(key)) return;
-    const entry: RouteEntry = { layer, path, line: null, unsubs: [] };
+    const colorIndex = this.nextRouteColorIndex.get(layer.id) ?? 0;
+    this.nextRouteColorIndex.set(layer.id, colorIndex + 1);
+    const entry: RouteEntry = { colorIndex, layer, path, line: null, unsubs: [] };
     this.routes.set(key, entry);
     const store = getMirrorStore();
     const coordinatePath = this.routeTagPath(layer, path, 'coordinates');
     const namePath = this.routeTagPath(layer, path, 'name');
-    entry.unsubs.push(store.subscribeToTagValueChanges(coordinatePath, () => this.scheduleRouteUpdate(entry)));
+    const onCoordinates = (changedPath: string) => {
+      if (store.getNodeStatus(coordinatePath) === 'array-updating') {
+        entry.coordinatesPending = true;
+        if (entry.refreshTimer !== undefined) clearTimeout(entry.refreshTimer);
+        entry.refreshTimer = undefined;
+        return;
+      }
+      const snapshot = store.getNodeValue(coordinatePath);
+      if (changedPath === coordinatePath && snapshot !== undefined) {
+        entry.coordinatesPending = false;
+        if (entry.refreshTimer !== undefined) clearTimeout(entry.refreshTimer);
+        entry.refreshTimer = undefined;
+        this.scheduleRouteUpdate(entry);
+      } else if (snapshot === undefined) {
+        // Older servers publish only numbered children. Wait for a quiet
+        // period and retain the last complete geometry during that update.
+        entry.coordinatesPending = true;
+        if (entry.refreshTimer !== undefined) clearTimeout(entry.refreshTimer);
+        entry.refreshTimer = setTimeout(() => {
+          entry.refreshTimer = undefined;
+          entry.coordinatesPending = false;
+          if (this.routes.get(key) === entry) this.updateRoute(entry);
+        }, 150);
+      }
+      // With a parent snapshot, child updates cannot change route geometry.
+    };
+    entry.unsubs.push(store.subscribeToTagValueChanges(coordinatePath, onCoordinates));
     entry.unsubs.push(store.subscribeToTagValueChanges(namePath, () => this.scheduleRouteUpdate(entry)));
-    entry.unsubs.push(store.subscribeToTreeChanges(coordinatePath, () => this.scheduleRouteUpdate(entry)));
+    entry.unsubs.push(store.subscribeToTreeChanges(coordinatePath, onCoordinates));
     entry.unsubs.push(store.subscribeToTreeChanges(namePath, () => this.scheduleRouteUpdate(entry)));
     this.updateRoute(entry);
   }
@@ -1102,25 +1185,26 @@ export class AreaMapWidget extends BaseComponent {
     const appearanceZoom = Number(layer.routeZoom ?? ROUTE_STYLE_DEFAULTS.zoom);
     const baseWidth = Number(layer.routeWidth ?? ROUTE_STYLE_DEFAULTS.width);
     const zoom = this.map.getZoom();
-    if (layer.enabled === false || !Number.isFinite(zoom)
+    if (!this.isLayerVisible(layer) || !Number.isFinite(zoom)
       || !Number.isFinite(appearanceZoom) || appearanceZoom < 0
       || !Number.isFinite(baseWidth) || baseWidth <= 0 || zoom < appearanceZoom) {
       entry.line?.remove();
       entry.line = null;
       return;
     }
-    const coordinates = this.readRouteCoordinates(layer, path);
+    const coordinates = entry.coordinatesPending ? entry.coordinates ?? [] : this.readRouteCoordinates(layer, path);
+    if (!entry.coordinatesPending) entry.coordinates = coordinates;
     if (coordinates.length < 2) {
       entry.line?.remove();
       entry.line = null;
       return;
     }
     const store = getMirrorStore();
-    const color = layer.routeColor ?? ROUTE_STYLE_DEFAULTS.color;
+    const palette = routeColors(layer);
+    const color = palette[entry.colorIndex % palette.length];
     const name = store.getNodeValue(this.routeTagPath(layer, path, 'name'));
     const weight = baseWidth * (1 + ROUTE_WIDTH_GROWTH_PER_ZOOM * (zoom - appearanceZoom));
-    const style = { color: typeof color === 'string' && color.trim() ? color : ROUTE_STYLE_DEFAULTS.color,
-      weight, pane: this.getLayerPaneName(layer) };
+    const style = { color, weight, pane: this.getLayerPaneName(layer) };
     const label = typeof name === 'string' && name.trim() ? name : path.split('.').pop() || path;
     if (entry.line) {
       entry.line.setLatLngs(coordinates);
@@ -1242,6 +1326,10 @@ export class AreaMapWidget extends BaseComponent {
 
     const L = (window as any).L;
     const store = getMirrorStore();
+    // A wildcard may match category containers after a tree reorganisation.
+    // Their children are devices, and there are no coordinates on the category.
+    // Later structural events will retry a new device once its meta group exists.
+    if (store.getNodeType(devicePath) === 'node' && !store.listChildrenNames(devicePath).includes('meta')) return;
 
     const position = this.readDevicePosition(devicePath);
     if (!position) {
@@ -1259,7 +1347,7 @@ export class AreaMapWidget extends BaseComponent {
             if (leafletObj.options && !leafletObj.options.pane) {
               leafletObj.options.pane = this.getLayerPaneName(layer);
             }
-            leafletObj.addTo(this.map);
+            if (this.isLayerVisible(layer)) leafletObj.addTo(this.map);
             leafletObj.on('click', () => this.onDeviceClick(devicePath));
             const unsubs: Array<() => void> = [];
             this.devices.set(devicePath, { marker: leafletObj, layer, unsubs, displayedPosition: position, divTagPaths: new Set() });
@@ -1285,7 +1373,7 @@ export class AreaMapWidget extends BaseComponent {
     });
 
     const marker = L.marker(position, { icon, pane: this.getLayerPaneName(layer) });
-    marker.addTo(this.map);
+    if (this.isLayerVisible(layer)) marker.addTo(this.map);
     marker.on('click', () => this.onDeviceClick(devicePath));
     marker.on('mouseover', () => {
       this.setHoverRaisedLayer(layer, true);
@@ -1646,6 +1734,9 @@ export class AreaMapWidget extends BaseComponent {
     if (!this.map) return;
     const zoomEl = this.querySelector<HTMLElement>('#map-zoom');
     if (zoomEl) zoomEl.textContent = `Z ${this.map.getZoom()}`;
+    for (const layer of this.config.layers) {
+      if (this.layerVisibility.get(layer.id) !== this.isLayerVisible(layer)) this.updateLayerVisibility(layer);
+    }
     for (const entry of this.routes.values()) this.updateRoute(entry);
     for (const [devicePath, entry] of this.devices) {
       if (entry.layer.itemType === 'icon' || (entry.layer.itemType as string) === 'div') {
@@ -2221,14 +2312,23 @@ export class AreaMapWidget extends BaseComponent {
     });
   }
 
+  private isLayerVisible(layer: LayerConfig): boolean {
+    const threshold = Number(layer.showAtZoom ?? 0);
+    return layer.enabled !== false && (this.map?.getZoom() ?? 0) >= (Number.isFinite(threshold) ? threshold : 0);
+  }
+
   private updateLayerVisibility(layer: LayerConfig): void {
+    const visible = this.isLayerVisible(layer);
+    this.layerVisibility.set(layer.id, visible);
+    const pane = this.map?.getPane?.(this.getLayerPaneName(layer));
+    if (pane) pane.style.display = visible ? '' : 'none';
     if (this.denseIconLayers.has(layer.id)) this.renderDenseIconLayer(this.denseIconLayers.get(layer.id)!);
     for (const entry of this.routes.values()) {
       if (entry.layer.id === layer.id) this.updateRoute(entry);
     }
     for (const [devicePath, entry] of this.devices) {
       if (entry.layer.id !== layer.id) continue;
-      if (layer.enabled) {
+      if (visible) {
         entry.marker.addTo(this.map);
         // Leaflet recreates the icon DOM on re-add, so the body is fresh/empty.
         // Clear lastIconHtml so updateDeviceMarker does a full pass and remounts
@@ -2559,16 +2659,35 @@ export class AreaMapWidget extends BaseComponent {
           <label style="${labelStyle}">Item Type</label>
           <select id="le-item-type" style="${fieldStyle}width:100%;">${itemTypeOpts}</select>
         </div>
+        <div>
+          <label style="${labelStyle}" for="le-show-at-zoom">Show at Zoom</label>
+          <input id="le-show-at-zoom" type="number" min="0" max="22" step="1" value="${esc(String(layer.showAtZoom ?? 0))}" style="${fieldStyle}width:100%;">
+        </div>
         ${isRoute ? `
         <div style="grid-column:1/-1;font-size:12px;opacity:0.75;">Each matched route node supplies coordinates and a name. Color, width, and appearance zoom apply to the whole layer.</div>
         ${([
           ['le-route-coordinates-tag', 'Coordinates array tag', layer.routeCoordinatesTag ?? ROUTE_TAG_DEFAULTS.coordinates],
           ['le-route-name-tag', 'Name tag', layer.routeNameTag ?? ROUTE_TAG_DEFAULTS.name],
-        ] as const).map(([id, label, value]) => `<div><label style="${labelStyle}" for="${id}">${label}</label><input id="${id}" type="text" value="${esc(value)}" style="${fieldStyle}width:100%;"></div>`).join('')}
-        <div>
-          <label style="${labelStyle}" for="le-route-color">Color</label>
-          <input id="le-route-color" type="color" value="${toHexColor(layer.routeColor ?? ROUTE_STYLE_DEFAULTS.color)}"
-                 style="display:block;width:52px;height:30px;padding:1px 2px;cursor:pointer;border:1px solid var(--border-color);border-radius:3px;background:var(--content-bg);">
+        ] as const).map(([id, label, value]) => `<div>
+          <label style="${labelStyle}" for="${id}">${label}</label>
+          <div style="display:flex;gap:4px;align-items:center;">
+            <input id="${id}" type="text" value="${esc(value)}" style="${fieldStyle}flex:1;min-width:0;">
+            <button id="${id}-browse" title="Browse ${label.toLowerCase()}" aria-label="Browse ${label.toLowerCase()}" style="flex-shrink:0;width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--border-color) 40%,transparent);border:1px solid var(--border-color);border-radius:3px;cursor:pointer;font-size:12px;padding:0;">✏️</button>
+          </div>
+        </div>`).join('')}
+        <div style="grid-column:1/-1;">
+          <label style="${labelStyle}" for="le-route-color-count">Route colors</label>
+          <select id="le-route-color-count" aria-label="Number of route colors" style="${fieldStyle}margin-bottom:8px;">
+            ${Array.from({ length: 10 }, (_, i) => `<option value="${i + 1}" ${routeColors(layer).length === i + 1 ? 'selected' : ''}>${i + 1} ${i === 0 ? 'color' : 'colors'}</option>`).join('')}
+          </select>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;">
+            ${routeColors(layer).map((color, i) => `<div>
+              <label style="${labelStyle}" for="le-route-color-${i}">${i + 1}</label>
+              <input id="le-route-color-${i}" class="le-route-color" type="color" aria-label="Route color ${i + 1}" value="${toHexColor(color)}"
+                     style="display:block;width:52px;height:30px;padding:1px 2px;cursor:pointer;border:1px solid var(--border-color);border-radius:3px;background:var(--content-bg);">
+            </div>`).join('')}
+          </div>
+          <div style="font-size:11px;opacity:0.65;margin-top:6px;">Routes use these colors in order, then repeat.</div>
         </div>
         <div>
           <label style="${labelStyle}" for="le-route-width">Width (pixels)</label>
@@ -2867,6 +2986,17 @@ export class AreaMapWidget extends BaseComponent {
       this.initDivEditors(overlay);
     });
 
+    overlay.querySelector<HTMLSelectElement>('#le-route-color-count')?.addEventListener('change', (event) => {
+      const layer = this.config.layers.find(l => l.id === this.cfgEditLayerId);
+      if (!layer) return;
+      this.collectLayerFromPanel(overlay);
+      const count = Math.max(1, Math.min(10, Number((event.target as HTMLSelectElement).value) || 1));
+      const palette = routeColors(layer);
+      layer.routeColors = Array.from({ length: count }, (_, i) => palette[i] ?? ROUTE_DEFAULT_COLORS[i]);
+      overlay.innerHTML = this.renderConfigPanelHtml();
+      this.attachConfigListeners(overlay);
+    });
+
     // Layer item-type change → re-render editor section
     overlay.querySelector<HTMLSelectElement>('#le-item-type')?.addEventListener('change', (e) => {
       const newType = (e.target as HTMLSelectElement).value as LayerConfig['itemType'];
@@ -2938,18 +3068,24 @@ export class AreaMapWidget extends BaseComponent {
       });
     });
 
-    overlay.querySelector<HTMLElement>('#le-icon-rotation-browse')?.addEventListener('click', () => {
-      const input = overlay.querySelector<HTMLInputElement>('#le-icon-rotation-tag');
-      if (!input) return;
-      const layer = this.config.layers.find(l => l.id === this.cfgEditLayerId);
-      const exampleDevice = layer ? this.resolvePattern(layer.pathPattern)[0] ?? '' : '';
-      getTreeBrowserDialog().open(exampleDevice, 'Select Heading Tag', (selectedPath) => {
-        const resolved = exampleDevice ? this.resolveDeviceTag(exampleDevice, selectedPath) : selectedPath;
-        input.value = exampleDevice && resolved.startsWith(exampleDevice + '.')
-          ? resolved.slice(exampleDevice.length + 1)
-          : selectedPath;
-      }, /* includeLeaves= */ true);
-    });
+    for (const [buttonId, inputId, title] of [
+      ['le-icon-rotation-browse', 'le-icon-rotation-tag', 'Select Heading Tag'],
+      ['le-route-coordinates-tag-browse', 'le-route-coordinates-tag', 'Select Coordinates Array Tag'],
+      ['le-route-name-tag-browse', 'le-route-name-tag', 'Select Name Tag'],
+    ]) {
+      overlay.querySelector<HTMLElement>(`#${buttonId}`)?.addEventListener('click', () => {
+        const input = overlay.querySelector<HTMLInputElement>(`#${inputId}`);
+        if (!input) return;
+        const layer = this.config.layers.find(l => l.id === this.cfgEditLayerId);
+        const exampleDevice = layer ? this.resolvePattern(layer.pathPattern)[0] ?? '' : '';
+        getTreeBrowserDialog().open(exampleDevice, title, (selectedPath) => {
+          const resolved = exampleDevice ? this.resolveDeviceTag(exampleDevice, selectedPath) : selectedPath;
+          input.value = exampleDevice && resolved.startsWith(exampleDevice + '.')
+            ? resolved.slice(exampleDevice.length + 1)
+            : selectedPath;
+        }, /* includeLeaves= */ true);
+      });
+    }
 
     // Zoom widget configure button
     overlay.querySelector<HTMLElement>('#le-dw-configure')?.addEventListener('click', () => {
@@ -3032,13 +3168,22 @@ export class AreaMapWidget extends BaseComponent {
 
     layer.name = overlay.querySelector<HTMLInputElement>('#le-name')?.value ?? layer.name;
     layer.pathPattern = overlay.querySelector<HTMLInputElement>('#le-pattern')?.value ?? layer.pathPattern;
+    const showAtZoomInput = overlay.querySelector<HTMLInputElement>('#le-show-at-zoom');
+    if (showAtZoomInput) {
+      const zoom = Number(showAtZoomInput.value);
+      layer.showAtZoom = Number.isFinite(zoom) ? Math.max(0, Math.min(22, Math.round(zoom))) : 0;
+    }
     // Migrate legacy 'div' type to 'icon' on next save
     const selectedType = overlay.querySelector<HTMLSelectElement>('#le-item-type')?.value ?? layer.itemType;
     layer.itemType = (selectedType === 'div' ? 'icon' : selectedType) as LayerConfig['itemType'];
     if (layer.itemType === 'route') {
       layer.routeCoordinatesTag = overlay.querySelector<HTMLInputElement>('#le-route-coordinates-tag')?.value.trim() || ROUTE_TAG_DEFAULTS.coordinates;
       layer.routeNameTag = overlay.querySelector<HTMLInputElement>('#le-route-name-tag')?.value.trim() || ROUTE_TAG_DEFAULTS.name;
-      layer.routeColor = toHexColor(overlay.querySelector<HTMLInputElement>('#le-route-color')?.value ?? layer.routeColor ?? ROUTE_STYLE_DEFAULTS.color);
+      const colorInputs = Array.from(overlay.querySelectorAll<HTMLInputElement>('.le-route-color'));
+      layer.routeColors = colorInputs.length
+        ? colorInputs.slice(0, 10).map(input => toHexColor(input.value))
+        : routeColors(layer);
+      delete layer.routeColor;
       const widthValue = overlay.querySelector<HTMLInputElement>('#le-route-width')?.value.trim();
       const zoomValue = overlay.querySelector<HTMLInputElement>('#le-route-zoom')?.value.trim();
       const width = widthValue ? Number(widthValue) : NaN;

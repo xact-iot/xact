@@ -17,6 +17,7 @@ type Leaf interface {
 	ValueType() ScalarType
 	GetAnyValue() any
 	SetAnyValue(any) error
+	RestoreValue(any, time.Time) error
 	// Type-safe getters - return ErrWrongType if called on wrong type
 	GetInt() (int64, error)
 	GetFloat() (float64, error)
@@ -529,6 +530,22 @@ func (l *LeafNode) storeNative(v any) error {
 }
 
 // SetAnyValue coerces v to the leaf's native type, runs the pipeline, then stores the result.
+// RestoreValue installs a previously processed value without running the live
+// pipeline again (scaling, history, persistence, publishing, and notifications).
+func (l *LeafNode) RestoreValue(v any, updated time.Time) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	native, err := toNative(l.value, v)
+	if err != nil {
+		return err
+	}
+	if err := l.storeNative(native); err != nil {
+		return err
+	}
+	l.runtime.UpdatedTime = updated
+	return nil
+}
+
 func (l *LeafNode) SetAnyValue(v any) error {
 	// Snapshot current value type under read lock so toNative can coerce correctly.
 	l.mu.RLock()

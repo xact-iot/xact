@@ -325,7 +325,20 @@ func main() {
 
 		// Try to restore tree from database
 		persistMgr = persistence.NewManager(database, treeOps, "default", 5*time.Second)
+		restoreStarted := time.Now()
+		persistStore := nats.GetPersistStore()
+		if persistStore != nil {
+			snapshotCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			if err := persistStore.BeginRestore(snapshotCtx); err != nil {
+				console.Warn("db", "", "Unable to preload saved tag values; using individual reads", "error", err)
+			}
+			cancel()
+		}
 		restored, err := persistMgr.Restore(ctx)
+		if persistStore != nil {
+			persistStore.EndRestore()
+		}
+		log.Printf("persistence: tree and saved values restored in %s", time.Since(restoreStarted).Round(time.Millisecond))
 		if err != nil {
 			console.Warn("db", "", "Failed to restore tree config", "error", err)
 		}

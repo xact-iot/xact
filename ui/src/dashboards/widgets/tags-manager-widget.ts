@@ -171,6 +171,8 @@ export class TagsManagerWidget extends BaseComponent {
   private treeScrollTop = 0;
   private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private treeUnsubscribe: (() => void) | null = null;
+  private treeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingDeletedPaths = new Set<string>();
 
   // Lock state (populated lazily via API)
   private lockedNodes: Map<string, boolean> = new Map();
@@ -202,6 +204,7 @@ export class TagsManagerWidget extends BaseComponent {
   // Delete confirmation state
   private isDeleteConfirmOpen = false;
   private deleteTarget: { type: 'node' | 'tag'; path: string } | null = null;
+  private deleting = false;
 
   // Block schemas (loaded from server)
   private blockSchemas: BlockSchema[] = [];
@@ -242,25 +245,7 @@ export class TagsManagerWidget extends BaseComponent {
       return;
     }
     const store = getMirrorStore();
-    this.treeUnsubscribe = store.subscribeToTreeChanges('', (path, data) => {
-      this.tagCountCache.clear();
-      this.matchingTagCountCache.clear();
-      this.searchMatchCache.clear();
-      if (data === null) {
-        // A node subtree was deleted. The store discarded those Node objects
-        // (and their subscriber lists). Evict the affected paths from
-        // subscribedPaths and valueCache so ensureSubscribed() re-registers
-        // callbacks on the fresh Node objects when the subtree reappears.
-        const prefix = path + '.';
-        for (const p of Array.from(this.subscribedPaths)) {
-          if (p === path || p.startsWith(prefix)) {
-            this.subscribedPaths.delete(p);
-            this.valueCache.delete(p);
-          }
-        }
-      }
-      this.rerender();
-    });
+    this.treeUnsubscribe = store.subscribeToTreeChanges('', (path, data) => this.scheduleTreeRefresh(path, data));
     // Eagerly hydrate the store from the REST API so the initial render shows
     // real tree data rather than waiting for NATS events to trickle in.
     const orgRoot = getCurrentUser()?.tenant_id ?? '';
@@ -277,6 +262,9 @@ export class TagsManagerWidget extends BaseComponent {
 
   disconnectedCallback(): void {
     if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
+    if (this.treeRefreshTimer !== null) clearTimeout(this.treeRefreshTimer);
+    this.treeRefreshTimer = null;
+    this.pendingDeletedPaths.clear();
     if (this.treeUnsubscribe) { this.treeUnsubscribe(); this.treeUnsubscribe = null; }
     this.applyModalStacking(false);
     super.disconnectedCallback();
@@ -332,6 +320,48 @@ export class TagsManagerWidget extends BaseComponent {
   }
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
+
+  private scheduleTreeRefresh(path: string, data: any): void {
+    if (data === null) {
+      // The server sends the subtree root first, followed by all descendants.
+      // Keep only uncovered paths; never scan subscriptions for every event.
+      let ancestor = path;
+      while (ancestor && !this.pendingDeletedPaths.has(ancestor)) {
+        const dot = ancestor.lastIndexOf('.');
+        ancestor = dot < 0 ? '' : ancestor.slice(0, dot);
+      }
+      if (!ancestor) this.pendingDeletedPaths.add(path);
+    }
+    // Throttle rather than debounce: a continuous stream still updates the UI.
+    if (this.treeRefreshTimer !== null) return;
+    this.treeRefreshTimer = setTimeout(() => this.flushTreeRefresh(), 50);
+  }
+
+  private flushTreeRefresh(): void {
+    if (this.treeRefreshTimer !== null) clearTimeout(this.treeRefreshTimer);
+    this.treeRefreshTimer = null;
+    this.tagCountCache.clear();
+    this.matchingTagCountCache.clear();
+    this.searchMatchCache.clear();
+    // Discard callbacks attached to removed Node objects so recreated tags
+    // receive fresh subscriptions. Check ancestors once per subscribed path.
+    if (this.pendingDeletedPaths.size) {
+      for (const path of this.subscribedPaths) {
+        let ancestor = path;
+        while (ancestor) {
+          if (this.pendingDeletedPaths.has(ancestor)) {
+            this.subscribedPaths.delete(path);
+            this.valueCache.delete(path);
+            break;
+          }
+          const dot = ancestor.lastIndexOf('.');
+          ancestor = dot < 0 ? '' : ancestor.slice(0, dot);
+        }
+      }
+      this.pendingDeletedPaths.clear();
+    }
+    this.rerender();
+  }
 
   private statusBadgeHtml(status: string): string {
     const code = status.toUpperCase();
@@ -1002,8 +1032,8 @@ export class TagsManagerWidget extends BaseComponent {
             ? `<p class="text-xs mb-4" style="color:#f87171">⚠ All child nodes and tags will be permanently deleted.</p>`
             : `<p class="text-xs mb-4 opacity-50">This action cannot be undone.</p>`}
           <div class="flex gap-2">
-            <button id="delete-confirm-yes" class="flex-1 px-4 py-2 text-xs font-semibold rounded" style="background:#ef4444;color:#fff">Delete</button>
-            <button id="delete-confirm-no"  class="flex-1 px-4 py-2 text-xs font-semibold rounded" style="background:color-mix(in srgb,var(--border-color) 50%,transparent);color:var(--content-text)">Cancel</button>
+            <button id="delete-confirm-yes" class="flex-1 px-4 py-2 text-xs font-semibold rounded" style="background:#ef4444;color:#fff" ${this.deleting ? 'disabled aria-busy="true"' : ''}>${this.deleting ? 'Deleting…' : 'Delete'}</button>
+            <button id="delete-confirm-no" ${this.deleting ? 'disabled' : ''} class="flex-1 px-4 py-2 text-xs font-semibold rounded" style="background:color-mix(in srgb,var(--border-color) 50%,transparent);color:var(--content-text)">Cancel</button>
           </div>
         </div>
       </div>`;
@@ -1859,12 +1889,14 @@ export class TagsManagerWidget extends BaseComponent {
 
   // ─── Delete Logic ─────────────────────────────────────────────────────────────
 
-  private closeDeleteConfirm = (): void => { this.isDeleteConfirmOpen = false; this.deleteTarget = null; this.rerender(); };
+  private closeDeleteConfirm = (): void => { if (this.deleting) return; this.isDeleteConfirmOpen = false; this.deleteTarget = null; this.rerender(); };
 
   private handleConfirmDelete = async (): Promise<void> => {
     if (!this.canWrite) return;
-    if (!this.deleteTarget) return;
+    if (!this.deleteTarget || this.deleting) return;
     const { type, path } = this.deleteTarget;
+    this.deleting = true;
+    this.rerender();
     try {
       if (type === 'node') {
         // Unlock the node itself first - top-level nodes are auto-locked on creation
@@ -1874,6 +1906,8 @@ export class TagsManagerWidget extends BaseComponent {
         await deleteTag(path);
       }
     } catch (err) {
+      this.deleting = false;
+      this.rerender();
       await showAlert(`Failed to delete: ${err}`, {
         title: 'Delete failed',
         tone: 'danger',
@@ -1882,12 +1916,11 @@ export class TagsManagerWidget extends BaseComponent {
     }
     this.isDeleteConfirmOpen = false;
     this.deleteTarget = null;
+    this.deleting = false;
     this.lockedNodes.delete(path);
     getMirrorStore().removeNode(path);
-    this.tagCountCache.clear();
-    this.matchingTagCountCache.clear();
-    this.searchMatchCache.clear();
-    this.rerender();
+    this.scheduleTreeRefresh(path, null);
+    this.flushTreeRefresh();
   };
 
   // ─── Debugger Logic ───────────────────────────────────────────────────────────

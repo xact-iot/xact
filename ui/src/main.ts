@@ -34,6 +34,7 @@ import {
   createStarterTagViewWidgets,
   type DashboardConfig,
 } from './dashboards/dashboard-config-editor';
+import { setDashboardStartupResources } from './dashboards/startup-resources';
 import { configsToMenuItems } from './dashboards/dashboard-menu';
 import { resolveDashboardForDeviceSubtype } from './dashboards/dashboard-selection';
 // TabData type is used internally by AppHeader.setTabs()
@@ -81,22 +82,21 @@ setAuthHeadersProvider(getAuthHeaders);
 
 // Theme is initialized by the ThemeManager singleton constructor (imported by preferences-dialog)
 
-// Initialize store connection
+// Hydrate the data tree and connect live updates in the background.
 async function initializeStore(): Promise<void> {
-  try {
-    const store = getMirrorStore();
+  const store = getMirrorStore();
+  void (async () => {
+    try {
+      const natsCfg = await fetchNATSConfig();
+      const wsUrl = natsCfg.natsWsUrl || `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${natsCfg.natsWsPath}`;
+      await store.storeConnectNats(wsUrl, natsCfg.username, natsCfg.password, natsCfg.inboxPrefix);
+    } catch (err) {
+      console.error('XACT: Failed to connect live updates:', err);
+    }
+  })();
 
-    // Fetch WebSocket NATS credentials from the REST API (authenticated endpoint)
-    const natsCfg = await fetchNATSConfig();
-    const wsUrl = natsCfg.natsWsUrl || `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${natsCfg.natsWsPath}`;
-    await store.storeConnectNats(wsUrl, natsCfg.username, natsCfg.password, natsCfg.inboxPrefix);
-
-    // Load tree structure and metadata from REST API
-    // Use depth=-1 to fetch entire subtree in a single request (instead of thousands of sequential requests)
-    await store.loadTreeFromAPI('', -1);
-  } catch (err) {
-    console.error('XACT: Failed to initialize store:', err);
-  }
+  // Fetch the entire subtree in one request, without waiting for WebSocket setup.
+  await store.loadTreeFromAPI('', -1);
 }
 
 // Disconnect store on page unload
@@ -381,35 +381,39 @@ async function initializeApp(): Promise<void> {
     getUiStore().set('orgName', authedUser.tenant_id);
   }
 
-  // Fetch server timezone so widgets can display times in the server's zone
-  try {
-    const health = await fetchHealth();
-    if (health.timezone) {
-      getUiStore().set('serverTimezone', health.timezone);
-    }
-  } catch (err) {
-    console.warn('XACT: Failed to fetch server timezone:', err);
-  }
+  // Start independent startup requests together.
+  const timezoneReady = fetchHealth().then(health => {
+    if (health.timezone) getUiStore().set('serverTimezone', health.timezone);
+  }).catch(err => console.warn('XACT: Failed to fetch server timezone:', err));
 
-  // Load permissions before rendering UI
   await loadPermissions();
-
-  // Initialize reactive store connection
-  await initializeStore();
-
-  // Load widget plugins from server
-  await initPlugins();
-
-  // Hide loading indicator
-  const loading = document.getElementById('loading');
-  if (loading) {
-    loading.classList.add('hidden');
-  }
 
   const sidebar = app.querySelector('app-sidebar') as import('./components/app-sidebar').AppSidebar;
   const header = app.querySelector('app-header') as import('./components/app-header').AppHeader;
   const content = app.querySelector('app-content') as import('./components/app-content').AppContent;
-  let editor: import('./dashboards/dashboard-config-editor').DashboardConfigEditor | null = null;
+  const editor = content?.querySelector('dashboard-config-editor') as import('./dashboards/dashboard-config-editor').DashboardConfigEditor | null;
+
+  // Load dashboard configuration from server
+  try {
+    await loadDashboardMenuFromServer(editor, sidebar);
+  } catch (err) {
+    if (isAuthApiError(err)) {
+      console.warn('XACT: Stored session was rejected by the server; login required.');
+      await recoverFromStaleSession(app, header);
+      await loadDashboardMenuFromServer(editor, sidebar);
+    } else {
+      console.error('XACT: Failed to load dashboards from server, using defaults:', err);
+      if (editor) {
+        sidebar?.setMenuItems(configsToMenuItems(editor.getConfigs()));
+      }
+    }
+  }
+
+  // Open the dashboard immediately. Individual widgets wait only for the
+  // resources they need; static content does not wait for the full data tree.
+  const dataReady = Promise.all([timezoneReady, initializeStore()]);
+  const pluginsReady = initPlugins().catch(err => console.error('XACT: Failed to initialize plugins:', err));
+  setDashboardStartupResources(dataReady, pluginsReady);
 
   // ── Tab state management ──
   interface TabInfo { id: string; dashboardId: string; title: string; }
@@ -724,23 +728,6 @@ async function initializeApp(): Promise<void> {
     if (e.detail.editing) header?.setDashboardMode('edit');
   }) as EventListener);
 
-  // Load dashboard configuration from server
-  editor = content?.querySelector('dashboard-config-editor') as import('./dashboards/dashboard-config-editor').DashboardConfigEditor | null;
-  try {
-    await loadDashboardMenuFromServer(editor, sidebar);
-  } catch (err) {
-    if (isAuthApiError(err)) {
-      console.warn('XACT: Stored session was rejected by the server; login required.');
-      await recoverFromStaleSession(app, header);
-      await loadDashboardMenuFromServer(editor, sidebar);
-    } else {
-      console.error('XACT: Failed to load dashboards from server, using defaults:', err);
-      if (editor) {
-        sidebar?.setMenuItems(configsToMenuItems(editor.getConfigs()));
-      }
-    }
-  }
-
   // URL hash router: restore the last active dashboard after dashboards are loaded
   const hashDashboard = window.location.hash.slice(1);
   if (hashDashboard) {
@@ -750,6 +737,9 @@ async function initializeApp(): Promise<void> {
   } else {
     await navigateToDashboard(startupDashboardRef(), 'replace');
   }
+
+  content?.removeAttribute('aria-busy');
+  document.getElementById('loading')?.classList.add('hidden');
 
   window.addEventListener('popstate', (event: PopStateEvent) => {
     void (async () => {

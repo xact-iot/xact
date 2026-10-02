@@ -5,6 +5,7 @@
 # Options:
 #   -t, --test     Run with coverage instrumentation and SQLite in-memory mode
 #   -p, --proxy    VITE or NGINX serves static files (server does not serve them)
+#   -r, --race     Enable Go race detection (higher CPU and memory use)
 
 set -e
 
@@ -19,6 +20,7 @@ NC='\033[0m' # No Color
 # Parse command line options
 TEST_MODE=false
 PROXY_MODE=false
+RACE_MODE=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -30,9 +32,13 @@ while [[ $# -gt 0 ]]; do
             PROXY_MODE=true
             shift
             ;;
+        -r|--race)
+            RACE_MODE=true
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [-t|--test] [-p|--proxy]"
+            echo "Usage: $0 [-t|--test] [-p|--proxy] [-r|--race]"
             exit 1
             ;;
     esac
@@ -53,15 +59,19 @@ echo -e "${YELLOW}Cleaning previous build...${NC}"
 rm -f bin/xact
 
 # Build flags
-BUILD_FLAGS="-race"
+BUILD_FLAGS=()
+if [ "$RACE_MODE" = true ]; then
+    BUILD_FLAGS+=(-race)
+    echo -e "${YELLOW}Race detection enabled (higher CPU and memory use)${NC}"
+fi
 if [ "$TEST_MODE" = true ]; then
-    BUILD_FLAGS="-cover $BUILD_FLAGS"
+    BUILD_FLAGS+=(-cover)
     echo -e "${YELLOW}Coverage instrumentation enabled${NC}"
 fi
 
 # Build the server
 echo -e "${YELLOW}Building server...${NC}"
-go build $BUILD_FLAGS -o bin/xact ./startup
+go build "${BUILD_FLAGS[@]}" -o bin/xact ./startup
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}Build successful!${NC}"

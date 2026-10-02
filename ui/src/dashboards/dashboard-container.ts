@@ -1,9 +1,10 @@
+import { waitForWidgetStartup } from './startup-resources';
 import { BaseComponent } from '../components/base-component';
 import { getDashboard, createDashboard, updateDashboard } from '../api';
 import type { Dashboard } from '../api';
 import { GridStack } from 'gridstack';
 import 'gridstack/dist/gridstack.min.css';
-import { ensureWidgetTypeLoaded, ensureWidgetTypesLoaded, getWidgetsByCategory, getWidgetMeta, WIDGET_CATEGORIES } from './widgets/widget-registry';
+import { ensureWidgetTypesLoaded, getWidgetsByCategory, getWidgetMeta, WIDGET_CATEGORIES } from './widgets/widget-registry';
 import './widgets/widget-card';
 import './widgets/widget-properties-dialog';
 import { can } from '../permissions/permissions';
@@ -305,12 +306,10 @@ export class DashboardContainer extends BaseComponent {
 
     // Add existing widgets to the grid before listening for 'change' / 'added',
     // so that loading saved widgets doesn't mark the dashboard as dirty.
-    await ensureWidgetTypesLoaded(collectReferencedWidgetTypes(this.widgets));
+    // Add placeholders in saved order, then populate independent panels in
+    // parallel so a data-heavy widget cannot hold up static content.
+    await Promise.all(inLayoutOrder(this.widgets).map(w => this.addWidgetToGrid(w)));
     if (!this.isConnected || this.grid !== grid) return;
-    for (const w of inLayoutOrder(this.widgets)) {
-      await this.addWidgetToGrid(w);
-      if (!this.isConnected || this.grid !== grid) return;
-    }
 
     // Listen for grid changes - registered AFTER initial load to avoid
     // false dirty flags from GridStack position adjustments during load.
@@ -380,13 +379,6 @@ export class DashboardContainer extends BaseComponent {
 
     const meta = getWidgetMeta(data.type);
     const displayName = meta?.name || data.type;
-    try {
-      await ensureWidgetTypeLoaded(data.type);
-    } catch (err) {
-      console.error('Failed to load widget type:', data.type, err);
-    }
-    if (!this.isConnected || this.grid !== grid) return;
-
     // Use addWidget with a placeholder, then inject our DOM elements
     const gsEl = grid.addWidget({
       x: data.x,
@@ -413,6 +405,18 @@ export class DashboardContainer extends BaseComponent {
     card.setTitle(displayName);
     const body = card.querySelector('.widget-body');
     if (body) {
+      body.innerHTML = '<div class="p-3 text-xs opacity-60" role="status">Loading widget...</div>';
+      try {
+        const types = collectReferencedWidgetTypes([data]);
+        await waitForWidgetStartup(types);
+        await ensureWidgetTypesLoaded(types);
+      } catch (err) {
+        console.error('Failed to load widget type:', data.type, err);
+      }
+      // A navigation or edit may have replaced this grid while resources loaded.
+      if (!this.isConnected || this.grid !== grid || !card.isConnected) return;
+      body.innerHTML = '';
+      card.setTitle(getWidgetMeta(data.type)?.name || data.type);
       if (!customElements.get(data.type)) {
         body.innerHTML = `<div class="p-3 text-xs opacity-60">Unable to load widget "${escapeHtml(data.type)}".</div>`;
         card.setHasProperties(false);

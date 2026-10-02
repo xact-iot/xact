@@ -45,14 +45,24 @@
       "username": "app:public_bus",
       "password_env": "PUBLIC_BUS_NATS_PASSWORD",
       "publish": [
-        "xact.internal.ingest_request.default.PUBLIC_BUS_STOP.*",
-        "xact.internal.ingest_request.default.PUBLIC_BUS_ROUTE.*",
-        "xact.internal.ingest_request.default.PUBLIC_BUS.*"
+        "xact.internal.ingest_request.default.PUBLIC_BUS.BUSES.*",
+        "xact.internal.ingest_request.default.PUBLIC_BUS.PUBLIC_BUS_STOP.*",
+        "xact.internal.ingest_request.default.PUBLIC_BUS.PUBLIC_BUS_ROUTE.*"
       ],
       "subscribe": [
         "xact.app.v1.default.public_bus.default.request.*",
         "xact.app.v1.default.public_bus.default.ingest.*",
         "_INBOX.app_public_bus.>"
+      ]
+    },
+    {
+      "username": "app:translink",
+      "password_env": "TRANSLINK_NATS_PASSWORD",
+      "publish": [
+        "xact.app.v1.default.public_bus.default.ingest.translink"
+      ],
+      "subscribe": [
+        "_INBOX.app_translink.>"
       ]
     }
   ]

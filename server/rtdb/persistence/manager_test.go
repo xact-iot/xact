@@ -327,3 +327,48 @@ func TestManagerStopFinalSave(t *testing.T) {
 		t.Errorf("expected 1 save on stop, got %d", count)
 	}
 }
+
+type blockingConfigDB struct {
+	*mockDB
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (db *blockingConfigDB) SaveConfig(ctx context.Context, org, name string, config json.RawMessage) error {
+	db.entered <- struct{}{}
+	<-db.release
+	return db.mockDB.SaveConfig(ctx, org, name, config)
+}
+
+func TestManagerSerializesSavesAndRetainsChangesDuringSave(t *testing.T) {
+	db := &blockingConfigDB{newMockDB(), make(chan struct{}, 2), make(chan struct{}, 2)}
+	ops := tree.NewTreeWithOperations(nil)
+	mgr := NewManager(db, ops, "default", time.Hour)
+	mgr.MarkDirty()
+	finished := make(chan error, 2)
+	go func() { finished <- mgr.Save(context.Background()) }()
+	<-db.entered
+	mgr.MarkDirty()
+	go func() { finished <- mgr.Save(context.Background()) }()
+	select {
+	case <-db.entered:
+		t.Fatal("configuration saves overlapped")
+	case <-time.After(50 * time.Millisecond):
+	}
+	db.release <- struct{}{}
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-db.entered:
+	case <-time.After(time.Second):
+		t.Fatal("change made during save was lost")
+	}
+	db.release <- struct{}{}
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	if db.getSaveCount() != 2 {
+		t.Fatalf("expected two saves, got %d", db.getSaveCount())
+	}
+}

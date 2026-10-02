@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -26,6 +27,9 @@ type publicWidgetSpec struct {
 		TagPath    string `json:"tagPath"`
 		MaxTagPath string `json:"maxTagPath"`
 		Layers     []struct {
+			ItemType            string `json:"itemType"`
+			RouteCoordinatesTag string `json:"routeCoordinatesTag"`
+			RouteNameTag        string `json:"routeNameTag"`
 			Enabled             bool   `json:"enabled"`
 			PathPattern         string `json:"pathPattern"`
 			IconRotationEnabled bool   `json:"iconRotationEnabled"`
@@ -83,6 +87,7 @@ func (s *Server) handlePublicDashboardData(w http.ResponseWriter, r *http.Reques
 	}
 
 	paths := make(map[string]struct{})
+	arrayPaths := make(map[string]struct{})
 	add := func(path string) {
 		path = strings.Trim(strings.TrimSpace(strings.SplitN(path, ":", 2)[0]), ".")
 		if path == "" || strings.ContainsAny(path, "*/\\ >") || strings.Contains(path, "..") {
@@ -120,6 +125,21 @@ func (s *Server) handlePublicDashboardData(w http.ResponseWriter, r *http.Reques
 					continue
 				}
 				for _, device := range s.expandPublicPattern(org, layer.PathPattern, 1000) {
+					if layer.ItemType == "route" {
+						coordinates := strings.TrimSpace(layer.RouteCoordinatesTag)
+						if coordinates == "" {
+							coordinates = "route.coordinates"
+						}
+						name := strings.TrimSpace(layer.RouteNameTag)
+						if name == "" {
+							name = "route.name"
+						}
+						coordinatePath := publicDeviceTag(org, device, coordinates)
+						add(coordinatePath)
+						arrayPaths[coordinatePath] = struct{}{}
+						add(publicDeviceTag(org, device, name))
+						continue
+					}
 					add(device + ".meta.lat")
 					add(device + ".meta.lon")
 					if layer.IconRotationEnabled && layer.IconRotationTag != "" {
@@ -143,6 +163,13 @@ func (s *Server) handlePublicDashboardData(w http.ResponseWriter, r *http.Reques
 	for _, path := range names {
 		leaf, err := s.tree.FindLeaf(path)
 		if err != nil {
+			// Native ingest stores coordinate arrays as numbered leaves under
+			// an array node. Publish the configured array as one snapshot value.
+			if _, ok := arrayPaths[path]; ok {
+				if coordinates, ok := s.publicRouteCoordinates(path); ok {
+					values[path] = publicTagValue{Value: coordinates}
+				}
+			}
 			continue
 		}
 		shared := leaf.GetShared()
@@ -154,6 +181,38 @@ func (s *Server) handlePublicDashboardData(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(values)
+}
+
+func (s *Server) publicRouteCoordinates(path string) ([]float64, bool) {
+	node, err := s.tree.FindNode(path)
+	if err != nil || !node.GetIsArray() {
+		return nil, false
+	}
+	children := node.GetChildren()
+	if len(children) < 4 || len(children)%2 != 0 {
+		return nil, false
+	}
+	coordinates := make([]float64, len(children))
+	for i := range coordinates {
+		leaf, err := s.tree.FindLeaf(path + "." + strconv.Itoa(i))
+		if err != nil {
+			return nil, false
+		}
+		var value float64
+		switch raw := leaf.GetAnyValue().(type) {
+		case float64:
+			value = raw
+		case int64:
+			value = float64(raw)
+		default:
+			return nil, false
+		}
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, false
+		}
+		coordinates[i] = value
+	}
+	return coordinates, true
 }
 
 func publicDeviceTag(org, device, tag string) string {

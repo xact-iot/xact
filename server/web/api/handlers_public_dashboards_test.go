@@ -102,3 +102,48 @@ func TestPublicDashboardRejectsUnsafeWidgets(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicDashboardSavesBuiltInRoutesAndPreservesAppearance(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.NewSQLiteDB(ctx, "file:public-routes-test?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	router := newDashboardTestRouter(db)
+	dashboard := postDashboard(t, router, map[string]any{"name": "Buses", "isPublic": true, "widgets": []any{}})
+	widgets := json.RawMessage(`[{"id":"map","type":"area-map-widget","config":{"layers":[{"id":"routes","enabled":false,"itemType":"route","pathPattern":"PUBLIC_BUS.PUBLIC_BUS_ROUTE.*","routeCoordinatesTag":"shape.points","routeNameTag":"meta.name","routeColors":["#ff0000","#00ff00"],"routeWidth":3,"routeZoom":12,"showAtZoom":14,"pluginConfig":{"secret":"hidden"}}]}}]`)
+	putDashboard(t, router, dashboard.ID, map[string]any{"widgets": widgets})
+	saved, err := db.GetDashboard(ctx, "default", dashboard.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, err := sqldb.PublicDashboard(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var specs []struct {
+		Config struct {
+			Layers []map[string]json.RawMessage `json:"layers"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(public.Widgets, &specs); err != nil {
+		t.Fatal(err)
+	}
+	layer := specs[0].Config.Layers[0]
+	for _, key := range []string{"itemType", "routeCoordinatesTag", "routeNameTag", "routeColors", "routeWidth", "routeZoom", "showAtZoom"} {
+		if _, ok := layer[key]; !ok {
+			t.Errorf("missing route setting %s", key)
+		}
+	}
+	if _, ok := layer["pluginConfig"]; ok {
+		t.Fatal("plugin config exposed")
+	}
+	saved.Widgets = json.RawMessage(strings.ReplaceAll(string(widgets), `"itemType":"route"`, `"itemType":"plugin"`))
+	if _, err := sqldb.PublicDashboard(saved); err == nil {
+		t.Fatal("plugin layer should still be rejected")
+	}
+}

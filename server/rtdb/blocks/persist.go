@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"time"
 
 	natspkg "github.com/xact-iot/xact/rtdb/nats"
 	"github.com/xact-iot/xact/rtdb/tree"
@@ -33,9 +34,8 @@ func persistKey(leaf tree.Leaf) string {
 	return strings.Join(parts, ".")
 }
 
-// Init restores the last-known value from the KV store. The restoration runs
-// in a goroutine so it executes after InitPipelineBlocks finishes and all
-// downstream blocks (e.g. publish) are fully initialised.
+// Init restores the saved, already processed value without replaying the live
+// pipeline or creating a goroutine and network writes for every restored tag.
 func (b *PersistBlock) Init(leaf tree.Leaf) {
 	store := natspkg.GetPersistStore()
 	if store == nil {
@@ -47,11 +47,11 @@ func (b *PersistBlock) Init(leaf tree.Leaf) {
 	if err != nil || entry == nil {
 		return
 	}
-	go func() {
-		if err := leaf.SetAnyValue(entry.Value); err != nil {
-			log.Printf("[persist] restore %s: %v", key, err)
-		}
-	}()
+	if err := leaf.RestoreValue(entry.Value, time.UnixMilli(entry.Timestamp)); err != nil {
+		log.Printf("[persist] restore %s: %v", key, err)
+		return
+	}
+	b.lastValues.Store(key, leaf.GetAnyValue())
 }
 
 func (b *PersistBlock) Close(_ tree.Leaf) {}

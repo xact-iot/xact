@@ -21,10 +21,11 @@ type Manager struct {
 	org      string
 	debounce time.Duration
 
-	mu    sync.Mutex
-	dirty bool
-	timer *time.Timer
-	done  chan struct{}
+	mu     sync.Mutex
+	saveMu sync.Mutex // Only one full-tree snapshot may be allocated at a time.
+	dirty  bool
+	timer  *time.Timer
+	done   chan struct{}
 }
 
 // NewManager creates a new persistence manager
@@ -58,6 +59,8 @@ func (m *Manager) MarkDirty() {
 
 // Save immediately serializes the tree and writes to the database
 func (m *Manager) Save(ctx context.Context) error {
+	m.saveMu.Lock()
+	defer m.saveMu.Unlock()
 	m.mu.Lock()
 	if !m.dirty {
 		m.mu.Unlock()
@@ -75,7 +78,9 @@ func (m *Manager) Save(ctx context.Context) error {
 		return fmt.Errorf("serialize tree: %w", err)
 	}
 
-	data, err := json.MarshalIndent(config, "", "   ")
+	// Database snapshots do not need formatting. Indenting this large document
+	// allocates several additional copies of the entire tree.
+	data, err := json.Marshal(config)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}

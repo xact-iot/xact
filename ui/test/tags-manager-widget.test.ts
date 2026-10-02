@@ -217,7 +217,72 @@ describe('tags-manager-widget search', () => {
     widget['searchQuery'] = '';
     childrenByPath['default.Area.Device'] = [];
     treeCallback?.('default.Area.Device', null);
+    vi.advanceTimersByTime(50);
     expect(widget.textContent).not.toContain('mode');
+  });
+
+  it('coalesces 400,000 descendant deletes into one refresh and resubscribes recreated tags', async () => {
+    seedTree();
+    vi.useFakeTimers();
+    let treeCallback: (path: string, data: any) => void = () => {};
+    mockStore.subscribeToTreeChanges.mockImplementation((_path: string, callback: typeof treeCallback) => {
+      treeCallback = callback;
+      return vi.fn();
+    });
+    const widget = document.createElement('tags-manager-widget') as any;
+    document.body.appendChild(widget);
+    await flushMicrotasks();
+    await flushMicrotasks();
+    widget.expandedNodes.add('default.Area');
+    widget.expandedNodes.add('default.Area.Device');
+    widget.rerender();
+    widget.subscribedPaths.add('default.Other.tag');
+    widget.valueCache.set('default.Other.tag', { value: 1 });
+    const render = vi.spyOn(widget, 'rerender');
+    childrenByPath['default.Area'] = [];
+    treeCallback('default.Area.Device', null);
+    for (let i = 0; i < 400_000; i++) treeCallback(`default.Area.Device.stop${i}.name`, null);
+    expect(render).not.toHaveBeenCalled();
+    expect(widget.pendingDeletedPaths.size).toBe(1);
+    vi.advanceTimersByTime(50);
+    expect(render).toHaveBeenCalledTimes(1);
+    expect(widget.textContent).not.toContain('temperature');
+    expect(widget.subscribedPaths.has('default.Area.Device.temperature')).toBe(false);
+    expect(widget.valueCache.has('default.Area.Device.temperature')).toBe(false);
+    expect(widget.valueCache.has('default.Other.tag')).toBe(true);
+    const subscriptions = mockStore.subscribe.mock.calls.length;
+    childrenByPath['default.Area'] = ['Device'];
+    treeCallback('default.Area.Device', {});
+    vi.advanceTimersByTime(50);
+    expect(mockStore.subscribe.mock.calls.length).toBeGreaterThan(subscriptions);
+    expect(widget.textContent).toContain('temperature');
+    treeCallback('default.Area.Device', {});
+    widget.remove();
+    vi.advanceTimersByTime(50);
+    expect(render).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows pending deletion, prevents duplicate requests, and restores controls on failure', async () => {
+    let rejectDelete: (error: Error) => void = () => {};
+    apiMock.deleteTag.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { rejectDelete = reject; }));
+    const widget = document.createElement('tags-manager-widget') as any;
+    document.body.appendChild(widget);
+    await flushMicrotasks();
+    widget.deleteTarget = { type: 'tag', path: 'default.Area.tag' };
+    widget.isDeleteConfirmOpen = true;
+    widget.rerender();
+    const deletion = widget.handleConfirmDelete();
+    expect(widget.querySelector('#delete-confirm-yes').textContent).toBe('Deleting…');
+    expect(widget.querySelector('#delete-confirm-yes').disabled).toBe(true);
+    expect(widget.querySelector('#delete-confirm-no').disabled).toBe(true);
+    await widget.handleConfirmDelete();
+    widget.closeDeleteConfirm();
+    expect(apiMock.deleteTag).toHaveBeenCalledTimes(1);
+    expect(widget.isDeleteConfirmOpen).toBe(true);
+    rejectDelete(new Error('blocked'));
+    await deletion;
+    expect(widget.querySelector('#delete-confirm-yes').disabled).toBe(false);
+    expect(widget.querySelector('#delete-confirm-yes').textContent).toBe('Delete');
   });
 
   it('pages large branches while keeping search across all tags', async () => {

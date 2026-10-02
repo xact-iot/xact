@@ -453,7 +453,8 @@ export async function updateDashboard(id: number, dashboard: Partial<Dashboard>)
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to update dashboard: ${response.status}`);
+    const detail = (await response.text().catch(() => '')).trim();
+    throw new ApiError(`Failed to update dashboard: ${response.status}${detail ? ` — ${detail}` : ''}`, response.status);
   }
 }
 

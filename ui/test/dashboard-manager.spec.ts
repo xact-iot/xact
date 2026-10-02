@@ -14,6 +14,90 @@ type DashboardRecord = {
   widgets: any[];
 };
 
+test('startup displays static widgets while data, timezone, live connection, and plugins are pending', async ({ page }) => {
+  const api = new MockDashboardAPI();
+  api.seedDashboard({ name: 'Welcome', widgets: [
+    { id: 'tree', type: 'status-table-widget', x: 0, y: 0, w: 24, h: 3, config: {} },
+    { id: 'welcome', type: 'html-widget', x: 0, y: 3, w: 24, h: 3, config: { html: 'Configured welcome' } },
+    { id: 'custom', type: 'startup-test-widget', x: 0, y: 6, w: 24, h: 3, config: {} },
+  ] });
+  await installAppMocks(page, api, []);
+  await page.route('**/xact/api/v1/plugins/map-layer', route => fulfillJSON(route, []));
+  await page.route('**/xact/api/v1/applications', route => fulfillJSON(route, []));
+  await page.route('**/xact/plugins/startup-test.js', route => route.fulfill({
+    contentType: 'text/javascript',
+    body: `window.XACT.registerWidget({ type: 'startup-test-widget', name: 'Startup test', icon: '', defaultW: 24, defaultH: 3 }, class extends HTMLElement { connectedCallback() { this.textContent = 'Plugin ready'; } });`,
+  }));
+  let snapshotRoute: Route | undefined;
+  let healthRoute: Route | undefined;
+  let pluginsRoute: Route | undefined;
+  await page.route('**/xact/api/v1/nodes**', route => { snapshotRoute = route; });
+  await page.route('**/xact/health', route => { healthRoute = route; });
+  await page.route('**/xact/api/v1/plugins/widgets', route => { pluginsRoute = route; });
+  // Leave credentials pending throughout initial display and refresh.
+  await page.route('**/xact/api/v1/system/nats-config', () => {});
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    snapshotRoute = healthRoute = pluginsRoute = undefined;
+    if (attempt === 0) await page.goto('./');
+    else await page.reload();
+    await expect(page.locator('app-sidebar nav')).toContainText('Welcome');
+    await expect(page.locator('dashboard-config-editor')).toBeHidden();
+    await expect(page.locator('html-widget')).toContainText('Configured welcome');
+    await expect(page.locator('#loading')).toBeHidden();
+    await expect(page.locator('status-table-widget')).toHaveCount(0);
+    await expect(page.locator('startup-test-widget')).toHaveCount(0);
+    await expect.poll(() => Boolean(snapshotRoute && healthRoute && pluginsRoute)).toBe(true);
+    await fulfillJSON(snapshotRoute!, { name: 'default', type: 'Organisation', children: [] });
+    await fulfillJSON(healthRoute!, { status: 'ok', timezone: 'UTC' });
+    await expect(page.locator('status-table-widget')).toBeVisible();
+    await expect(page.locator('startup-test-widget')).toHaveCount(0);
+    await fulfillJSON(pluginsRoute!, [{ name: 'startup-test', url: '/plugins/startup-test.js' }]);
+    await expect(page.locator('startup-test-widget')).toHaveText('Plugin ready');
+  }
+});
+
+test('area map shows nested bus stops and skips category coordinate requests', async ({ page }) => {
+  const api = new MockDashboardAPI();
+  const bounds = { north: 49.29, south: 49.27, east: -123.08, west: -123.15 };
+  api.seedDashboard({ name: 'Buses', widgets: [{
+    id: 'bus-map', type: 'area-map-widget', x: 0, y: 0, w: 24, h: 30,
+    config: { savedBounds: bounds, layers: [
+      { id: 'buses', name: 'Buses', pathPattern: 'PUBLIC_BUS.*', enabled: true, itemType: 'icon', defaultGlyph: 'B' },
+      { id: 'stops', name: 'Stops', pathPattern: 'PUBLIC_BUS.PUBLIC_BUS_STOP.*', enabled: true, itemType: 'icon', defaultGlyph: 'S' },
+    ] },
+  }] });
+  await installAppMocks(page, api, []);
+  await page.route('**/xact/api/v1/plugins/map-layer', route => fulfillJSON(route, []));
+  await page.route('**/xact/api/v1/applications', route => fulfillJSON(route, []));
+  await page.route('**/xact/api/v1/organisations/**', route => fulfillJSON(route, { area: bounds }));
+  const device = (name: string, lat: number, lon: number) => ({ name, type: 'node', children: [
+    { name: 'meta', type: 'node', children: [
+      { name: 'lat', type: 'leaf', value: lat },
+      { name: 'lon', type: 'leaf', value: lon },
+    ] },
+  ] });
+  await page.route('**/xact/api/v1/nodes**', route => fulfillJSON(route, { name: 'default', children: [
+    { name: 'PUBLIC_BUS', type: 'node', children: [
+      device('BUS-01', 49.28, -123.12),
+      { name: 'PUBLIC_BUS_STOP', type: 'node', children: Array.from({ length: 600 }, (_, i) => device(`Stop${i}`, 49.28 + i * 0.00001, -123.12)) },
+      { name: 'PUBLIC_BUS_ROUTE', type: 'node', children: [{ name: 'Route1', type: 'node', children: [] }] },
+    ] },
+  ] }));
+  const requestedTags: string[] = [];
+  page.on('request', request => {
+    if (request.url().includes('/tags/')) requestedTags.push(request.url());
+  });
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto(`./#${api.dashboard('Buses')!.id}`);
+  await expect(page.locator('area-map-widget .leaflet-marker-icon').filter({ hasText: 'B' })).toBeVisible();
+  // Cluster markers have a count; individual stop markers have the configured S.
+  await expect.poll(() => page.locator('area-map-widget .leaflet-marker-icon').count()).toBeGreaterThan(1);
+  expect(requestedTags.some(url => /PUBLIC_BUS_(STOP|ROUTE)\.meta\.(lat|lon)/.test(url))).toBe(false);
+  expect(errors).toEqual([]);
+});
+
 test('dashboard manager preserves widgets while creating, rearranging, moving, and renaming dashboards', async ({ page }) => {
   const api = new MockDashboardAPI();
   const calls: string[] = [];
@@ -188,6 +272,9 @@ test('dashboard editor retries save as update when create collides with existing
   await expect(page.locator('dashboard-container')).toBeVisible();
   await expect(page.locator('.xact-tab.active .xact-tab-title')).toHaveText(name);
 
+  // Visibility precedes the asynchronous dashboard fetch and grid setup.
+  await expect.poll(() => page.evaluate(() => Boolean((document.querySelector('dashboard-container') as any)?.grid))).toBe(true);
+
   await page.evaluate(async ({ dashboardName, dashboardWidgets, dashboardId }) => {
     const dashboard = document.querySelector('dashboard-container') as any;
     dashboard.dashboardName = dashboardName;
@@ -206,7 +293,7 @@ test('dashboard editor retries save as update when create collides with existing
     dashboard.widgets = dashboardWidgets;
     await dashboard.setDashboardMode('edit');
     dashboard.rerender();
-    dashboard.initGrid();
+    await dashboard.initGrid();
     dashboard.dirty = true;
     dashboard.updateSaveButton();
   }, { dashboardName: name, dashboardWidgets: widgets, dashboardId: api.dashboard(name)!.id });

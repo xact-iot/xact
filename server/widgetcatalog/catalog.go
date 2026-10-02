@@ -424,6 +424,7 @@ func areaMapHints() map[string]any {
 			"name":                  "string; shown in the map legend and layer editor",
 			"pathPattern":           "string; org-relative or absolute RTDB pattern. Use * as a complete path segment to enumerate full device node names, e.g. Sites.North.Pumps.*. Do not use partial wildcards such as AQ-B-*.",
 			"enabled":               "boolean; false hides the layer",
+			"showAtZoom":            "number; hide the whole layer below this map zoom, defaults to 0",
 			"itemType":              "icon, route, or plugin. Use route for built-in polylines from per-route tags.",
 			"routeCoordinatesTag":   "relative array tag path under each matched route node; defaults to route.coordinates",
 			"routeNameTag":          "relative name tag path; defaults to route.name",
