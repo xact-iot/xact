@@ -43,3 +43,19 @@ export function resolveMetricTagPath(tagPrefix: string, tagPath: string): string
   }
   return store.toAbsolute(joinPath(resolvedPrefix, cleanPath));
 }
+
+// The fallback device must be available before widgets resolve their tag paths.
+export async function hydrateWildcardPrefixes(configs: unknown[]): Promise<void> {
+  if (cleanPart(getUiStore().get('deviceName') || '')) return;
+  const parents = new Set<string>();
+  const visit = (config: any): void => {
+    if (!config || typeof config !== 'object') return;
+    if (typeof config.tagPrefix === 'string' && config.tagPrefix.includes('*')) {
+      const parent = cleanPart(config.tagPrefix.slice(0, config.tagPrefix.indexOf('*')));
+      if (parent) parents.add(parent);
+    }
+    for (const value of Object.values(config)) visit(value);
+  };
+  configs.forEach(visit);
+  await Promise.all([...parents].map(parent => getMirrorStore().ensureChildren(parent)));
+}

@@ -86,6 +86,10 @@ interface LayerConfig {
   /** Rotate the zoomed-out icon using a heading in degrees from each device. */
   iconRotationEnabled?: boolean;
   iconRotationTag?: string;
+  /** Icon movement duration in milliseconds; 0 moves instantly. Defaults to 2000. */
+  positionAnimationMs?: number;
+  /** Group nearby icons in dense layers. Defaults to true. */
+  clusteringEnabled?: boolean;
   /** Keep the zoomed-out icon's device label visible without hovering. */
   showZoomedTooltipAlways?: boolean;
   /** Template rendered as a div marker when zoom >= zoomThreshold; shown as hover tooltip when zoomed out. */
@@ -253,7 +257,7 @@ const MAP_CONFIG_OVERLAY_Z_INDEX = 19000;
 const DEVICE_LAYER_TOP_Z_INDEX = 900;
 const DEVICE_LAYER_STEP_Z_INDEX = 10;
 const DEVICE_LAYER_HOVER_Z_INDEX = 950;
-const DEVICE_POSITION_ANIMATION_MS = 2000;
+const DEFAULT_DEVICE_POSITION_ANIMATION_MS = 2000;
 const ROUTE_WIDTH_GROWTH_PER_ZOOM = 0.25;
 const ROUTE_TAG_DEFAULTS = {
   coordinates: 'route.coordinates',
@@ -432,6 +436,7 @@ export class AreaMapWidget extends BaseComponent {
   private orgMetaUnsub: (() => void) | undefined;
 
   // Observers that call invalidateSize() when the widget is resized or dragged
+  private mapGeneration = 0;
   private _resizeObserver: ResizeObserver | null = null;
   private _mutationObserver: MutationObserver | null = null;
 
@@ -524,8 +529,9 @@ export class AreaMapWidget extends BaseComponent {
   }
 
   private async loadAndInit(): Promise<void> {
+    const generation = this.mapGeneration;
     if (document.body.dataset.publicDashboard === 'true') {
-      await this.initMap();
+      await this.initMap(generation);
       return;
     }
     // Start the KV watcher immediately so device lat/lon values stream in while
@@ -538,13 +544,14 @@ export class AreaMapWidget extends BaseComponent {
       if (orgName) {
         // Fetch the current org directly so we always get the right one.
         const org = await getOrganisation(orgName);
+        if (generation !== this.mapGeneration) return;
         // Use the DB area as an immediate fallback while the RTDB values load.
         if (org.area) this.orgArea = org.area;
         // Subscribe to live meta-tag updates from the RTDB.
         this.syncOrgAreaFromStore(orgName);
       }
     } catch { /* ignore - we'll use default view */ }
-    await this.initMap();
+    if (generation === this.mapGeneration) await this.initMap(generation);
   }
 
   private async loadDashboards(): Promise<void> {
@@ -618,6 +625,9 @@ export class AreaMapWidget extends BaseComponent {
   // Attempt an immediate read; if values aren't ready yet, subscribe to
   // orgName.meta and apply the bounds as soon as they arrive.
   private syncOrgAreaFromStore(orgName: string): void {
+    void getMirrorStore().ensureChildren(`${orgName}.meta`).then(() => {
+      if (this.isConnected && this.readOrgAreaFromStore(orgName) && this.map) this.fitOrgBounds();
+    });
     if (this.readOrgAreaFromStore(orgName)) return;
 
     this.orgMetaUnsub = getMirrorStore().subscribeToTreeChanges(
@@ -652,6 +662,7 @@ export class AreaMapWidget extends BaseComponent {
   // ── Map lifecycle ──────────────────────────────────────────────────────────
 
   private destroyMap(): void {
+    this.mapGeneration++;
     // Disconnect layout observers
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
@@ -700,8 +711,9 @@ export class AreaMapWidget extends BaseComponent {
     }
   }
 
-  private async initMap(): Promise<void> {
+  private async initMap(generation = this.mapGeneration): Promise<void> {
     await loadLeaflet();
+    if (generation !== this.mapGeneration) return;
     const L = (window as any).L;
     if (!L) return;
 
@@ -736,6 +748,7 @@ export class AreaMapWidget extends BaseComponent {
 
     // Device layers
     await this.refreshLayers();
+    if (generation !== this.mapGeneration || !this.map) return;
 
     // Zoom change → update div icons and zoom indicator
     this.map.on('zoomend', () => this.onZoomChange());
@@ -744,7 +757,7 @@ export class AreaMapWidget extends BaseComponent {
     // Wait one paint frame so GridStack has applied the widget's CSS dimensions.
     // Without this, the container may still be 0×0 and fitBounds forces maxZoom (19).
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-    if (!this.map) return; // widget may have been destroyed during the frame wait
+    if (generation !== this.mapGeneration || !this.map) return; // widget may have been destroyed during the frame wait
 
     // Poll on every animation frame until the container dimensions have stabilised
     // (same non-zero size for two consecutive frames).  This handles both the initial
@@ -813,8 +826,10 @@ export class AreaMapWidget extends BaseComponent {
   // ── Device layers ──────────────────────────────────────────────────────────
 
   private async refreshLayers(): Promise<void> {
+    const generation = this.mapGeneration;
     await this.loadConfiguredIconSets();
     await this.loadConfiguredWidgetTypes();
+    if (generation !== this.mapGeneration) return;
     this.ensureDeviceLayerPanes();
 
     // Clear existing device layers
@@ -848,6 +863,7 @@ export class AreaMapWidget extends BaseComponent {
     this.layerUnsubs.clear();
 
     for (const layer of this.config.layers) {
+      if (generation !== this.mapGeneration) return;
       if (layer.enabled === false && layer.itemType !== 'route') continue;
       await this.initLayer(layer);
     }
@@ -908,6 +924,18 @@ export class AreaMapWidget extends BaseComponent {
   }
 
   private async initLayer(layer: LayerConfig): Promise<void> {
+    const generation = this.mapGeneration;
+    const snapshotStore = getMirrorStore();
+    const pattern = snapshotStore.toAbsolute(layer.pathPattern);
+    const fields = layer.itemType === 'route'
+      ? [layer.routeCoordinatesTag || ROUTE_TAG_DEFAULTS.coordinates, layer.routeNameTag || ROUTE_TAG_DEFAULTS.name]
+      : ['meta.lat', 'meta.lon', 'meta.name'];
+    if (this.hasMapLayerPlugin(layer) || layer.itemType === 'plugin') fields.push('meta');
+    for (const rule of layer.iconRules ?? []) if (rule.tag) fields.push(snapshotStore.baseTagPath(rule.tag));
+    if (layer.iconRotationEnabled && layer.iconRotationTag) fields.push(snapshotStore.baseTagPath(layer.iconRotationTag));
+    for (const match of (layer.divTemplate ?? '').matchAll(/\btag\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g)) fields.push(snapshotStore.baseTagPath(match[1]));
+    await snapshotStore.loadSelectedPaths(fields.map(field => this.resolveDeviceTag(pattern, field)));
+    if (generation !== this.mapGeneration || !this.map) return;
     const paths = this.resolvePattern(layer.pathPattern);
 
     // Subscribe to tree changes before adding existing devices.  The KV watcher
@@ -930,8 +958,8 @@ export class AreaMapWidget extends BaseComponent {
         const dense = this.denseIconLayers.get(layer.id);
         if (dense) {
           const wasPresent = dense.paths.has(devicePath);
-          if (data === null && isDirectDeviceChange) dense.paths.delete(devicePath);
-          else dense.paths.add(devicePath);
+          if (data === null && isDirectDeviceChange) { dense.paths.delete(devicePath); this.removeDevice(devicePath); }
+          else if (data !== null) dense.paths.add(devicePath);
           if (!wasPresent || data === null && isDirectDeviceChange || changedParts[1] === 'meta' && (changedParts[2] === 'lat' || changedParts[2] === 'lon')) {
             this.scheduleDenseIconRefresh();
           }
@@ -969,7 +997,7 @@ export class AreaMapWidget extends BaseComponent {
       for (const path of paths) this.addRoute(layer, path);
     } else if (this.hasMapLayerPlugin(layer)) {
       this.mountMapLayerPlugin(layer, paths);
-    } else if (layer.itemType === 'icon' && paths.length >= 500 && layer.pathPattern.trim().endsWith('.*')) {
+    } else if (layer.itemType === 'icon' && layer.clusteringEnabled !== false && paths.length >= 500 && layer.pathPattern.trim().endsWith('.*')) {
       this.denseIconLayers.set(layer.id, { layer, paths: new Set(paths), visible: new Set(), clusters: [] });
       // Coordinates may arrive after the REST snapshot (for example after a
       // driver restart or a tree move). Clustered stops outside the viewport
@@ -979,7 +1007,7 @@ export class AreaMapWidget extends BaseComponent {
         const coordinate = changedPath.match(/^(.*)\.meta\.(lat|lon)$/);
         if (!coordinate || !this.denseIconLayers.get(layer.id)?.paths.has(coordinate[1])) return;
         this.scheduleDenseIconRefresh();
-      });
+      }, false, ['*.meta.lat', '*.meta.lon']);
       const unsubs = this.layerUnsubs.get(layer.id) ?? [];
       unsubs.push(valueUnsub);
       this.layerUnsubs.set(layer.id, unsubs);
@@ -1129,8 +1157,8 @@ export class AreaMapWidget extends BaseComponent {
       }
       // With a parent snapshot, child updates cannot change route geometry.
     };
-    entry.unsubs.push(store.subscribeToTagValueChanges(coordinatePath, onCoordinates));
-    entry.unsubs.push(store.subscribeToTagValueChanges(namePath, () => this.scheduleRouteUpdate(entry)));
+    entry.unsubs.push(store.subscribeToTagValueChanges(coordinatePath, onCoordinates, false));
+    entry.unsubs.push(store.subscribeToTagValueChanges(namePath, () => this.scheduleRouteUpdate(entry), false));
     entry.unsubs.push(store.subscribeToTreeChanges(coordinatePath, onCoordinates));
     entry.unsubs.push(store.subscribeToTreeChanges(namePath, () => this.scheduleRouteUpdate(entry)));
     this.updateRoute(entry);
@@ -1321,6 +1349,7 @@ export class AreaMapWidget extends BaseComponent {
   }
 
   private async addDevice(layer: LayerConfig, devicePath: string): Promise<void> {
+    const generation = this.mapGeneration;
     if (this.devices.has(devicePath)) return;
     if (!this.map) return;
 
@@ -1329,7 +1358,10 @@ export class AreaMapWidget extends BaseComponent {
     // A wildcard may match category containers after a tree reorganisation.
     // Their children are devices, and there are no coordinates on the category.
     // Later structural events will retry a new device once its meta group exists.
-    if (store.getNodeType(devicePath) === 'node' && !store.listChildrenNames(devicePath).includes('meta')) return;
+    if (store.getNodeType(devicePath) === 'node' && !store.listChildrenNames(devicePath).includes('meta')) {
+      await store.ensureChildren(devicePath);
+      if (generation !== this.mapGeneration || !this.map || !store.listChildrenNames(devicePath).includes('meta')) return;
+    }
 
     const position = this.readDevicePosition(devicePath);
     if (!position) {
@@ -1393,7 +1425,10 @@ export class AreaMapWidget extends BaseComponent {
     // Subscribe to icon rule tags
     for (const rule of (layer.iconRules || [])) {
       const tagPath = this.resolveDeviceTag(devicePath, rule.tag);
-      if (!this.shouldSubscribeTagReference(tagPath)) continue;
+      // Projected snapshots and live device creation can deliver coordinates
+      // before this field. Keep watching explicitly configured rules even when
+      // the field is not yet present in its already known parent group.
+      if (!store.baseTagPath(tagPath)) continue;
       let initialCallback = true;
       const unsub = store.subscribeTagReference(tagPath, () => {
         if (initialCallback) {
@@ -1407,7 +1442,7 @@ export class AreaMapWidget extends BaseComponent {
 
     if (layer.iconRotationEnabled && layer.iconRotationTag?.trim()) {
       const tagPath = this.resolveDeviceTag(devicePath, layer.iconRotationTag);
-      if (this.shouldSubscribeTagReference(tagPath)) {
+      if (store.baseTagPath(tagPath)) {
         const unsub = store.subscribeTagReference(tagPath, () => {
           if (this.devices.has(devicePath)) this.updateDeviceMarker(devicePath);
         });
@@ -1504,12 +1539,20 @@ export class AreaMapWidget extends BaseComponent {
     const from = entry.displayedPosition;
     if (from[0] === position[0] && from[1] === position[1]) return;
 
+    const configuredDuration = Number(entry.layer.positionAnimationMs ?? DEFAULT_DEVICE_POSITION_ANIMATION_MS);
+    const duration = Number.isFinite(configuredDuration) ? Math.max(0, configuredDuration) : DEFAULT_DEVICE_POSITION_ANIMATION_MS;
+    if (duration === 0) {
+      entry.displayedPosition = position;
+      entry.marker.setLatLng(position);
+      return;
+    }
+
     const startedAt = performance.now();
     const animation: NonNullable<DeviceEntry['positionAnimation']> = { target: position };
     entry.positionAnimation = animation;
     const tick = (now: number): void => {
       if (this.devices.get(devicePath) !== entry || entry.positionAnimation !== animation) return;
-      const progress = Math.max(0, Math.min(1, (now - startedAt) / DEVICE_POSITION_ANIMATION_MS));
+      const progress = Math.max(0, Math.min(1, (now - startedAt) / duration));
       const eased = progress * progress * (3 - 2 * progress);
       const current: [number, number] = progress === 1 ? position : [
         from[0] + (position[0] - from[0]) * eased,
@@ -1537,6 +1580,12 @@ export class AreaMapWidget extends BaseComponent {
   }
 
   private removeDevice(devicePath: string): void {
+    if (this.selectedDevicePath === devicePath) {
+      this.selectedDevicePath = null;
+      this.clearClickPanelWidget();
+      const panel = this.querySelector<HTMLElement>('#device-panel');
+      if (panel) panel.style.display = 'none';
+    }
     const pendingUnsubs = this.pendingDeviceUnsubs.get(devicePath);
     if (pendingUnsubs) {
       pendingUnsubs.forEach(fn => fn());
@@ -2769,6 +2818,14 @@ export class AreaMapWidget extends BaseComponent {
             <input id="le-refresh-interval" type="number" value="${esc(String(layer.refreshInterval ?? 0))}" min="0" style="${fieldStyle}width:100%;">
           </div>
         </div>
+        <div style="margin-bottom:16px;">
+          <label style="${labelStyle}" for="le-position-animation-ms">Movement Animation (ms, 0 = instant)</label>
+          <input id="le-position-animation-ms" type="number" value="${esc(String(layer.positionAnimationMs ?? DEFAULT_DEVICE_POSITION_ANIMATION_MS))}" min="0" step="100" style="${fieldStyle}width:100%;">
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;margin-bottom:16px;font-size:13px;cursor:pointer;">
+          <input id="le-clustering-enabled" type="checkbox" ${layer.clusteringEnabled !== false ? 'checked' : ''}>
+          Enable clustering
+        </label>
         <label style="display:flex;align-items:center;gap:6px;margin:-6px 0 16px;font-size:13px;cursor:pointer;">
           <input id="le-show-zoomed-tooltip-always" type="checkbox" ${layer.showZoomedTooltipAlways ? 'checked' : ''}>
           Always show device label when zoomed out
@@ -3206,6 +3263,13 @@ export class AreaMapWidget extends BaseComponent {
     layer.offsetY = parseFloat(overlay.querySelector<HTMLInputElement>('#le-offset-y')?.value ?? '0') || 0;
 
     if (layer.itemType === 'icon') {
+      const clusteringInput = overlay.querySelector<HTMLInputElement>('#le-clustering-enabled');
+      if (clusteringInput) layer.clusteringEnabled = clusteringInput.checked;
+      const animationInput = overlay.querySelector<HTMLInputElement>('#le-position-animation-ms');
+      if (animationInput) {
+        const duration = animationInput.value.trim() ? Number(animationInput.value) : DEFAULT_DEVICE_POSITION_ANIMATION_MS;
+        layer.positionAnimationMs = Number.isFinite(duration) ? Math.max(0, duration) : DEFAULT_DEVICE_POSITION_ANIMATION_MS;
+      }
       layer.iconRotationEnabled = overlay.querySelector<HTMLInputElement>('#le-icon-rotation-enabled')?.checked ?? false;
       layer.iconRotationTag = (overlay.querySelector<HTMLInputElement>('#le-icon-rotation-tag')?.value ?? '').trim();
       layer.showZoomedTooltipAlways = overlay.querySelector<HTMLInputElement>('#le-show-zoomed-tooltip-always')?.checked ?? false;

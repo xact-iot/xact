@@ -168,3 +168,20 @@ test('local GTFS ZIP uploads and imports into the database-backed app', async ()
     await window.happyDOM.abort();
   }
 });
+
+test('phone assignment selects a concrete scheduled trip and shows lifecycle outcomes', async()=>{
+ const window=new Window({url:'http://localhost'});let Widget;
+ window.XACT={registerWidget:(_meta,klass)=>{Widget=klass;}};
+ window.eval(readFileSync(widgetFile,'utf8'));window.customElements.define('public-bus-config',Widget);
+ const widget=window.document.createElement('public-bus-config');widget.tab='sources';widget.permissions={read:true,manage:true};
+ widget.status={active:true,state:{revision:1},service_date:'2026-10-03',reporters:[{id:'driver',vehicle_id:'bus1',enabled:true}],sources:[],assignments:[],lifecycle:[{vehicle_id:'bus1',trip:{trip_id:'t1'},state:'inactive',reason:'inactivity',observed_at:'2026-10-03T10:00:00Z',confidence:'unavailable'}]};
+ const trip={trip_id:'t1',route_id:'r1',service_date:'2026-10-03',start_time:'10:00:00'};const calls=[];
+ widget.request=async(op,payload)=>{calls.push({op,payload});if(op==='list_routes')return{rows:[{id:'r1',name:'Harbour',short_name:'1'}],total:1};if(op==='list_trip_instances')return{rows:[{trip,departure:'10:00:00',destination:'Terminal',departure_at:1791021600000,end_at:1791022800000}],total:1};return{};};
+ await widget.loadAssignmentChoices();widget.render();
+ const reporter=widget.shadowRoot.querySelector('[data-assignment=reporter_id]');reporter.value='driver';await widget.assignmentChanged(reporter);
+ const selected=widget.shadowRoot.querySelector('[data-assignment=trip_key]');selected.value='t1/2026-10-03/10:00:00';await widget.assignmentChanged(selected);
+ widget.assignmentDraft.id='a1';let saved;widget.mutate=async(op,payload)=>{saved={op,payload};};widget.action('assignment');
+ assert.equal(saved.op,'set_assignment');assert.equal(saved.payload.vehicle_id,'bus1');assert.equal(JSON.stringify(saved.payload.trip),JSON.stringify(trip));assert.ok(saved.payload.valid_from<saved.payload.valid_to);
+ assert.match(widget.shadowRoot.textContent,/inactive inactivity/);assert.equal(calls.find(c=>c.op==='list_trip_instances').payload.route_id,'r1');
+ window.close();
+});

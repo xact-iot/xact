@@ -72,7 +72,7 @@ func TestPublicMapUsesEachBusHeadingAndKeepsLabelSetting(t *testing.T) {
 	}
 	dashboard := &sqldb.Dashboard{
 		Name: "Public buses", IsPublic: true,
-		Widgets: json.RawMessage(`[{"id":"map","type":"area-map-widget","x":0,"y":0,"w":12,"h":12,"config":{"layers":[{"id":"buses","enabled":true,"itemType":"icon","pathPattern":"PUBLIC_BUS.*","iconRotationEnabled":true,"iconRotationTag":"PUBLIC_BUS.BUS-01.meta.orientation","showZoomedTooltipAlways":true,"zoomWidgetType":"html-widget"}]}}]`),
+		Widgets: json.RawMessage(`[{"id":"map","type":"area-map-widget","x":0,"y":0,"w":12,"h":12,"config":{"layers":[{"id":"buses","enabled":true,"itemType":"icon","pathPattern":"PUBLIC_BUS.*","iconRotationEnabled":true,"iconRotationTag":"PUBLIC_BUS.BUS-01.meta.orientation","showZoomedTooltipAlways":true,"positionAnimationMs":8000,"clusteringEnabled":false,"zoomWidgetType":"html-widget"}]}}]`),
 	}
 	if err := db.CreateDashboard(context.Background(), "default", dashboard); err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestPublicMapUsesEachBusHeadingAndKeepsLabelSetting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(public.Widgets), `"showZoomedTooltipAlways":true`) || strings.Contains(string(public.Widgets), "html-widget") {
+	if !strings.Contains(string(public.Widgets), `"clusteringEnabled":false`) || !strings.Contains(string(public.Widgets), `"positionAnimationMs":8000`) || !strings.Contains(string(public.Widgets), `"showZoomedTooltipAlways":true`) || strings.Contains(string(public.Widgets), "html-widget") {
 		t.Fatalf("public layer config = %s", public.Widgets)
 	}
 

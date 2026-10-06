@@ -35,6 +35,8 @@ const treeDialogMock = vi.hoisted(() => ({
 }));
 
 const mockStore = {
+  ensureChildren: vi.fn(async () => {}),
+  loadSelectedPaths: vi.fn(async () => {}),
   startKvWatch: vi.fn(),
   toAbsolute: vi.fn((path: string) => path.startsWith('default.') ? path : `default.${path}`),
   toRelative: vi.fn((path: string) => path.startsWith('default.') ? path.slice('default.'.length) : path),
@@ -254,6 +256,17 @@ describe('area-map-widget coordinate loading', () => {
     delete (window as any).XACT;
   });
 
+  it('cancels map initialization when the widget disconnects while layers load', async () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.render();
+    const map = createMapMock();
+    (window as any).L.map.mockReturnValue(map);
+    vi.spyOn(widget, 'refreshLayers').mockImplementation(async () => widget.destroyMap());
+    await expect(widget.initMap()).resolves.toBeUndefined();
+    expect(map.on).not.toHaveBeenCalled();
+    expect(map.remove).toHaveBeenCalled();
+  });
+
   it('sets a view before loading layers that request map bounds', async () => {
     const widget = document.createElement('area-map-widget') as any;
     widget.render();
@@ -401,6 +414,43 @@ describe('area-map-widget coordinate loading', () => {
     widget.clearDenseIconLayers();
   });
 
+  it('adds individual markers for a dense layer when clustering is disabled', async () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock();
+    const names = Array.from({ length: 500 }, (_, i) => `bus${i}`);
+    mockStore.listChildrenNames.mockImplementation((path: string) => path === 'default.PUBLIC_BUS.BUSES' ? names : []);
+    const addDevice = vi.spyOn(widget, 'addDevice').mockResolvedValue(undefined);
+    const busLayer = { ...layer, pathPattern: 'PUBLIC_BUS.BUSES.*', clusteringEnabled: false };
+    await widget.initLayer(busLayer);
+    expect(widget.denseIconLayers.size).toBe(0);
+    expect(addDevice).toHaveBeenCalledTimes(500);
+    expect(addDevice).toHaveBeenCalledWith(busLayer, 'default.PUBLIC_BUS.BUSES.bus0');
+    expect(addDevice).toHaveBeenCalledWith(busLayer, 'default.PUBLIC_BUS.BUSES.bus499');
+    const onChange = mockStore.subscribeToTreeChanges.mock.calls.find(([path]: [string]) => path === 'default.PUBLIC_BUS.BUSES')![1];
+    onChange('default.PUBLIC_BUS.BUSES.bus500', {});
+    expect(addDevice).toHaveBeenLastCalledWith(busLayer, 'default.PUBLIC_BUS.BUSES.bus500');
+  });
+
+  it('shows and saves the clustering option in the icon layer editor', () => {
+    const widget = document.createElement('area-map-widget') as any;
+    const editedLayer = { ...layer };
+    widget.config.layers = [editedLayer];
+    widget.cfgEditLayerId = editedLayer.id;
+    const overlay = document.createElement('div');
+    overlay.innerHTML = widget.renderConfigPanelHtml();
+    const input = overlay.querySelector<HTMLInputElement>('#le-clustering-enabled')!;
+    expect(input.checked).toBe(true);
+    input.checked = false;
+    widget.collectLayerFromPanel(overlay);
+    expect(editedLayer).toMatchObject({ clusteringEnabled: false });
+    overlay.innerHTML = widget.renderConfigPanelHtml();
+    const restoredInput = overlay.querySelector<HTMLInputElement>('#le-clustering-enabled')!;
+    expect(restoredInput.checked).toBe(false);
+    restoredInput.checked = true;
+    widget.collectLayerFromPanel(overlay);
+    expect(editedLayer).toMatchObject({ clusteringEnabled: true });
+  });
+
   it('renders clustered stops under a nested root when coordinate values arrive after the snapshot', async () => {
     vi.useFakeTimers();
     const widget = document.createElement('area-map-widget') as any;
@@ -421,7 +471,7 @@ describe('area-map-widget coordinate loading', () => {
     await widget.initLayer(stopLayer);
     await vi.advanceTimersByTimeAsync(75);
     expect((window as any).L.marker).not.toHaveBeenCalled();
-    expect(mockStore.subscribeToTagValueChanges).toHaveBeenCalledWith(root, expect.any(Function));
+    expect(mockStore.subscribeToTagValueChanges).toHaveBeenCalledWith(root, expect.any(Function), false, ['*.meta.lat', '*.meta.lon']);
     const onValue = mockStore.subscribeToTagValueChanges.mock.calls.at(-1)![1] as (path: string) => void;
     const unsubscribe = mockStore.subscribeToTagValueChanges.mock.results.at(-1)!.value;
     coordinatesReady = true;
@@ -889,7 +939,7 @@ describe('area-map-widget coordinate loading', () => {
     expect(marker.setLatLng).toHaveBeenCalledWith([4.7, 48.3]);
   });
 
-  it('eases movement over two seconds, retargets smoothly, and cancels on removal', async () => {
+  it.each([{ duration: undefined, scale: 1 }, { duration: 8000, scale: 4 }])('uses movement duration $duration, retargets smoothly, and cancels on removal', async ({ duration, scale }) => {
     let now = 100;
     vi.spyOn(performance, 'now').mockImplementation(() => now);
     const frames = new Map<number, FrameRequestCallback>();
@@ -901,6 +951,7 @@ describe('area-map-widget coordinate loading', () => {
     }) as any;
     globalThis.cancelAnimationFrame = vi.fn((id: number) => { frames.delete(id); }) as any;
     const advanceFrame = (timestamp: number) => {
+      timestamp = 100 + (timestamp - 100) * scale;
       now = timestamp;
       const [id, callback] = frames.entries().next().value!;
       frames.delete(id);
@@ -923,7 +974,7 @@ describe('area-map-widget coordinate loading', () => {
     });
     const widget = document.createElement('area-map-widget') as any;
     widget.map = { getPane: vi.fn(() => ({ style: {} })), getZoom: vi.fn(() => 10) };
-    await widget.addDevice(layer, devicePath);
+    await widget.addDevice({ ...layer, positionAnimationMs: duration }, devicePath);
     const marker = widget.devices.get(devicePath).marker;
 
     lat = 10;
@@ -954,6 +1005,40 @@ describe('area-map-widget coordinate loading', () => {
     expect(frames.size).toBe(1);
     widget.removeDevice(devicePath);
     expect(frames.size).toBe(0);
+  });
+
+  it('moves instantly and cancels an existing animation when the duration is zero', () => {
+    const widget = document.createElement('area-map-widget') as any;
+    const devicePath = 'default.Buses.bus';
+    const entry = {
+      layer: { ...layer, positionAnimationMs: 0 },
+      marker: { setLatLng: vi.fn() },
+      displayedPosition: [0, 0],
+      positionAnimation: { frame: 17, target: [5, 5] },
+    };
+    widget.devices.set(devicePath, entry);
+    mockStore.getNodeValue.mockImplementation((path: string) => path.endsWith('.lat') ? 10 : 20);
+    widget.updateDevicePosition(devicePath);
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(17);
+    expect(entry.marker.setLatLng).toHaveBeenCalledWith([10, 20]);
+    expect(entry.displayedPosition).toEqual([10, 20]);
+    expect(entry.positionAnimation).toBeUndefined();
+  });
+
+  it('shows and saves the movement duration in the icon layer editor', () => {
+    const widget = document.createElement('area-map-widget') as any;
+    const editedLayer = { ...layer };
+    widget.config.layers = [editedLayer];
+    widget.cfgEditLayerId = editedLayer.id;
+    const overlay = document.createElement('div');
+    overlay.innerHTML = widget.renderConfigPanelHtml();
+    const input = overlay.querySelector<HTMLInputElement>('#le-position-animation-ms')!;
+    expect(input.value).toBe('2000');
+    for (const duration of ['8000', '0']) {
+      input.value = duration;
+      widget.collectLayerFromPanel(overlay);
+      expect(editedLayer).toMatchObject({ positionAnimationMs: Number(duration) });
+    }
   });
 
   it('resolves wildcard patterns recursively and subscribes icon-rule tags', async () => {
@@ -1006,6 +1091,45 @@ describe('area-map-widget coordinate loading', () => {
     widget.removeDevice('default.LA_LongBeach.AirQuality.AQ-B-0149');
     expect(unsub).toHaveBeenCalled();
     expect(marker.remove).toHaveBeenCalled();
+  });
+
+  it('recovers an offline icon when online arrives after coordinates in a known meta group', async () => {
+    const devicePath = 'default.PUBLIC_BUS.BUSES.bus_2504_8c0da908476a4044fbcc2627';
+    let online: boolean | undefined;
+    let ruleCallback: (() => void) | undefined;
+    const unsub = vi.fn();
+    mockStore.getNodeType.mockImplementation((path: string) => path === devicePath + '.meta.online' ? 'unknown' : 'node');
+    mockStore.listChildrenNames.mockImplementation((path: string) => path === devicePath ? ['meta'] : []);
+    mockStore.getNodeValue.mockImplementation((path: string) => {
+      if (path.endsWith('.meta.lat')) return 49.28;
+      if (path.endsWith('.meta.lon')) return -123.10;
+      return undefined;
+    });
+    mockStore.resolveTagReference.mockImplementation((path: string) => path.endsWith('.meta.online') ? online : undefined);
+    mockStore.subscribeTagReference.mockImplementation((path: string, callback: () => void) => {
+      if (path.endsWith('.meta.online')) ruleCallback = callback;
+      callback();
+      return unsub;
+    });
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock();
+    await widget.addDevice({
+      ...layer,
+      defaultGlyph: 'BUS',
+      iconRules: [{ tag: 'meta.online', cond: 'ne', value: 'true', glyph: 'OFF' }],
+    }, devicePath);
+    const marker = (window as any).L.marker.mock.results[0].value;
+    expect(marker.options.icon.options.html).toContain('OFF');
+    expect(ruleCallback).toBeDefined();
+    online = true;
+    ruleCallback?.();
+    expect(marker.options.icon.options.html).toContain('BUS');
+    expect(marker.options.icon.options.html).not.toContain('OFF');
+    online = false;
+    ruleCallback?.();
+    expect(marker.options.icon.options.html).toContain('OFF');
+    widget.removeDevice(devicePath);
+    expect(unsub).toHaveBeenCalled();
   });
 
   it('rotates the icon from live degree tags without rotating the zoomed widget', async () => {
@@ -2062,4 +2186,29 @@ describe('area-map-widget coordinate loading', () => {
       pluginConfig: {},
     });
   });
+  it('removes a deleted bus from dense paths and closes its detail panel during cascade notifications', async () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.render();
+    widget.map = createMapMock();
+    mockStore.listChildrenNames.mockImplementation((path: string) => path === 'default.PUBLIC_BUS.BUSES' ? ['bus_session', ...Array.from({length:499}, (_,i)=>'bus'+i)] : []);
+    vi.spyOn(widget, 'addDevice').mockResolvedValue(undefined);
+    const busLayer = { ...layer, id: 'buses', pathPattern: 'PUBLIC_BUS.BUSES.*', clusteringEnabled: true };
+    await widget.initLayer(busLayer);
+    const path = 'default.PUBLIC_BUS.BUSES.bus_session';
+    widget.selectedDevicePath = path;
+    const panel = widget.querySelector('#device-panel');
+    panel.style.display = 'flex';
+    const body = document.createElement('div');body.id='dp-body';body.textContent='Old trip';panel.append(body);
+    const subscription = mockStore.subscribeToTreeChanges.mock.calls.find(([parent]: any[]) => parent === 'default.PUBLIC_BUS.BUSES');
+    const callback = subscription![1] as any;
+    callback(path, null);
+    callback(path + '.meta.lat', null);
+    callback(path + '.meta.lon', null);
+    expect(widget.denseIconLayers.get('buses').paths.has(path)).toBe(false);
+    expect(widget.selectedDevicePath).toBe(null);
+    expect(panel.style.display).toBe('none');
+    expect(body.textContent).toBe('');
+    widget.destroyMap();
+  });
+
 });

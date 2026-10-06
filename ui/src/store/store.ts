@@ -189,10 +189,24 @@ export class MirrorStore {
     private nc: nats.NatsConnection | null = null;
     private root: Node | null = null;
     private desiredTagValuePaths: Set<string> = new Set();
+    private tagValueReferenceCounts = new Map<string, number>();
+    private descendantValueReferences = new Map<string, number>();
+    private selectedValueReferences = new Map<string, number>();
+    private loadedChildrenPaths = new Set<string>();
+    private treeLoads = new Map<string, Promise<void>>();
+    public searchTruncated = false;
     private tagValuePrefixSubscriptions: Map<string, Set<TagValueChangeCallback>> = new Map();
     private watchedTagValuePaths: Map<string, nats.Subscription> = new Map();
-    private tagValueSubscription: nats.Subscription | null = null;
+    private tagValueSyncQueued = false;
+    private pendingValuePaths = new Set<string>();
+    private rebuildValueSubscriptions = true;
+    private valueCoverage: string[][] = [];
     private hydratedTagValuePaths: Set<string> = new Set();
+    private unwatchedValueTimes = new Map<string, number>();
+    private tagMetadataLoads: Map<Path, Promise<boolean>> = new Map();
+    private tagMetadataQueue: Array<() => void> = [];
+    private activeTagMetadataLoads = 0;
+    private readonly maxTagMetadataLoads = 6;
     private treeSubscriptions: Map<string, Set<TreeChangeCallback>> = new Map();
     private treeSubscriptionsActive: boolean = false;
     private treeSubscription: nats.Subscription | null = null;
@@ -227,8 +241,7 @@ export class MirrorStore {
                 this.watchTagValuePath(path);
                 this.hydrateTagValuePath(path);
             }
-            const prefix = this.tagValuePrefixSubscriptions.keys().next().value;
-            if (prefix) this.watchTagValuePath(prefix);
+            this.syncTagValueSubscriptions();
         } catch (err) {
             this.setNatsConnectionState('disconnected');
             console.error("Error connecting:", err);
@@ -289,10 +302,7 @@ export class MirrorStore {
             sub.unsubscribe();
         }
         this.watchedTagValuePaths.clear();
-        if (this.tagValueSubscription) {
-            this.tagValueSubscription.unsubscribe();
-            this.tagValueSubscription = null;
-        }
+        this.rebuildValueSubscriptions = true;
         this.hydratedTagValuePaths.clear();
 
         if (this.nc) {
@@ -340,7 +350,7 @@ export class MirrorStore {
             connected: Boolean(this.nc),
             org: this.orgName,
             desiredTagValuePaths: Array.from(this.desiredTagValuePaths),
-            tagValueSubscription: Boolean(this.tagValueSubscription),
+            tagValueSubscription: this.watchedTagValuePaths.size > 0,
             hydratedTagValuePaths: Array.from(this.hydratedTagValuePaths),
         };
         console.log('[xact:store:probe] state', state);
@@ -368,12 +378,23 @@ export class MirrorStore {
             currentNode = currentNode.getOrCreateChild(element);
         }
 
-        return currentNode.subscribe(callback);
+        const unsubscribe = currentNode.subscribe(callback);
+        this.tagValueReferenceCounts.set(path, (this.tagValueReferenceCounts.get(path) ?? 0) + 1);
+        let active = true;
+        return () => {
+            if (!active) return;
+            active = false;
+            unsubscribe();
+            const count = (this.tagValueReferenceCounts.get(path) ?? 1) - 1;
+            if (count) this.tagValueReferenceCounts.set(path, count);
+            else { this.tagValueReferenceCounts.delete(path); this.desiredTagValuePaths.delete(path); this.unwatchedValueTimes.set(path, Date.now()); }
+            this.scheduleTagValueSubscriptions(path);
+        };
     }
 
     // Observe live values below a path without hydrating every child tag.
     // The initial subtree is already loaded by the application's REST snapshot.
-    public subscribeToTagValueChanges(prefix: Path, callback: TagValueChangeCallback): () => void {
+    public subscribeToTagValueChanges(prefix: Path, callback: TagValueChangeCallback, descendants = true, fields: string[] = []): () => void {
         if (!prefix || this.orgName && prefix.split('.')[0] !== this.orgName) return () => {};
         let callbacks = this.tagValuePrefixSubscriptions.get(prefix);
         if (!callbacks) {
@@ -381,10 +402,29 @@ export class MirrorStore {
             this.tagValuePrefixSubscriptions.set(prefix, callbacks);
         }
         callbacks.add(callback);
-        this.watchTagValuePath(prefix);
+        for (const field of fields) {
+            const path = `${prefix}.${field}`;
+            this.selectedValueReferences.set(path, (this.selectedValueReferences.get(path) ?? 0) + 1);
+        }
+        if (descendants) this.descendantValueReferences.set(prefix, (this.descendantValueReferences.get(prefix) ?? 0) + 1);
+        this.scheduleTagValueSubscriptions(prefix, descendants || fields.length > 0);
+        let active = true;
         return () => {
+            if (!active) return;
+            active = false;
+            for (const field of fields) {
+                const path = `${prefix}.${field}`;
+                const count = (this.selectedValueReferences.get(path) ?? 1) - 1;
+                if (count) this.selectedValueReferences.set(path, count); else this.selectedValueReferences.delete(path);
+            }
             callbacks!.delete(callback);
             if (callbacks!.size === 0) this.tagValuePrefixSubscriptions.delete(prefix);
+            if (descendants) {
+                const count = (this.descendantValueReferences.get(prefix) ?? 1) - 1;
+                if (count) this.descendantValueReferences.set(prefix, count);
+                else this.descendantValueReferences.delete(prefix);
+            }
+            this.scheduleTagValueSubscriptions(prefix, descendants || fields.length > 0);
         };
     }
 
@@ -640,15 +680,41 @@ export class MirrorStore {
         return currentNode.getIsArray();
     }
 
+    /** Load only this branch's immediate children, shared across widgets. */
+    public ensureChildren(path: Path = ''): Promise<void> {
+        if (!getCurrentUser()) return Promise.resolve();
+        if (!this.orgName) this.orgName = getCurrentUser()?.tenant_id ?? 'default';
+        const absolute = path ? this.toAbsolute(path) : this.orgName;
+        if (this.loadedChildrenPaths.has(absolute)) return Promise.resolve();
+        const pending = this.treeLoads.get(absolute);
+        if (pending) return pending;
+        const load = this.loadTreeFromAPI(absolute, 0).finally(() => this.treeLoads.delete(absolute));
+        this.treeLoads.set(absolute, load);
+        return load;
+    }
+
+    public async loadMatchingTags(search: string, status: string | null): Promise<void> {
+        await this.loadTreeFromAPI('', -1, undefined, { search, status: status ?? '' });
+    }
+
+    /** Project the requested fields without mirroring unrelated device tags. */
+    public async loadSelectedPaths(paths: string[]): Promise<void> {
+        if (!paths.length || !getCurrentUser()) return;
+        if (!this.orgName) this.orgName = getCurrentUser()?.tenant_id ?? 'default';
+        const selected = [...new Set(paths.map(path => this.toRelative(path)))];
+        for (let index = 0; index < selected.length; index += 128) await this.loadTreeFromAPI('', -1, selected.slice(index, index + 128));
+    }
+
     // Load tree structure and metadata from REST API recursively
     // When depth is specified, fetches that many levels of children in a single request
     // (depth=-1 fetches entire subtree). When depth is undefined, uses recursive per-node fetching.
-    public async loadTreeFromAPI(path: Path = '', depth?: number): Promise<void> {
+    public async loadTreeFromAPI(path: Path = '', depth?: number, select?: string[], filter?: { search: string; status: string; limit?: number }): Promise<void> {
         // REST hydration can precede live connection setup. Scope subscriptions
         // and relative widget paths to the authenticated org immediately.
         if (!path) this.orgName = getCurrentUser()?.tenant_id ?? 'default';
         try {
-            const data = await loadNode(path, depth);
+            const data = filter ? await loadNode(path, depth, select, filter) : select ? await loadNode(path, depth, select) : await loadNode(path, depth);
+            if (filter) this.searchTruncated = !!data.truncated;
 
             // When loading the root (''), the server redirects to the user's org
             // root node. Use the response name as the effective path so children
@@ -672,6 +738,7 @@ export class MirrorStore {
             currentNode.setNodeType('node');
             if (data.isArray) currentNode.setIsArray(true);
 
+            if (!select && !filter) this.loadedChildrenPaths.add(effectivePath);
             // Process children
             if (data.children) {
                 for (const child of data.children) {
@@ -697,11 +764,12 @@ export class MirrorStore {
                         if (childShared) currentNode.setShared(childShared);
                         currentNode.setNodeType('node');
                         if (child.isArray) currentNode.setIsArray(true);
+                        if (child.value !== undefined) { currentNode.setStatus(child.status ?? ''); currentNode.setValue(child.value); }
 
                         // If depth was specified, children are already included in response
                         // Process them recursively using the same depth (don't decrement for nested)
                         if (depth !== undefined && child.children) {
-                            this.processChildrenRecursive(currentNode, child.children, depth);
+                            this.processChildrenRecursive(currentNode, child.children, depth, childPath);
                         }
 
                         // For nodes, recurse if no depth limit was specified
@@ -718,17 +786,13 @@ export class MirrorStore {
 
     // Process children recursively from an already-fetched response (no more API calls)
     // maxDepth: -1 means infinite (all descendants), 0 means no children, etc.
-    private processChildrenRecursive(parentNode: Node, children: any[], maxDepth: number): void {
+    private processChildrenRecursive(parentNode: Node, children: any[], maxDepth: number, parentPath: Path): void {
         for (const child of children) {
             const childNode = parentNode.getOrCreateChild(child.name);
 
+            const childPath = `${parentPath}.${child.name}`;
             if (child.type === 'leaf') {
-                if (child.config) childNode.setConfig(child.config);
-                if (child.shared) childNode.setShared(child.shared);
-                if (child.timestamp) childNode.setTimestamp(child.timestamp);
-                childNode.setStatus('status' in child ? child.status : '');
-                if (child.value !== undefined) childNode.setValue(child.value);
-                childNode.setNodeType('leaf');
+                this.applyTagMetadataToNode(childPath, child);
             } else {
                 // It's a node
                 if (child.config) childNode.setConfig(child.config);
@@ -736,12 +800,13 @@ export class MirrorStore {
                 if (childShared) childNode.setShared(childShared);
                 childNode.setNodeType('node');
                 if (child.isArray) childNode.setIsArray(true);
+                if (child.value !== undefined) { childNode.setStatus(child.status ?? ''); childNode.setValue(child.value); }
 
                 // Recurse if we haven't hit maxDepth (and there are children to process)
                 if (maxDepth !== 0 && child.children && child.children.length > 0) {
                     // For maxDepth=-1, keep going; for positive maxDepth, we pass maxDepth-1
                     const nextDepth = maxDepth === -1 ? -1 : maxDepth - 1;
-                    this.processChildrenRecursive(childNode, child.children, nextDepth);
+                    this.processChildrenRecursive(childNode, child.children, nextDepth, childPath);
                 }
             }
         }
@@ -762,14 +827,48 @@ export class MirrorStore {
         if (shared) currentNode.setShared(shared);
         if (data.timestamp) currentNode.setTimestamp(data.timestamp);
         currentNode.setStatus('status' in data ? data.status : '');
-        if (data.value !== undefined) currentNode.setValue(data.value);
+        if (data.value !== undefined) {
+            this.hydratedTagValuePaths.add(path);
+            this.unwatchedValueTimes.delete(path);
+            currentNode.setValue(data.value);
+        }
         currentNode.setNodeType('leaf');
     }
 
     // Load metadata for a tag (leaf node)
-    private async loadTagMetadata(path: Path, skipIfNewerThanTimestamp?: number): Promise<void> {
+    private loadTagMetadata(path: Path, skipIfNewerThanTimestamp?: number): Promise<boolean> {
+        const pending = this.tagMetadataLoads.get(path);
+        if (pending) return pending;
+
+        // A layer rebuild can subscribe to thousands of tags in one turn.
+        // Share requests for the same tag and bound concurrent HTTP requests.
+        const request = new Promise<boolean>(resolve => {
+            this.tagMetadataQueue.push(() => {
+                this.activeTagMetadataLoads++;
+                void this.fetchTagMetadata(path, skipIfNewerThanTimestamp).then(success => {
+                    this.tagMetadataLoads.delete(path);
+                    this.activeTagMetadataLoads--;
+                    resolve(success);
+                    this.drainTagMetadataQueue();
+                });
+            });
+        });
+        this.tagMetadataLoads.set(path, request);
+        this.drainTagMetadataQueue();
+        return request;
+    }
+
+    private drainTagMetadataQueue(): void {
+        while (this.activeTagMetadataLoads < this.maxTagMetadataLoads && this.tagMetadataQueue.length) {
+            this.tagMetadataQueue.shift()!();
+        }
+    }
+
+    private async fetchTagMetadata(path: Path, skipIfNewerThanTimestamp?: number): Promise<boolean> {
         try {
+            if (skipIfNewerThanTimestamp !== undefined && !this.desiredTagValuePaths.has(path)) return false;
             const data = await loadTag(path);
+            if (skipIfNewerThanTimestamp !== undefined && !this.desiredTagValuePaths.has(path)) return false;
 
             // Get or create the node for this path
             const pathElements = path.split('.');
@@ -779,7 +878,7 @@ export class MirrorStore {
             }
 
             if (skipIfNewerThanTimestamp !== undefined && currentNode.getTimestamp() > skipIfNewerThanTimestamp) {
-                return;
+                return true;
             }
 
             // Set attributes for this tag
@@ -790,12 +889,20 @@ export class MirrorStore {
             currentNode.setStatus('status' in data ? data.status : '');
             if (data.value !== undefined) currentNode.setValue(data.value);
             currentNode.setNodeType('leaf');
+            if (data.value !== undefined) this.hydratedTagValuePaths.add(path);
+            return true;
         } catch (error) {
             console.error(`Failed to load tag metadata for ${path}:`, error);
+            return false;
         }
     }
 
     private hydrateTagValuePath(path: Path): void {
+        const lastUnwatched = this.unwatchedValueTimes.get(path);
+        if (lastUnwatched !== undefined && Date.now() - lastUnwatched >= 5000) {
+            this.hydratedTagValuePaths.delete(path);
+            this.unwatchedValueTimes.delete(path);
+        }
         if (!this.nc || !path || this.hydratedTagValuePaths.has(path)) {
             return;
         }
@@ -806,7 +913,9 @@ export class MirrorStore {
 
         this.hydratedTagValuePaths.add(path);
         const timestampBeforeHydrate = this.getNodeTimestamp(path);
-        this.loadTagMetadata(path, timestampBeforeHydrate).catch(() => {
+        this.loadTagMetadata(path, timestampBeforeHydrate).then(success => {
+            if (!success) this.hydratedTagValuePaths.delete(path);
+        }).catch(() => {
             this.hydratedTagValuePaths.delete(path);
         });
     }
@@ -841,6 +950,10 @@ export class MirrorStore {
             }
         }
         return added;
+    }
+
+    public setAuthenticatedOrg(): void {
+        this.orgName = getCurrentUser()?.tenant_id ?? 'default';
     }
 
     /** Returns the current organisation name (e.g. "default"). */
@@ -893,6 +1006,12 @@ export class MirrorStore {
             this.treeSubscriptions.set(path, new Set());
         }
         this.treeSubscriptions.get(path)!.add(callback);
+        if (path && this.getNodeType(path) !== 'leaf' && !this.getIsArray(path)) {
+            void this.ensureChildren(path).then(() => {
+                if (!this.treeSubscriptions.get(path)?.has(callback)) return;
+                for (const name of this.listChildrenNames(path)) callback(`${path}.${name}`, { type: 'snapshot' });
+            });
+        }
 
         // Return unsubscribe function
         return () => {
@@ -951,6 +1070,15 @@ export class MirrorStore {
             if (!child) return;
             parent = child;
         }
+        const removed = parent.getChildren().get(nodeName);
+        if (!removed) return;
+        const prune = (node: Node, nodePath: string) => {
+            this.hydratedTagValuePaths.delete(nodePath);
+            this.unwatchedValueTimes.delete(nodePath);
+            this.loadedChildrenPaths.delete(nodePath);
+            for (const [name, child] of node.getChildren()) prune(child, `${nodePath}.${name}`);
+        };
+        prune(removed, path);
         parent.removeChild(nodeName);
     }
 
@@ -960,6 +1088,10 @@ export class MirrorStore {
             // Extract path from subject (rtdb.tree.building.floor1 -> building.floor1)
             const subject = msg.subject;
             const path = subject.replace('rtdb.tree.', '');
+            const parent = path.slice(0, path.lastIndexOf('.'));
+            // An unopened branch cannot affect the displayed tree. Discard its
+            // metadata before JSON parsing instead of hydrating the tenant feed.
+            if (!this.nodeExists(path) && !this.loadedChildrenPaths.has(parent) && !this.treeSubscriptions.has(path) && !this.treeSubscriptions.has(parent)) return;
 
             // Parse the message data
             const data = JSON.parse(msg.string());
@@ -971,7 +1103,7 @@ export class MirrorStore {
                 return;
             }
 
-            this.processIncomingNats({ key: path, value: msg.data });
+            this.processIncomingNats({ key: path, value: msg.data }, data);
         } catch (err) {
             console.error('Error handling tree change:', err);
         }
@@ -1004,34 +1136,59 @@ export class MirrorStore {
 
     // Subscribe to live updates for one concrete tag path.
     private watchTagValuePath(path: Path): void {
-        if (!this.nc || !path) {
-            return;
-        }
-        const pathElements = path.split('.');
-        if (pathElements[0] !== this.orgName) {
-            return;
-        }
-        if (this.tagValueSubscription) {
-            return;
-        }
+        this.scheduleTagValueSubscriptions(path);
+    }
 
-        const subject = `xact.internal.bcast.tagvalue.${this.orgName}.>`;
-        const sub = this.nc.subscribe(subject);
-        this.tagValueSubscription = sub;
+    private scheduleTagValueSubscriptions(path: string, rebuild = false): void {
+        this.pendingValuePaths.add(path);
+        this.rebuildValueSubscriptions ||= rebuild;
+        if (this.tagValueSyncQueued) return;
+        this.tagValueSyncQueued = true;
+        queueMicrotask(() => { this.tagValueSyncQueued = false; this.syncTagValueSubscriptions(); });
+    }
 
-        (async () => {
-            try {
-                for await (const msg of sub) {
-                    this.handleTagValueMessage(msg);
-                }
-            } catch (err) {
-                // ignore subscription close/error; callers can resubscribe on reconnect
-            } finally {
-                if (this.tagValueSubscription === sub) {
-                    this.tagValueSubscription = null;
-                }
+    private syncTagValueSubscriptions(): void {
+        if (!this.nc || !this.orgName) return;
+        const base = 'xact.internal.bcast.tagvalue.';
+        const subscribe = (subject: string) => {
+            if (this.watchedTagValuePaths.has(subject)) return;
+            const sub = this.nc!.subscribe(subject);
+            this.watchedTagValuePaths.set(subject, sub);
+            (async () => {
+                try { for await (const msg of sub) this.handleTagValueMessage(msg); }
+                catch { /* subscription closed */ }
+                finally { if (this.watchedTagValuePaths.get(subject) === sub) this.watchedTagValuePaths.delete(subject); }
+            })();
+        };
+        const covered = (path: string) => {
+            const parts = path.split('.');
+            return this.valueCoverage.some(pattern => pattern.every((part, index) =>
+                part === '>' ? parts.length > index : part === '*' ? parts[index] !== undefined : part === parts[index]) &&
+                (pattern.at(-1) === '>' || pattern.length === parts.length));
+        };
+        const wantsExact = (path: string) => path.split('.')[0] === this.orgName &&
+            (this.desiredTagValuePaths.has(path) || this.tagValuePrefixSubscriptions.has(path)) && !covered(path);
+        if (this.rebuildValueSubscriptions) {
+            const prefixes = [...this.descendantValueReferences.keys()].filter(path => path.split('.')[0] === this.orgName);
+            const wildcardPaths = new Set([...this.selectedValueReferences.keys()].filter(path => path.split('.')[0] === this.orgName));
+            for (const prefix of prefixes) {
+                if (!prefixes.some(other => other !== prefix && prefix.startsWith(other + '.'))) wildcardPaths.add(prefix + '.>');
             }
-        })();
+            this.valueCoverage = [...wildcardPaths].map(path => path.split('.'));
+            const wanted = new Set([...wildcardPaths].map(path => base + path));
+            for (const path of new Set([...this.desiredTagValuePaths, ...this.tagValuePrefixSubscriptions.keys()])) if (wantsExact(path)) wanted.add(base + path);
+            for (const [subject, sub] of this.watchedTagValuePaths) if (!wanted.has(subject)) { sub.unsubscribe(); this.watchedTagValuePaths.delete(subject); }
+            for (const subject of wanted) subscribe(subject);
+            this.rebuildValueSubscriptions = false;
+        } else {
+            // Adding/removing one marker should not rescan every subscription.
+            for (const path of this.pendingValuePaths) {
+                const subject = base + path;
+                if (wantsExact(path)) subscribe(subject);
+                else { this.watchedTagValuePaths.get(subject)?.unsubscribe(); this.watchedTagValuePaths.delete(subject); }
+            }
+        }
+        this.pendingValuePaths.clear();
     }
 
     // Parse and apply a live tag value update message.
@@ -1082,7 +1239,7 @@ export class MirrorStore {
         for (const callback of listeners) callback(path);
     }
 
-    private processIncomingNats(e: { key: string; value: Uint8Array }) {
+    private processIncomingNats(e: { key: string; value: Uint8Array }, parsed?: any) {
         // Split the key into path elements (e.g., "building.floor1.room2" -> ["building", "floor1", "room2"])
         const pathElements = e.key.split('.');
 
@@ -1099,8 +1256,8 @@ export class MirrorStore {
         }
 
         // Decode the value from Uint8Array to string, then try to parse as JSON
-        let decodedValue: any;
-        try {
+        let decodedValue: any = parsed;
+        if (parsed === undefined) try {
             const textDecoder = new TextDecoder();
             const valueStr = textDecoder.decode(e.value);
 

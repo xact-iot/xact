@@ -112,6 +112,12 @@ function createNatsConnection() {
   const statuses = createAsyncIterator<any>();
   const nc = {
     subscriptions,
+    publish(message: any) {
+      for (const [subject, sub] of Object.entries(subscriptions)) {
+        const a = subject.split('.'), b = message.subject.split('.');
+        if (a.every((part, index) => part === '>' ? b.length > index : part === '*' ? b[index] !== undefined : part === b[index]) && (a.at(-1) === '>' || a.length === b.length)) sub.push(message);
+      }
+    },
     statuses,
     close: vi.fn(async () => undefined),
     closed: vi.fn(() => new Promise<null>(() => undefined)),
@@ -192,7 +198,8 @@ describe('MirrorStore connection and NATS helpers', () => {
       inboxPrefix: '_INBOX.session',
     });
     expect(kvMock.create).not.toHaveBeenCalled();
-    expect(nc.subscribe).toHaveBeenCalledWith('xact.internal.bcast.tagvalue.default.>');
+    expect(nc.subscribe).toHaveBeenCalledWith('xact.internal.bcast.tagvalue.default.Device.temp');
+    expect(nc.subscribe).not.toHaveBeenCalledWith('xact.internal.bcast.tagvalue.default.>');
     expect(apiMock.loadTag).toHaveBeenCalledWith('default.Device.temp');
     expect(store.getOrg()).toBe('default');
     expect(store.getNodeValue('default.Device.temp')).toBe(7);
@@ -260,7 +267,7 @@ describe('MirrorStore connection and NATS helpers', () => {
 
     expect(kv.watch).not.toHaveBeenCalled();
     expect(nc.subscriptions['rtdb.tree.default.>'].unsubscribe).toHaveBeenCalled();
-    expect(nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].unsubscribe).toHaveBeenCalled();
+    expect(nc.subscriptions['xact.internal.bcast.tagvalue.default.Device.temp'].unsubscribe).toHaveBeenCalled();
     expect(nc.close).toHaveBeenCalled();
     expect(state.connected).toBe(false);
     expect(state.hydratedTagValuePaths).toEqual([]);
@@ -282,6 +289,87 @@ describe('MirrorStore connection and NATS helpers', () => {
     expect(nc.subscribe).toHaveBeenCalledWith('probe');
     expect(nc.subscriptions.probe.unsubscribe).toHaveBeenCalled();
     expect(console.log).toHaveBeenCalledWith('[xact:store:probe] subscribing', 'probe');
+  });
+
+  it('reuses the REST tree when layer saves replace clustered buses with individual markers', async () => {
+    const fields = ['lat', 'lon', 'online', 'orientation'];
+    apiMock.loadNode.mockResolvedValue({
+      name: 'default', children: [{ name: 'PUBLIC_BUS', type: 'node', children: [{
+        name: 'BUSES', type: 'node', children: Array.from({ length: 600 }, (_, i) => ({
+          name: `vehicle_${i}`, type: 'node', children: [{ name: 'meta', type: 'node',
+            children: fields.map(name => ({ name, type: 'leaf', config: {}, value: 1 })),
+          }],
+        })),
+      }] }],
+    });
+    await store.loadTreeFromAPI('', -1);
+    await store.storeConnectNats('ws://nats.example');
+    const seen = vi.fn();
+    for (let save = 0; save < 2; save++) {
+      const unsubscribes = [];
+      for (let i = 0; i < 600; i++) {
+        for (const field of fields) {
+          unsubscribes.push(store.subscribeTagReference(`default.PUBLIC_BUS.BUSES.vehicle_${i}.meta.${field}`, seen));
+        }
+      }
+      unsubscribes.forEach(unsubscribe => unsubscribe());
+    }
+    await flushAsyncWork();
+    expect(apiMock.loadTag).not.toHaveBeenCalled();
+    expect(seen).toHaveBeenCalledTimes(4800);
+  });
+
+  it('limits missing-tag requests and shares pending loads for the same path', async () => {
+    const complete: Array<() => void> = [];
+    let active = 0;
+    let peak = 0;
+    apiMock.loadTag.mockImplementation(() => new Promise(resolve => {
+      active++;
+      peak = Math.max(peak, active);
+      complete.push(() => {
+        active--;
+        resolve({ config: {}, value: 7 });
+      });
+    }));
+    await store.storeConnectNats('ws://nats.example');
+    for (let i = 0; i < 100; i++) store.subscribe(`default.Bus${i}.meta.lat`, vi.fn());
+    const duplicate = store['loadTagMetadata']('default.Bus0.meta.lat');
+    expect(apiMock.loadTag).toHaveBeenCalledTimes(6);
+    while (complete.length) {
+      complete.splice(0).forEach(finish => finish());
+      await flushAsyncWork();
+    }
+    await duplicate;
+    expect(apiMock.loadTag).toHaveBeenCalledTimes(100);
+    expect(peak).toBe(6);
+    expect(store.getNodeValue('default.Bus99.meta.lat')).toBe(7);
+  });
+
+  it('invalidates cached values when a device is deleted and recreated', async () => {
+    apiMock.loadNode.mockResolvedValue({ name: 'default', children: [{
+      name: 'Bus', type: 'node', children: [{ name: 'lat', type: 'leaf', value: 1 }],
+    }] });
+    await store.loadTreeFromAPI('', -1);
+    await store.storeConnectNats('ws://nats.example');
+    store.removeNode('default.Bus');
+    const seen = vi.fn();
+    store.subscribe('default.Bus.lat', seen);
+    await flushAsyncWork();
+    expect(apiMock.loadTag).toHaveBeenCalledWith('default.Bus.lat');
+    expect(seen).toHaveBeenLastCalledWith(7);
+  });
+
+  it('retries a failed HTTP hydration on the next subscription', async () => {
+    apiMock.loadTag.mockRejectedValueOnce(new Error('fetch failed'));
+    await store.storeConnectNats('ws://nats.example');
+    store.subscribe('default.Device.temp', vi.fn());
+    await flushAsyncWork();
+    expect(store.debugNatsState().hydratedTagValuePaths).toEqual([]);
+    const seen = vi.fn();
+    store.subscribe('default.Device.temp', seen);
+    await flushAsyncWork();
+    expect(apiMock.loadTag).toHaveBeenCalledTimes(2);
+    expect(seen).toHaveBeenLastCalledWith(7);
   });
 
   it('removes failed hydration paths so they can be retried', async () => {
@@ -658,6 +746,7 @@ describe('MirrorStore API tree loading', () => {
     });
     seedLeaf(store, 'default.Device.temp', { timestamp: 500, value: 30 });
 
+    store['desiredTagValuePaths'].add('default.Device.temp');
     await store['loadTagMetadata']('default.Device.temp', 100);
 
     expect(store.getNodeValue('default.Device.temp')).toBe(30);
@@ -794,19 +883,19 @@ describe('MirrorStore tree subscriptions and live tag broadcasts', () => {
     store.subscribe('default.Device.temp', value => seen.push(value));
     await flushAsyncWork();
 
-    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+    nc.publish(msg(
       'xact.internal.bcast.tagvalue.default.Device.temp',
       { temp: { type: 'value', value: 12.345, status: 'N', timestamp: 700 } },
     ));
-    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+    nc.publish(msg(
       'xact.internal.bcast.tagvalue.default.Device.other',
       { other: { type: 'value', value: 99, status: 'A' } },
     ));
-    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push({
+    nc.publish({
       subject: 'xact.internal.bcast.tagvalue.default.Device.temp',
       string: () => '{bad',
     });
-    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+    nc.publish(msg(
       'xact.internal.bcast.tagvalue.default.Device.temp',
       {},
     ));
@@ -825,10 +914,10 @@ describe('MirrorStore tree subscriptions and live tag broadcasts', () => {
     const unsubscribe = store.subscribeToTagValueChanges(prefix, path => seen.push(path));
     await flushAsyncWork();
 
-    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+    nc.publish(msg(
       `xact.internal.bcast.tagvalue.${prefix}.0`, { '0': { type: 'value', value: 15.3, status: 'N' } },
     ));
-    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+    nc.publish(msg(
       'xact.internal.bcast.tagvalue.default.Routes.B.route.coordinates.0', { '0': { type: 'value', value: 14.1, status: 'N' } },
     ));
     await flushAsyncWork();
@@ -843,7 +932,7 @@ describe('MirrorStore tree subscriptions and live tag broadcasts', () => {
     expect(seen).toEqual([`${prefix}.0`, `${prefix}.2`]);
 
     unsubscribe();
-    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+    nc.publish(msg(
       `xact.internal.bcast.tagvalue.${prefix}.1`, { '1': { type: 'value', value: -61.4, status: 'N' } },
     ));
     await flushAsyncWork();
@@ -856,7 +945,7 @@ describe('MirrorStore tree subscriptions and live tag broadcasts', () => {
     store.subscribe('default.PUBLIC_BUS.BUS-17.meta.lat', value => seen.push(value));
     await flushAsyncWork();
 
-    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+    nc.publish(msg(
       'xact.internal.bcast.tagvalue.default.PUBLIC_BUS.BUS-17.meta.lat',
       { 'meta.lat': { type: 'value', value: 15.301234, status: 'N', timestamp: 701 } },
     ));
@@ -871,27 +960,27 @@ describe('MirrorStore tree subscriptions and live tag broadcasts', () => {
     store.processIncomingNats({ key: path, value: new TextEncoder().encode(JSON.stringify({ type: 'node', isArray: true })) });
     store.subscribeToTagValueChanges(path, () => undefined);
     await flushAsyncWork();
-    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+    nc.publish(msg(
       `xact.internal.bcast.tagvalue.${path}.0`,
       { 'shape.points.0': { type: 'value', value: 49.283456 } },
     ));
     await flushAsyncWork();
     expect(store.getNodeValue(path + '.0')).toBe(49.283456);
     const points = [49.283456, -123.114567, 49.294567, -123.125678];
-    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+    nc.publish(msg(
       `xact.internal.bcast.tagvalue.${path}`,
       { 'shape.points': { type: 'value', value: points } },
     ));
     await flushAsyncWork();
     expect(store.getNodeValue(path)).toEqual(points);
-    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+    nc.publish(msg(
       `xact.internal.bcast.tagvalue.${path}`,
       { points: { type: 'array-start', value: null } },
     ));
     await flushAsyncWork();
     expect(store.getNodeValue(path)).toEqual(points);
     expect(store.getNodeStatus(path)).toBe('array-updating');
-    nc.subscriptions['xact.internal.bcast.tagvalue.default.>'].push(msg(
+    nc.publish(msg(
       `xact.internal.bcast.tagvalue.${path}`,
       { points: { type: 'value', value: points } },
     ));
@@ -906,7 +995,8 @@ describe('MirrorStore tree subscriptions and live tag broadcasts', () => {
     store.startKvWatch('default');
     await flushAsyncWork();
 
-    expect(nc.subscribe.mock.calls.filter(call => call[0] === 'xact.internal.bcast.tagvalue.default.>')).toHaveLength(1);
+    expect(nc.subscribe.mock.calls.filter(call => call[0].startsWith('xact.internal.bcast.tagvalue.'))).toHaveLength(2);
+    expect(nc.subscribe).not.toHaveBeenCalledWith('xact.internal.bcast.tagvalue.default.>');
     expect(kv.watch).not.toHaveBeenCalled();
     expect(nc.subscribe.mock.calls.filter(call => call[0] === 'rtdb.tree.default.>')).toHaveLength(1);
   });
@@ -939,5 +1029,113 @@ describe('MirrorStore tree subscriptions and live tag broadcasts', () => {
 describe('getMirrorStore singleton', () => {
   it('returns the same MirrorStore instance', () => {
     expect(getMirrorStore()).toBe(getMirrorStore());
+  });
+});
+
+describe('MirrorStore demand loading and subscription ownership', () => {
+  beforeEach(() => {
+    authMock.getCurrentUser.mockReturnValue({ tenant_id: 'default' });
+    apiMock.loadNode.mockResolvedValue({ name: 'default', children: [] });
+    apiMock.loadTag.mockResolvedValue({ type: 'leaf', value: 1 });
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it('continues to populate an expanded branch when its root is recreated', async () => {
+    const store = new MirrorStore();
+    apiMock.loadNode.mockImplementation(async (path: string) => path === 'default' ? { name: 'default', children: [{ name: 'BUSES', type: 'node' }] } : { name: 'BUSES', children: [] });
+    await store.ensureChildren();
+    const callback = vi.fn();
+    const release = store.subscribeToTreeChanges('default.BUSES', callback);
+    await flushAsyncWork();
+    store['handleTreeChange'](msg('rtdb.tree.default.BUSES', { deleted: true }));
+    store['handleTreeChange'](msg('rtdb.tree.default.BUSES', { type: 'node' }));
+    store['handleTreeChange'](msg('rtdb.tree.default.BUSES.new_bus', { type: 'node' }));
+    expect(store.nodeExists('default.BUSES.new_bus')).toBe(true);
+    expect(callback).toHaveBeenCalledWith('default.BUSES.new_bus', expect.objectContaining({ type: 'node' }));
+    release();
+  });
+
+  it('shares a coordinate wildcard with exact consumers without duplicate delivery', async () => {
+    const store = new MirrorStore();
+    const nc = createNatsConnection();
+    natsMock.wsconnect.mockResolvedValue(nc);
+    await store.storeConnectNats('ws://test');
+    const callback = vi.fn();
+    const releasePrefix = store.subscribeToTagValueChanges('default.BUSES', callback, false, ['*.meta.lat']);
+    const releaseTag = store.subscribe('default.BUSES.Bus1.meta.lat', vi.fn());
+    await flushAsyncWork();
+    expect(nc.subscribe).toHaveBeenCalledWith('xact.internal.bcast.tagvalue.default.BUSES.*.meta.lat');
+    expect(nc.subscribe).not.toHaveBeenCalledWith('xact.internal.bcast.tagvalue.default.BUSES.Bus1.meta.lat');
+    nc.publish(msg('xact.internal.bcast.tagvalue.default.BUSES.Bus1.meta.lat', { lat: { type: 'value', value: 49.283456 } }));
+    nc.publish(msg('xact.internal.bcast.tagvalue.default.BUSES.Bus1.trips.other', { other: { type: 'value', value: 1 } }));
+    await flushAsyncWork();
+    expect(callback).toHaveBeenCalledOnce();
+    expect(store.getNodeValue('default.BUSES.Bus1.meta.lat')).toBe(49.283456);
+    releaseTag(); releasePrefix();
+    await store.storeDisconnectNats();
+  });
+
+  it('shares concurrent branch requests and does not hydrate unrelated descendants', async () => {
+    const store = new MirrorStore();
+    apiMock.loadNode.mockResolvedValue({ name: 'default', children: [{ name: 'PUBLIC_BUS', type: 'node' }] });
+    await Promise.all([store.ensureChildren(), store.ensureChildren('default')]);
+    await store.ensureChildren();
+    expect(apiMock.loadNode).toHaveBeenCalledTimes(1);
+    expect(apiMock.loadNode).toHaveBeenCalledWith('default', 0);
+    store['handleTreeChange'](msg('rtdb.tree.default.PUBLIC_BUS.STOPS.A.trips.unneeded', { type: 'leaf', value: 7 }));
+    expect(store.nodeExists('default.PUBLIC_BUS.STOPS')).toBe(false);
+  });
+
+  it('keeps a shared tag live until the last consumer releases it', async () => {
+    const store = new MirrorStore();
+    const nc = createNatsConnection();
+    natsMock.wsconnect.mockResolvedValue(nc);
+    await store.storeConnectNats('ws://test');
+    const first = store.subscribe('default.Bus.meta.lat', vi.fn());
+    const second = store.subscribe('default.Bus.meta.lat', vi.fn());
+    await flushAsyncWork();
+    const subject = 'xact.internal.bcast.tagvalue.default.Bus.meta.lat';
+    expect(nc.subscribe.mock.calls.filter(([name]) => name === subject)).toHaveLength(1);
+    first(); first();
+    await flushAsyncWork();
+    expect(nc.subscriptions[subject].unsubscribe).not.toHaveBeenCalled();
+    second();
+    await flushAsyncWork();
+    expect(nc.subscriptions[subject].unsubscribe).toHaveBeenCalledOnce();
+    expect(store.debugNatsState().desiredTagValuePaths).toEqual([]);
+    await store.storeDisconnectNats();
+  });
+
+  it('uses exact complete-array snapshots without subscribing to every numbered element', async () => {
+    const store = new MirrorStore();
+    const nc = createNatsConnection();
+    natsMock.wsconnect.mockResolvedValue(nc);
+    await store.storeConnectNats('ws://test');
+    const path = 'default.Routes.A.points';
+    const callback = vi.fn();
+    const release = store.subscribeToTagValueChanges(path, callback, false);
+    await flushAsyncWork();
+    expect(nc.subscribe).toHaveBeenCalledWith('xact.internal.bcast.tagvalue.' + path);
+    expect(nc.subscribe).not.toHaveBeenCalledWith('xact.internal.bcast.tagvalue.' + path + '.>');
+    nc.publish(msg('xact.internal.bcast.tagvalue.' + path, { points: { type: 'value', value: [49.283456, -123.114567] } }));
+    await flushAsyncWork();
+    expect(store.getNodeValue(path)).toEqual([49.283456, -123.114567]);
+    release();
+    await flushAsyncWork();
+    expect(nc.subscriptions['xact.internal.bcast.tagvalue.' + path].unsubscribe).toHaveBeenCalledOnce();
+    await store.storeDisconnectNats();
+  });
+});
+
+describe('projected array snapshot recovery', () => {
+  it('clears an unfinished live batch when a fresh REST snapshot replaces it', async () => {
+    authMock.getCurrentUser.mockReturnValue({ tenant_id: 'default' });
+    const store = new MirrorStore();
+    store['processIncomingNats'](kvEntry('default.points', { type: 'node', isArray: true, status: 'array-updating' }));
+    apiMock.loadNode.mockResolvedValue({ name: 'default', children: [{ name: 'points', type: 'node', isArray: true, value: [49.283456, -123.114567] }] });
+    await store.loadSelectedPaths(['default.points']);
+    expect(store.getNodeStatus('default.points')).toBe('');
+    expect(store.getNodeValue('default.points')).toEqual([49.283456, -123.114567]);
+    vi.clearAllMocks();
   });
 });

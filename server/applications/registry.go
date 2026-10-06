@@ -105,12 +105,12 @@ func Load(root string) ([]Manifest, error) {
 			}
 			for _, subject := range s.Publish {
 				if !validServiceSubject(subject, m.ID, s.Username, true) {
-					return nil, fmt.Errorf("invalid service publish subject")
+					return nil, fmt.Errorf("manifest %s: service %q: invalid service publish subject %q", filepath.Base(f), s.Username, subject)
 				}
 			}
 			for _, subject := range s.Subscribe {
 				if !validServiceSubject(subject, m.ID, s.Username, false) {
-					return nil, fmt.Errorf("invalid service subscribe subject")
+					return nil, fmt.Errorf("manifest %s: service %q: invalid service subscribe subject %q", filepath.Base(f), s.Username, subject)
 				}
 			}
 		}
@@ -123,7 +123,7 @@ func Subject(tenant, app, scope, op string) string {
 }
 
 // Service credentials stay inside their registered application namespace.
-// The ingest exception is tenant-specific and publish-only; reply inboxes are
+// The ingest and delete exceptions are tenant-specific and publish-only; reply inboxes are
 // limited to the service identity and NATS response permissions cover handlers.
 func validServiceSubject(subject, app, user string, publish bool) bool {
 	if subject == "" || strings.ContainsAny(subject, " \t\r\n") {
@@ -144,7 +144,7 @@ func validServiceSubject(subject, app, user string, publish bool) bool {
 	if len(parts) == 8 && parts[0] == "xact" && parts[1] == "app" && parts[2] == "v1" && ValidToken(parts[3]) && parts[4] == app && (ValidToken(parts[5]) || parts[5] == "*") && (parts[6] == "request" || parts[6] == "ingest") && (ValidToken(parts[7]) || parts[7] == "*") {
 		return true
 	}
-	if publish && len(parts) >= 5 && parts[0] == "xact" && parts[1] == "internal" && parts[2] == "ingest_request" && ValidToken(parts[3]) {
+	if publish && len(parts) >= 5 && parts[0] == "xact" && parts[1] == "internal" && (parts[2] == "ingest_request" || parts[2] == "delete_request") && ValidToken(parts[3]) {
 		for _, p := range parts[4:] {
 			if p == "*" {
 				continue

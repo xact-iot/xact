@@ -65,4 +65,6 @@ demo/demo
 benchmark/main
 build_and_setup.sh
 architecture/
+profiling/results/
+profiling/__pycache__/
 AirQuality/AirQuality

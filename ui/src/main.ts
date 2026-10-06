@@ -85,6 +85,7 @@ setAuthHeadersProvider(getAuthHeaders);
 // Hydrate the data tree and connect live updates in the background.
 async function initializeStore(): Promise<void> {
   const store = getMirrorStore();
+  store.setAuthenticatedOrg();
   void (async () => {
     try {
       const natsCfg = await fetchNATSConfig();
@@ -95,8 +96,7 @@ async function initializeStore(): Promise<void> {
     }
   })();
 
-  // Fetch the entire subtree in one request, without waiting for WebSocket setup.
-  await store.loadTreeFromAPI('', -1);
+  // Widgets hydrate only their required branches/tags when they mount.
 }
 
 // Disconnect store on page unload

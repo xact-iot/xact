@@ -38,7 +38,9 @@
     "delete_route",
     "create_schedule",
     "update_schedule",
-    "delete_schedule"
+    "delete_schedule",
+    "list_trip_instances",
+    "end_assignment"
   ],
   "services": [
     {
@@ -47,7 +49,8 @@
       "publish": [
         "xact.internal.ingest_request.default.PUBLIC_BUS.BUSES.*",
         "xact.internal.ingest_request.default.PUBLIC_BUS.PUBLIC_BUS_STOP.*",
-        "xact.internal.ingest_request.default.PUBLIC_BUS.PUBLIC_BUS_ROUTE.*"
+        "xact.internal.ingest_request.default.PUBLIC_BUS.PUBLIC_BUS_ROUTE.*",
+        "xact.internal.delete_request.default.PUBLIC_BUS.BUSES.*"
       ],
       "subscribe": [
         "xact.app.v1.default.public_bus.default.request.*",

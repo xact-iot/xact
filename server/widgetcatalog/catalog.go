@@ -441,6 +441,8 @@ func areaMapHints() map[string]any {
 			"iconRules":             "array of rule objects. First matching rule controls glyph/color/animation.",
 			"zoomThreshold":         "number; at or above this zoom, show divTemplate or zoomWidgetType marker",
 			"refreshInterval":       "number; marker refresh interval in milliseconds, 0 disables polling",
+			"positionAnimationMs":   "number; icon movement animation duration in milliseconds, defaults to 2000; 0 moves instantly",
+			"clusteringEnabled":     "boolean; false disables icon clustering and shows individual markers; defaults to true",
 			"divTemplate":           "template literal HTML string for zoomed marker and hover tooltip. Use ${deviceName}, ${deviceDescription}, and ${tag('relative.path')}.",
 			"zoomWidgetType":        "widget type rendered as zoomed marker and hover tooltip, e.g. status-table-widget",
 			"zoomWidgetConfig":      "config object for zoomWidgetType",

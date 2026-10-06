@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const storeMock = vi.hoisted(() => ({
   toAbsolute: vi.fn((path: string) => path.startsWith('default.') ? path : `default.${path}`),
   listChildrenNames: vi.fn((path: string) => path === 'default.LA_LongBeach.AirQuality' ? ['AQ-S-0140'] : []),
+  ensureChildren: vi.fn(async (_path: string) => {}),
 }));
 
 const uiStoreMock = vi.hoisted(() => ({
@@ -17,12 +18,13 @@ vi.mock('../src/store/ui-store', () => ({
   getUiStore: () => uiStoreMock,
 }));
 
-import { resolveMetricTagPath } from '../src/dashboards/widgets/tag-path-resolver';
+import { hydrateWildcardPrefixes, resolveMetricTagPath } from '../src/dashboards/widgets/tag-path-resolver';
 
 describe('tag-path-resolver', () => {
   beforeEach(() => {
     storeMock.toAbsolute.mockClear();
     storeMock.listChildrenNames.mockClear();
+    storeMock.ensureChildren.mockClear();
     uiStoreMock.get.mockReset();
     uiStoreMock.get.mockReturnValue('');
   });
@@ -51,5 +53,20 @@ describe('tag-path-resolver', () => {
     expect(resolveMetricTagPath('LA_LongBeach.AirQuality.AQ-S-0140', 'LA_LongBeach.AirQuality.AQ-S-0140.particulate.pm1')).toBe(
       'default.LA_LongBeach.AirQuality.AQ-S-0140.particulate.pm1',
     );
+  });
+
+  it('loads only distinct wildcard parents including nested widget configurations', async () => {
+    await hydrateWildcardPrefixes([
+      { tagPrefix: 'LA_LongBeach.AirQuality.*' },
+      { tabs: [{ widgetConfig: { tagPrefix: 'LA_LongBeach.AirQuality.*' } }] },
+      { tagPrefix: 'Other.Device' },
+    ]);
+    expect(storeMock.ensureChildren).toHaveBeenCalledExactlyOnceWith('LA_LongBeach.AirQuality');
+  });
+
+  it('does not load fallback devices when the dashboard already selected a device', async () => {
+    uiStoreMock.get.mockReturnValue('AQ-B-0149');
+    await hydrateWildcardPrefixes([{ tagPrefix: 'LA_LongBeach.AirQuality.*' }]);
+    expect(storeMock.ensureChildren).not.toHaveBeenCalled();
   });
 });

@@ -61,6 +61,11 @@ func main() {
 	if err := validateProductionSecrets(); err != nil {
 		log.Fatalf("Production security configuration is invalid: %v", err)
 	}
+	stopProfiling, err := startProfiling()
+	if err != nil {
+		log.Fatalf("Profiling configuration: %v", err)
+	}
+	defer stopProfiling()
 
 	// Resolve plugin directory. In development the server may be started from
 	// either the repo root or server/, so accept both common relative layouts.
@@ -423,8 +428,12 @@ func main() {
 	// by any server in the cluster (including itself).
 	processor := ingest.NewProcessor(treeOps)
 	processor.SetNotificationResolver(database)
+	processor.SetLifecycleStore(database)
+	if err := processor.ReconcileRetiredDevices(); err != nil {
+		log.Fatalf("Failed to reconcile retired ingest devices: %v", err)
+	}
 	ingestSub, err := ingest.SubscribeIngest(nc, func(evt ingest.IngestEvent) error {
-		if err := processor.WriteDeviceData(evt.Tenant, evt.Zone, evt.DeviceType, evt.DeviceName, evt.TagData); err != nil {
+		if err := processor.ProcessEvent(evt); err != nil {
 			console.Error("ingest", "", "Failed to process ingest event", "error", err)
 			return err
 		}

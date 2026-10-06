@@ -21,11 +21,13 @@ type Manager struct {
 	org      string
 	debounce time.Duration
 
-	mu     sync.Mutex
-	saveMu sync.Mutex // Only one full-tree snapshot may be allocated at a time.
-	dirty  bool
-	timer  *time.Timer
-	done   chan struct{}
+	mu              sync.Mutex
+	saveMu          sync.Mutex // Only one full-tree snapshot may be allocated at a time.
+	dirty           bool
+	timer           *time.Timer
+	dirtySince      time.Time
+	lastSaveAttempt time.Time
+	stopped         bool
 }
 
 // NewManager creates a new persistence manager
@@ -35,22 +37,41 @@ func NewManager(database sqldb.DB, treeOps *tree.TreeWithOperations, org string,
 		tree:     treeOps,
 		org:      org,
 		debounce: debounce,
-		done:     make(chan struct{}),
 	}
 }
 
-// MarkDirty signals that the tree has changed and needs saving.
-// Resets the debounce timer on each call.
+// MarkDirty coalesces bursts, while bounding both save frequency and the time
+// an ongoing stream of structural changes may remain without a checkpoint.
 func (m *Manager) MarkDirty() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	m.dirty = true
-
-	if m.timer != nil {
-		m.timer.Stop()
+	if m.stopped {
+		return
 	}
-	m.timer = time.AfterFunc(m.debounce, func() {
+	if !m.dirty {
+		m.dirtySince = time.Now()
+	}
+	m.dirty = true
+	m.scheduleLocked()
+}
+
+func (m *Manager) scheduleLocked() {
+	if m.stopped {
+		return
+	}
+	now := time.Now()
+	due := now.Add(m.debounce)
+	if minimum := m.lastSaveAttempt.Add(6 * m.debounce); minimum.After(due) {
+		due = minimum
+	}
+	if maximum := m.dirtySince.Add(12 * m.debounce); maximum.Before(due) {
+		due = maximum
+	}
+	if m.timer != nil {
+		m.timer.Reset(max(time.Duration(0), due.Sub(now)))
+		return
+	}
+	m.timer = time.AfterFunc(max(time.Duration(0), due.Sub(now)), func() {
 		if err := m.Save(context.Background()); err != nil {
 			log.Printf("persistence: auto-save failed: %v", err)
 		}
@@ -58,7 +79,7 @@ func (m *Manager) MarkDirty() {
 }
 
 // Save immediately serializes the tree and writes to the database
-func (m *Manager) Save(ctx context.Context) error {
+func (m *Manager) Save(ctx context.Context) (saveErr error) {
 	m.saveMu.Lock()
 	defer m.saveMu.Unlock()
 	m.mu.Lock()
@@ -67,11 +88,25 @@ func (m *Manager) Save(ctx context.Context) error {
 		return nil
 	}
 	m.dirty = false
+	m.dirtySince = time.Time{}
+	m.lastSaveAttempt = time.Now()
 	if m.timer != nil {
 		m.timer.Stop()
 		m.timer = nil
 	}
 	m.mu.Unlock()
+	defer func() {
+		if saveErr == nil {
+			return
+		}
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if !m.dirty {
+			m.dirtySince = time.Now()
+		}
+		m.dirty = true
+		m.scheduleLocked()
+	}()
 
 	config, err := SerializeTree(m.tree.Root)
 	if err != nil {
@@ -117,16 +152,13 @@ func (m *Manager) Restore(ctx context.Context) (bool, error) {
 // Stop cancels any pending timer and performs a final save
 func (m *Manager) Stop(ctx context.Context) error {
 	m.mu.Lock()
+	m.stopped = true
 	if m.timer != nil {
 		m.timer.Stop()
 		m.timer = nil
 	}
-	// Force dirty so final save happens
-	wasDirty := m.dirty
 	m.mu.Unlock()
-
-	if wasDirty {
-		return m.Save(ctx)
-	}
-	return nil
+	// Save also waits for an already-running checkpoint and retries its dirty
+	// state if it failed; shutdown must not race the current database write.
+	return m.Save(ctx)
 }

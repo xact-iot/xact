@@ -11,6 +11,7 @@ import { can } from '../permissions/permissions';
 import { registerPermissions } from '../permissions/registry';
 import { showAlert, showChoice } from '../components/app-dialog';
 import { cloneValue } from '../utils/clone';
+import { hydrateWildcardPrefixes } from './widgets/tag-path-resolver';
 
 registerPermissions('dashboard-container', 'Widget Layout Editing', [
   { name: 'inspect', description: 'Inspect dashboard widgets and properties without changing layout' },
@@ -162,6 +163,8 @@ export class DashboardContainer extends BaseComponent {
       this.mode = this.widgets.length === 0 && this.canEditDashboard ? 'edit' : 'view';
       this.dirty = false;
     }
+    await hydrateWildcardPrefixes(this.widgets.map(widget => widget.config));
+    if (loadGeneration !== this.loadGeneration || !this.isConnected) return;
     this.rerender();
     await this.initGrid();
     this.emitCapabilities();

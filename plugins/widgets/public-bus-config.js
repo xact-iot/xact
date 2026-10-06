@@ -9,7 +9,7 @@
       super(); this.attachShadow({mode:'open'}); this.config={scope:'default'};
       this.tab='stops'; this.modal=null; this.editorPortal=null; this.editorMap=null; this.editorMarkers=[]; this.routePath=[]; this.offset=0; this.rows=[]; this.total=0; this.revision=0;
       this.status=null; this.permissions={}; this.busy=false; this.message='Connecting to the public bus application…'; this.error=false;
-      this.filter={query:'',route_id:'',stop_id:'',date:''}; this.generation=0;
+      this.filter={query:'',route_id:'',stop_id:'',date:''}; this.generation=0;this.assignmentDraft={};this.assignmentRoutes=[];this.tripChoices=[];this.tripTotal=0;this.tripOffset=0;this.choiceGeneration=0;
     }
     static getPropertySchema() { return [{name:'scope',type:'string',label:'Application scope',default:'default'}]; }
     setConfig(config) { this.config={scope:'default',...config}; if(this.isConnected) this.refresh(); }
@@ -39,6 +39,7 @@
           if(generation!==this.generation) return;
           this.rows=data.rows||[]; this.total=data.total||0;
         }
+        if(this.tab==='sources') await this.loadAssignmentChoices();
         this.message=status.active?'Configuration connected':'Import a schedule, review it, then activate it.'; this.error=false;
       } catch(error) { if(generation!==this.generation) return; this.message=error.message;this.error=true; }
       finally { if(generation===this.generation) { this.busy=false;if(showBusy||!this.modal) this.render(); } }
@@ -109,8 +110,40 @@
       if(this.tab==='schedule') return `<table><thead><tr><th>Route / Trip</th><th>Destination</th><th>Stop</th><th>Arrival</th><th>Departure</th><th>Service</th><th>Actions</th></tr></thead><tbody>${this.rows.map(r=>`<tr><td>${escape(r.route_id)}<br><small>${escape(r.trip_id)}</small></td><td>${escape(r.headsign)}</td><td>${escape(r.sequence)} · ${escape(r.stop_name)}<br><small>${escape(r.stop_id)}</small></td><td>${escape(r.arrival)||'—'}</td><td>${escape(r.departure)||'—'}</td><td>${escape(r.service_id)}${r.pickup?' · No regular pickup':''}</td><td><button data-edit="${this.rows.indexOf(r)}" ${!manage||r.origin==='gtfs'?'disabled':''}>Edit</button> <button data-delete="${this.rows.indexOf(r)}" ${!manage||r.origin==='gtfs'?'disabled':''}>Delete</button></td></tr>`).join('')}</tbody></table>`;
       return `<table><thead><tr><th>${this.tab==='stops'?'Stop':'Route'}</th><th>${this.tab==='stops'?'Location / Routes':'Type'}</th><th>Display name override</th><th>Enabled</th><th>Actions</th></tr></thead><tbody>${this.rows.map((r,i)=>`<tr><td>${escape(r.name)}<br><small>${escape(r.code||r.short_name||'')} · ${escape(r.id)}</small></td><td>${this.tab==='stops'?`${Number(r.lat).toFixed(5)}, ${Number(r.lon).toFixed(5)}<br><small>${escape((r.routes||[]).join(', '))}</small>`:escape(r.type)}</td><td><input aria-label="Display name for ${escape(r.name)}" data-name="${i}" value="${escape(r.display_name)}" ${!manage?'disabled':''}><button data-save="${i}" ${!manage?'disabled':''}>Save</button></td><td><input aria-label="Enable ${escape(r.name)}" type="checkbox" data-toggle="${i}" ${r.enabled?'checked':''} ${!manage?'disabled':''}></td><td><button data-edit="${i}" ${!manage?'disabled':''}>Edit</button> <button data-delete="${i}" ${!manage?'disabled':''}>Delete</button></td></tr>`).join('')}</tbody></table>`;
     }
+    async loadAssignmentChoices() {
+      const draft=this.assignmentDraft;
+      if(!draft.service_date) draft.service_date=this.status?.service_date||new Date().toISOString().slice(0,10);
+      if(this.routeChoiceRevision!==this.revision) {
+        const routes=[];let offset=0;let total=1;
+        while(offset<total){const page=await this.request('list_routes',{offset,limit:100});routes.push(...(page.rows||[]));total=page.total||0;offset+=100;}
+        this.assignmentRoutes=routes;this.routeChoiceRevision=this.revision;
+      }
+      if(!draft.route_id&&this.assignmentRoutes.length)draft.route_id=this.assignmentRoutes[0].id;
+      const generation=++this.choiceGeneration;
+      if(!draft.route_id){this.tripChoices=[];this.tripTotal=0;return;}
+      const page=await this.request('list_trip_instances',{date:draft.service_date,route_id:draft.route_id,offset:this.tripOffset,limit:100});
+      if(generation!==this.choiceGeneration)return;
+      this.tripChoices=page.rows||[];this.tripTotal=page.total||0;
+      if(!this.tripChoices.some(t=>this.tripChoiceKey(t)===draft.trip_key))draft.trip_key='';
+    }
+    tripChoiceKey(choice){return [choice.trip.trip_id,choice.trip.service_date,choice.trip.start_time||''].join('/');}
+    localDateTime(at){const d=new Date(at);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}
     sourcePanel(manage) {
-      return `<div>${(this.status?.sources||[]).map(s=>`<div class="source-row">${escape(s.id)} <span class="badge">${escape(s.kind)} · ${escape(s.purpose)}</span> ${s.enabled?'Enabled':'Disabled'} <button data-source="${escape(s.id)}" ${!manage?'disabled':''}>${s.enabled?'Disable':'Enable'}</button></div>`).join('')||'<p class="empty">No sources enrolled. Configure the application bootstrap file.</p>'}</div><div class="toolbar">${[['id','Assignment ID'],['reporter_id','Reporter ID'],['vehicle_id','Vehicle ID'],['trip_id','Trip ID']].map(([k,label])=>`<label>${label}<input data-assignment="${k}"></label>`).join('')}<label>Service date<input type="date" data-assignment="service_date"></label><label>Valid from<input type="datetime-local" data-assignment="valid_from"></label><label>Valid to<input type="datetime-local" data-assignment="valid_to"></label><button data-action="assignment" ${!manage?'disabled':''}>Save assignment</button></div><div>${(this.status?.assignments||[]).map(a=>`<p>${escape(a.vehicle_id)} · ${escape(a.reporter_id)} → ${escape(a.trip?.trip_id)} <small>${escape(a.trip?.service_date)}</small></p>`).join('')}</div>`;
+      const draft=this.assignmentDraft;const disabled=!manage?'disabled':'';
+      const input=(key,label,type='text',readonly='')=>`<label>${label}<input data-assignment="${key}" type="${type}" value="${escape(draft[key]||'')}" ${readonly} ${disabled}></label>`;
+      const reporters=(this.status?.reporters||[]).filter(r=>r.enabled);
+      return `<div>${(this.status?.sources||[]).map(s=>`<div class="source-row">${escape(s.id)} <span class="badge">${escape(s.kind)} · ${escape(s.purpose)}</span> ${s.enabled?'Enabled':'Disabled'} <button data-source="${escape(s.id)}" ${disabled}>${s.enabled?'Disable':'Enable'}</button></div>`).join('')||'<p class="empty">No sources enrolled. Configure the application bootstrap file.</p>'}</div>
+      <div class="toolbar">${input('id','Assignment ID')}
+      <label>Driver phone<select data-assignment="reporter_id" ${disabled}><option value="">Choose reporter</option>${reporters.map(r=>`<option value="${escape(r.id)}" ${draft.reporter_id===r.id?'selected':''}>${escape(r.id)} · ${escape(r.vehicle_id)}</option>`).join('')}</select></label>
+      ${input('vehicle_id','Vehicle','text','readonly')}
+      <label>Route<select data-assignment="route_id" ${disabled}>${this.assignmentRoutes.map(r=>`<option value="${escape(r.id)}" ${draft.route_id===r.id?'selected':''}>${escape(r.short_name||r.id)} · ${escape(r.name)}</option>`).join('')}</select></label>
+      ${input('service_date','Service date','date')}
+      <label>Scheduled departure<select data-assignment="trip_key" ${disabled}><option value="">Choose trip</option>${this.tripChoices.map(t=>`<option value="${escape(this.tripChoiceKey(t))}" ${draft.trip_key===this.tripChoiceKey(t)?'selected':''}>${escape(t.departure)} · ${escape(t.destination)} · ${escape(t.trip.trip_id)}</option>`).join('')}</select></label>
+      ${input('valid_from','Reporting starts','datetime-local')}${input('valid_to','Reporting ends','datetime-local')}
+      <button data-action="assignment" ${disabled}>Save assignment</button></div>
+      <div class="pager"><span>${this.tripTotal} scheduled departures for this route and date</span><div><button data-action="trip-previous" ${this.tripOffset===0?'disabled':''}>Previous departures</button> <button data-action="trip-next" ${this.tripOffset+100>=this.tripTotal?'disabled':''}>Next departures</button></div></div>
+      <div>${(this.status?.assignments||[]).map(a=>`<p>${escape(a.vehicle_id)} · ${escape(a.reporter_id)} → ${escape(a.trip?.trip_id)} <small>${escape(a.trip?.service_date)} ${escape(a.trip?.start_time||'')}</small> <button data-end-assignment="${escape(a.id)}" ${disabled}>End assignment</button></p>`).join('')}</div>
+      <div><strong>Bus activity</strong><table><thead><tr><th>Vehicle / trip</th><th>State</th><th>Last observation</th><th>Delay</th><th>Route deviation</th></tr></thead><tbody>${(this.status?.lifecycle||[]).map(t=>`<tr><td>${escape(t.vehicle_id)}<br><small>${escape(t.trip?.trip_id)}</small></td><td>${escape(t.state)} ${escape(t.reason||'')}</td><td>${escape(t.observed_at)}</td><td>${t.state==='active'&&t.confidence!=='unavailable'?escape(t.delay_seconds)+' s':'Unavailable'}</td><td>${t.deviation?'Off route · '+Math.round(t.distance_from_route_m)+' m':escape(t.confidence==='unavailable'?'Unknown':'On route')}</td></tr>`).join('')||'<tr><td colspan="5">Waiting for fresh bus telemetry</td></tr>'}</tbody></table></div>`;
     }
     bind() {
       const root=this.shadowRoot;
@@ -121,6 +154,8 @@
       root.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>this.openEditor(this.rows[Number(b.dataset.edit)]));
       root.querySelectorAll('[data-delete]').forEach(b=>b.onclick=()=>this.deleteRecord(this.rows[Number(b.dataset.delete)]));
       root.querySelectorAll('[data-toggle]').forEach(b=>b.onchange=()=>this.override(Number(b.dataset.toggle)));
+      root.querySelectorAll('[data-assignment]').forEach(el=>el.onchange=()=>this.assignmentChanged(el));
+      root.querySelectorAll('[data-end-assignment]').forEach(el=>el.onclick=()=>this.mutate('end_assignment',{id:el.dataset.endAssignment}));
       root.querySelectorAll('[data-source]').forEach(b=>b.onclick=()=>{const s=this.status.sources.find(s=>s.id===b.dataset.source);this.mutate('set_source',{...s,enabled:!s.enabled});});
       root.querySelectorAll('.filters input').forEach(i=>i.onkeydown=e=>{if(e.key==='Enter') this.action('search');});
       root.querySelectorAll('dialog').forEach(d=>d.onclose=()=>{if(d.isConnected&&this.modal===d.dataset.dialog) this.modal=null;});
@@ -135,7 +170,14 @@
       if(name==='activate'||name==='rollback'){const payload=name==='activate'?{dataset_id:this.selectedDataset||this.status?.state?.active_dataset}:{};this.closeModal();return this.mutate(name,payload);}
       if(name==='import')return this.importFile();
       if(name==='add-record')return this.openEditor();
-      if(name==='assignment'){try{const fields={};this.shadowRoot.querySelectorAll('[data-assignment]').forEach(i=>fields[i.dataset.assignment]=i.value.trim());return this.mutate('set_assignment',{id:fields.id,reporter_id:fields.reporter_id,vehicle_id:fields.vehicle_id,trip:{trip_id:fields.trip_id,service_date:fields.service_date},valid_from:new Date(fields.valid_from).toISOString(),valid_to:new Date(fields.valid_to).toISOString()});}catch{this.message='Enter valid assignment dates and times.';this.error=true;this.render();}}
+      if(name==='trip-previous'||name==='trip-next'){this.tripOffset=Math.max(0,this.tripOffset+(name==='trip-next'?100:-100));this.loadAssignmentChoices().then(()=>this.render()).catch(error=>{this.message=error.message;this.error=true;this.render();});return;}
+      if(name==='assignment'){try{const fields=this.assignmentDraft;const choice=this.tripChoices.find(t=>this.tripChoiceKey(t)===fields.trip_key);if(!choice||!fields.reporter_id)throw new Error('Choose a driver phone and scheduled departure.');return this.mutate('set_assignment',{id:fields.id||'assignment_'+crypto.randomUUID(),reporter_id:fields.reporter_id,vehicle_id:fields.vehicle_id,trip:choice.trip,valid_from:new Date(fields.valid_from).toISOString(),valid_to:new Date(fields.valid_to).toISOString()});}catch(error){this.message=error.message||'Enter valid assignment dates and times.';this.error=true;this.render();}}
+    }
+    async assignmentChanged(el) {
+      const key=el.dataset.assignment;this.assignmentDraft[key]=el.value.trim();
+      if(key==='reporter_id'){const reporter=(this.status?.reporters||[]).find(r=>r.id===el.value);this.assignmentDraft.vehicle_id=reporter?.vehicle_id||'';this.render();}
+      if(key==='trip_key'){const choice=this.tripChoices.find(t=>this.tripChoiceKey(t)===el.value);if(choice){this.assignmentDraft.valid_from=this.localDateTime(choice.departure_at-3600000);this.assignmentDraft.valid_to=this.localDateTime(choice.end_at+7200000);}this.render();}
+      if(key==='route_id'||key==='service_date'){this.tripOffset=0;this.assignmentDraft.trip_key='';try{await this.loadAssignmentChoices();this.render();}catch(error){this.message=error.message;this.error=true;this.render();}}
     }
     editorField(name,label,value='',type='text',attributes='') {
       return `<label>${escape(label)}<input name="${name}" type="${type}" value="${escape(value)}" ${attributes}></label>`;

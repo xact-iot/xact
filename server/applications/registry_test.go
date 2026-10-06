@@ -41,3 +41,59 @@ func TestManifestRegistrationAndServiceBoundaries(t *testing.T) {
 		})
 	}
 }
+
+func TestServiceDeleteSubjectBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name, subject string
+		publish, want bool
+	}{
+		{"device wildcard", "xact.internal.delete_request.default.PUBLIC_BUS.BUSES.*", true, true},
+		{"exact device", "xact.internal.delete_request.default.PUBLIC_BUS.BUSES.bus_1", true, true},
+		{"path wildcard", "xact.internal.delete_request.default.PUBLIC_BUS.>", true, true},
+		{"subscribe", "xact.internal.delete_request.default.PUBLIC_BUS.BUSES.*", false, false},
+		{"wildcard tenant", "xact.internal.delete_request.*.PUBLIC_BUS.BUSES.*", true, false},
+		{"all tenants", "xact.internal.delete_request.>", true, false},
+		{"missing path", "xact.internal.delete_request.default", true, false},
+		{"empty token", "xact.internal.delete_request.default..BUSES.*", true, false},
+		{"nonterminal wildcard", "xact.internal.delete_request.default.PUBLIC_BUS.>.bus_1", true, false},
+		{"whitespace", "xact.internal.delete_request.default.PUBLIC_BUS.BUSES.bus 1", true, false},
+		{"other internal operation", "xact.internal.delete.default.PUBLIC_BUS.BUSES.*", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := validServiceSubject(tc.subject, "public_bus", "app:public_bus", tc.publish); got != tc.want {
+				t.Fatalf("validServiceSubject(%q, publish=%v) = %v, want %v", tc.subject, tc.publish, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBundledApplicationManifests(t *testing.T) {
+	manifests, err := Load(filepath.Join("..", "..", "plugins"))
+	if err != nil {
+		t.Fatalf("bundled application manifests failed validation: %v", err)
+	}
+	if len(manifests) == 0 {
+		t.Fatal("no bundled application manifests found")
+	}
+}
+
+func TestInvalidServiceSubjectErrorIdentifiesManifestAndService(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "applications"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	const subject = "xact.internal.delete_request.*.DEMO.*"
+	manifest := `{"id":"demo","resource":{"id":"demo","permissions":[{"name":"read"}]},"operations":["get_status"],"services":[{"username":"app:demo","password_env":"DEMO_SECRET","publish":["` + subject + `"]}]}`
+	if err := os.WriteFile(filepath.Join(root, "applications", "demo.json"), []byte(manifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(root)
+	if err == nil {
+		t.Fatal("invalid subject accepted")
+	}
+	for _, detail := range []string{"demo.json", "app:demo", subject, "invalid service publish subject"} {
+		if !strings.Contains(err.Error(), detail) {
+			t.Fatalf("error %q missing %q", err, detail)
+		}
+	}
+}

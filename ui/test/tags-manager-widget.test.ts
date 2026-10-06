@@ -41,6 +41,9 @@ let canRead = true;
 let canWrite = true;
 
 const mockStore = {
+  loadMatchingTags: vi.fn(async () => {}),
+  ensureChildren: vi.fn(async () => {}),
+  loadSelectedPaths: vi.fn(async () => {}),
   subscribeToTreeChanges: vi.fn(() => vi.fn()),
   loadTreeFromAPI: vi.fn(async () => {}),
   listChildrenNames: vi.fn((path: string) => childrenByPath[path] ?? []),
@@ -221,6 +224,33 @@ describe('tags-manager-widget search', () => {
     expect(widget.textContent).not.toContain('mode');
   });
 
+  it('does not render unresolved or deleted-device placeholders as float tags', async () => {
+    seedTree();
+    childrenByPath['default.Area'].push('bus_pending', 'bus_deleted');
+    nodeTypes['default.Area.bus_pending'] = 'unknown';
+    nodeTypes['default.Area.bus_deleted'] = 'unknown';
+    // A late value subscription may also have created descendants.
+    childrenByPath['default.Area.bus_deleted'] = ['meta'];
+    nodeTypes['default.Area.bus_deleted.meta'] = 'unknown';
+    const widget = document.createElement('tags-manager-widget') as any;
+    document.body.appendChild(widget);
+    await flushMicrotasks();
+    widget.expandedNodes.add('default.Area');
+    widget.rerender();
+    expect(widget.textContent).not.toContain('bus_pending');
+    expect(widget.textContent).not.toContain('bus_deleted');
+    expect(mockStore.subscribe).not.toHaveBeenCalledWith('default.Area.bus_pending', expect.any(Function));
+    expect(widget.countMatchingLeaves('default.Area')).toBe(4);
+
+    // Once node metadata arrives, the device appears as an expandable group.
+    nodeTypes['default.Area.bus_pending'] = 'node';
+    childrenByPath['default.Area.bus_pending'] = ['meta'];
+    nodeTypes['default.Area.bus_pending.meta'] = 'node';
+    widget.rerender();
+    expect(widget.querySelector('[data-node-path="default.Area.bus_pending"]')).not.toBeNull();
+    expect(mockStore.subscribe).not.toHaveBeenCalledWith('default.Area.bus_pending', expect.any(Function));
+  });
+
   it('coalesces 400,000 descendant deletes into one refresh and resubscribes recreated tags', async () => {
     seedTree();
     vi.useFakeTimers();
@@ -327,7 +357,7 @@ describe('tags-manager-widget search', () => {
     await flushMicrotasks();
     widget.querySelector<HTMLElement>('.tv-show-more[data-kind="leaf"]')!.click();
     expect(widget.querySelectorAll('.tv-leaf-row')).toHaveLength(110);
-    expect(mockStore.subscribe).toHaveBeenCalledTimes(110);
+    expect(new Set(mockStore.subscribe.mock.calls.map(([path]) => path)).size).toBe(110);
 
     widget.querySelector<HTMLElement>('.tv-show-more[data-kind="node"]')!.click();
     expect(widget.querySelectorAll('.tv-node-row')).toHaveLength(111);
@@ -583,6 +613,77 @@ describe('tags-manager-widget search', () => {
 
   });
 
+  it('updates live cells without replacing the list or interrupting scrolling', async () => {
+    seedTree();
+    vi.useFakeTimers();
+    const widget = document.createElement('tags-manager-widget') as any;
+    document.body.appendChild(widget);
+    await flushMicrotasks();
+    await flushMicrotasks();
+    widget.setTransientState({ expandedNodes: ['default.Area', 'default.Area.Device'], scrollTop: 120 });
+    const body = widget.querySelector('#tv-tree-body');
+    const row = widget.querySelector('tr[data-leaf-path="default.Area.Device.temperature"]');
+    const callback = mockStore.subscribe.mock.calls.find(([path]) => path === 'default.Area.Device.temperature')![1];
+    const treeCallback = mockStore.subscribeToTreeChanges.mock.calls.at(-1)![1];
+    const oldTimestamp = widget.querySelector('[data-node-path="default.Area.Device"] .tv-node-timestamp').textContent;
+    timestampsByPath['default.Area.Device.temperature'] += 60_000;
+    statusByPath['default.Area.Device.temperature'] = 'A';
+    callback(42);
+    treeCallback('default.Area.Device.temperature', { type: 'value', value: 42, status: 'A' });
+    body.scrollTop = 240;
+    vi.advanceTimersByTime(50);
+    await flushMicrotasks();
+    expect(widget.querySelector('#tv-tree-body')).toBe(body);
+    expect(widget.querySelector('tr[data-leaf-path="default.Area.Device.temperature"]')).toBe(row);
+    expect(row.textContent).toContain('42');
+    expect(row.textContent).toContain('ALARM');
+    expect(body.scrollTop).toBe(240);
+    expect(widget.querySelector('[data-node-path="default.Area.Device"] .tv-node-timestamp').textContent).not.toBe(oldTimestamp);
+
+    // A value event can also introduce a new tag and must refresh the structure.
+    childrenByPath['default.Area.Device'].push('new_tag');
+    nodeTypes['default.Area.Device.new_tag'] = 'leaf';
+    treeCallback('default.Area.Device.new_tag', { type: 'value', value: 1 });
+    vi.advanceTimersByTime(50);
+    expect(widget.textContent).toContain('new_tag');
+    expect(widget.querySelector('#tv-tree-body').scrollTop).toBe(240);
+  });
+
+  it('keeps filtered lists intact until a tag changes filter membership', async () => {
+    seedTree();
+    vi.useFakeTimers();
+    const widget = document.createElement('tags-manager-widget') as any;
+    document.body.appendChild(widget);
+    await flushMicrotasks();
+    await flushMicrotasks();
+    widget.setTransientState({ expandedNodes: ['default.Area', 'default.Area.Device'], statusFilter: 'A', scrollTop: 80 });
+    const body = widget.querySelector('#tv-tree-body');
+    const treeCallback = mockStore.subscribeToTreeChanges.mock.calls.at(-1)![1];
+    treeCallback('default.Area.Device.enabled', { type: 'value', value: false, status: 'A' });
+    vi.advanceTimersByTime(50);
+    expect(widget.querySelector('#tv-tree-body')).toBe(body);
+    statusByPath['default.Area.Device.temperature'] = 'A';
+    treeCallback('default.Area.Device.temperature', { type: 'value', value: 45, status: 'A' });
+    vi.advanceTimersByTime(50);
+    expect(widget.querySelector('tr[data-leaf-path="default.Area.Device.temperature"]')).not.toBeNull();
+    expect(widget.querySelector('#tv-tree-body').scrollTop).toBe(80);
+  });
+
+  it('does not overwrite a newer scroll position after a structural render', async () => {
+    seedTree();
+    const widget = document.createElement('tags-manager-widget') as any;
+    document.body.appendChild(widget);
+    await flushMicrotasks();
+    await flushMicrotasks();
+    widget.setTransientState({ expandedNodes: ['default.Area', 'default.Area.Device'], scrollTop: 120 });
+    widget.rerender();
+    const body = widget.querySelector('#tv-tree-body');
+    expect(body.scrollTop).toBe(120);
+    body.scrollTop = 260;
+    await flushMicrotasks();
+    expect(body.scrollTop).toBe(260);
+  });
+
   it('restores the expanded tree, filters, and scroll position after reconstruction', async () => {
     seedTree();
     const widget = document.createElement('tags-manager-widget') as any;
@@ -604,5 +705,24 @@ describe('tags-manager-widget search', () => {
     expect(state.statusFilter).toBe('A');
     expect(state.scrollTop).toBe(47);
     expect(widget.querySelector<HTMLInputElement>('#tv-search')?.value).toBe('temp');
+  });
+});
+
+describe('tags-manager-widget demand loading lifecycle', () => {
+  it('releases visible tag callbacks on collapse and disconnect', async () => {
+    seedTree();
+    const widget = document.createElement('tags-manager-widget') as any;
+    document.body.appendChild(widget);
+    await flushMicrotasks();
+    widget.setTransientState({ expandedNodes: ['default.Area', 'default.Area.Device', 'default.Area.Device.meta'] });
+    await flushMicrotasks();
+    const releases = mockStore.subscribe.mock.results.map(result => result.value);
+    expect(releases.length).toBeGreaterThan(0);
+    widget.querySelector<HTMLElement>('[data-node-path="default.Area.Device.meta"]')!.click();
+    const metaIndex = mockStore.subscribe.mock.calls.findIndex(([path]) => path.endsWith('.meta.serial'));
+    expect(mockStore.subscribe.mock.results[metaIndex].value).toHaveBeenCalled();
+    widget.remove();
+    for (const release of releases) expect(release).toHaveBeenCalled();
+    expect(mockStore.loadTreeFromAPI).not.toHaveBeenCalled();
   });
 });

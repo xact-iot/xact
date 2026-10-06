@@ -96,6 +96,8 @@ func publicWidgetConfig(kind string, config map[string]json.RawMessage) (map[str
 			"showAtZoom": true,
 			"iconRules":  true, "defaultGlyph": true, "defaultColor": true, "defaultSize": true,
 			"iconRotationEnabled": true, "iconRotationTag": true, "zoomThreshold": true,
+			"positionAnimationMs":     true,
+			"clusteringEnabled":       true,
 			"showZoomedTooltipAlways": true,
 			"offsetX":                 true, "offsetY": true,
 			"routeCoordinatesTag": true, "routeNameTag": true,

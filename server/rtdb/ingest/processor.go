@@ -10,6 +10,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xact-iot/xact/rtdb/blocks"
@@ -370,8 +371,11 @@ type NotificationResolver interface {
 
 // Processor writes device payload data into the RTDB.
 type Processor struct {
-	treeOps       *tree.TreeWithOperations
-	notifResolver NotificationResolver
+	treeOps        *tree.TreeWithOperations
+	notifResolver  NotificationResolver
+	lifecycleLocks [64]sync.Mutex
+	lifecycleStore LifecycleStore
+	retired        sync.Map
 }
 
 // NewProcessor returns a Processor backed by the given tree.
@@ -419,6 +423,18 @@ func (p *Processor) resolveLimitEvent(src *limitEventConfig, org string) *blocks
 // WriteDeviceData writes parsed tag data into the RTDB under the given device.
 // It is safe to call concurrently from multiple goroutines.
 func (p *Processor) WriteDeviceData(tenant, zone, deviceType, deviceName string, data TagData) error {
+	lock := p.lifecycleLock(tenant, zone, deviceType, deviceName)
+	lock.Lock()
+	defer lock.Unlock()
+	if retired, err := p.deviceRetired(tenant, zone, deviceType, deviceName); err != nil {
+		return err
+	} else if retired {
+		return fmt.Errorf("device session has retired")
+	}
+	return p.writeDeviceData(tenant, zone, deviceType, deviceName, data)
+}
+
+func (p *Processor) writeDeviceData(tenant, zone, deviceType, deviceName string, data TagData) error {
 	var devicePath, deviceTypePath string
 	if zone != "" {
 		devicePath = tenant + "." + zone + "." + deviceType + "." + deviceName
