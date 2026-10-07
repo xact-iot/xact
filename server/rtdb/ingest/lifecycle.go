@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/xact-iot/xact/rtdb/tree"
+	"maps"
 	"regexp"
 	"strings"
 	"sync"
@@ -55,48 +56,161 @@ func retirementKey(relative string) string {
 	return "ingest_retired_" + hex.EncodeToString(h[:])
 }
 
-func (p *Processor) deviceRetired(tenant, zone, typ, name string) (bool, error) {
+// Retirement follows a session, so a stable device name can be reused safely.
+// Legacy unversioned deletes remain permanent path retirements.
+type deviceLifecycle struct {
+	Active    string          `json:"active_session,omitempty"`
+	Retired   map[string]bool `json:"retired_sessions,omitempty"`
+	Permanent bool            `json:"permanent,omitempty"`
+	Session   string          `json:"session,omitempty"` // old persisted retirement format
+}
+
+func decodeLifecycle(raw json.RawMessage) (deviceLifecycle, error) {
+	state := deviceLifecycle{}
+	if len(raw) == 0 {
+		return state, nil
+	}
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return state, err
+	}
+	if state.Session != "" {
+		state.Retired = map[string]bool{state.Session: true}
+		state.Session = ""
+	} else if state.Active == "" && len(state.Retired) == 0 {
+		state.Permanent = true
+	}
+	return state, nil
+}
+
+func (p *Processor) loadLifecycle(tenant, zone, typ, name string) (deviceLifecycle, error) {
 	key := tenant + "/" + lifecycleKey(zone, typ, name)
 	if cached, ok := p.retired.Load(key); ok {
-		return cached.(bool), nil
+		return cached.(deviceLifecycle), nil
 	}
-	retired := false
+	state := deviceLifecycle{}
 	if p.lifecycleStore != nil {
 		raw, err := p.lifecycleStore.LoadConfig(context.Background(), tenant, lifecycleKey(zone, typ, name))
 		if err != nil {
-			return false, err
+			return state, err
 		}
-		retired = len(raw) > 0
+		state, err = decodeLifecycle(raw)
+		if err != nil {
+			return state, err
+		}
 	}
-	p.retired.Store(key, retired)
-	return retired, nil
+	p.retired.Store(key, state)
+	return state, nil
+}
+func (p *Processor) saveLifecycle(evt IngestEvent, state deviceLifecycle) error {
+	if p.lifecycleStore != nil {
+		raw, err := json.Marshal(state)
+		if err != nil {
+			return err
+		}
+		if err = p.lifecycleStore.SaveConfig(context.Background(), evt.Tenant, lifecycleKey(evt.Zone, evt.DeviceType, evt.DeviceName), raw); err != nil {
+			return err
+		}
+	}
+	p.retired.Store(evt.Tenant+"/"+lifecycleKey(evt.Zone, evt.DeviceType, evt.DeviceName), state)
+	return nil
+}
+func (p *Processor) deviceRetired(tenant, zone, typ, name string) (bool, error) {
+	state, err := p.loadLifecycle(tenant, zone, typ, name)
+	return state.Permanent || state.Active != "" || len(state.Retired) > 0, err
+}
+func (p *Processor) deviceSession(path string) string {
+	leaf, err := p.treeOps.FindLeaf(path + ".meta.session")
+	if err != nil {
+		return ""
+	}
+	value, _ := leaf.GetAnyValue().(string)
+	return value
 }
 
 // ProcessEvent runs in the same partition queue for upserts and deletion.
-// A retired device path is never reused; a new session gets a new device name.
 func (p *Processor) ProcessEvent(evt IngestEvent) error {
-	if evt.Operation != "delete" {
-		if evt.Operation != "" && evt.Operation != "upsert" {
-			return fmt.Errorf("unsupported device operation")
-		}
+	if evt.Operation != "" && evt.Operation != "upsert" && evt.Operation != "delete" {
+		return fmt.Errorf("unsupported device operation")
+	}
+	if evt.Operation != "delete" && evt.Session == "" {
 		return p.WriteDeviceData(evt.Tenant, evt.Zone, evt.DeviceType, evt.DeviceName, evt.TagData)
 	}
 	lock := p.lifecycleLock(evt.Tenant, evt.Zone, evt.DeviceType, evt.DeviceName)
 	lock.Lock()
 	defer lock.Unlock()
-	key := lifecycleKey(evt.Zone, evt.DeviceType, evt.DeviceName)
-	if p.lifecycleStore != nil {
-		raw, _ := json.Marshal(map[string]string{"session": evt.Session, "device_type": evt.DeviceType, "device_name": evt.DeviceName})
-		if err := p.lifecycleStore.SaveConfig(context.Background(), evt.Tenant, key, raw); err != nil {
+	state, err := p.loadLifecycle(evt.Tenant, evt.Zone, evt.DeviceType, evt.DeviceName)
+	if err != nil {
+		return err
+	}
+	path := DevicePath(evt.Tenant, evt.Zone, evt.DeviceType, evt.DeviceName)
+	currentSession := p.deviceSession(path)
+	if state.Active == "" && currentSession != "" && !state.Permanent && !state.Retired[currentSession] {
+		state.Active = currentSession
+	}
+	if evt.Operation == "delete" {
+		if evt.Session == "" {
+			if state.Active != "" {
+				return fmt.Errorf("session required to retire a versioned device")
+			}
+			state.Permanent = true
+		} else {
+			state.Retired = maps.Clone(state.Retired)
+			if state.Retired == nil {
+				state.Retired = map[string]bool{}
+			}
+			state.Retired[evt.Session] = true
+			if state.Active == evt.Session {
+				state.Active = ""
+			}
+		}
+		if err = p.saveLifecycle(evt, state); err != nil {
+			return err
+		}
+		// A retry or delayed delete for an older trip cannot remove a newer trip.
+		if evt.Session != "" && (state.Active != "" || (currentSession != "" && currentSession != evt.Session)) {
+			return nil
+		}
+		if _, err = p.treeOps.FindNode(path); err != nil {
+			return nil
+		}
+		return DeleteDevice(p.treeOps, evt.Tenant, evt.Zone, evt.DeviceType, evt.DeviceName)
+	}
+	if state.Permanent || state.Retired[evt.Session] {
+		return fmt.Errorf("device session has retired")
+	}
+	if meta := evt.TagData.Groups["meta"]; meta != nil {
+		if session, ok := meta["session"]; ok && session != evt.Session {
+			return fmt.Errorf("session does not match device metadata")
+		}
+	}
+	if state.Active != evt.Session {
+		state.Retired = maps.Clone(state.Retired)
+		if state.Retired == nil {
+			state.Retired = map[string]bool{}
+		}
+		if state.Active != "" {
+			state.Retired[state.Active] = true
+		}
+		if currentSession != "" && currentSession != evt.Session {
+			state.Retired[currentSession] = true
+		}
+		state.Active = evt.Session
+		if err = p.saveLifecycle(evt, state); err != nil {
 			return err
 		}
 	}
-	p.retired.Store(evt.Tenant+"/"+key, true)
-	path := DevicePath(evt.Tenant, evt.Zone, evt.DeviceType, evt.DeviceName)
-	if _, err := p.treeOps.FindNode(path); err != nil {
-		return nil
+	if evt.TagData.Groups == nil {
+		evt.TagData.Groups = map[string]map[string]any{}
+	} else {
+		evt.TagData.Groups = maps.Clone(evt.TagData.Groups)
 	}
-	return DeleteDevice(p.treeOps, evt.Tenant, evt.Zone, evt.DeviceType, evt.DeviceName)
+	meta := maps.Clone(evt.TagData.Groups["meta"])
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	meta["session"] = evt.Session
+	evt.TagData.Groups["meta"] = meta
+	return p.writeDeviceData(evt.Tenant, evt.Zone, evt.DeviceType, evt.DeviceName, evt.TagData)
 }
 
 func (p *Processor) lifecycleLock(tenant, zone, typ, name string) *sync.Mutex {
@@ -122,8 +236,15 @@ func (p *Processor) ReconcileRetiredDevices() error {
 				return err
 			}
 			if len(raw) > 0 {
-				p.retired.Store(parts[0]+"/"+retirementKey(parts[1]), true)
-				return p.treeOps.DeleteNode(path)
+				state, err := decodeLifecycle(raw)
+				if err != nil {
+					return err
+				}
+				p.retired.Store(parts[0]+"/"+retirementKey(parts[1]), state)
+				session := p.deviceSession(path)
+				if state.Permanent || state.Active == "" || state.Retired[session] {
+					return p.treeOps.DeleteNode(path)
+				}
 			}
 			return nil
 		}

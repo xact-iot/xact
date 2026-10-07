@@ -141,3 +141,115 @@ func TestDeleteAcknowledgementWaitsForProcessing(t *testing.T) {
 		t.Fatalf("processing failure not propagated: %#v", r)
 	}
 }
+
+func TestStableVehiclePathRejectsOldSessionsAndDelayedDeletes(t *testing.T) {
+	ops := setupTree(t)
+	store := &lifecycleMemoryStore{data: map[string]json.RawMessage{}}
+	p := NewProcessor(ops)
+	p.SetLifecycleStore(store)
+	event := func(session string) IngestEvent {
+		return IngestEvent{Tenant: "TestOrg", DeviceType: "PUBLIC_BUS.BUSES", DeviceName: "81207", Session: session, TagData: TagData{Groups: map[string]map[string]any{"meta": {"lat": 49.28, "lon": -123.12}}}}
+	}
+	first := event("one")
+	if err := p.ProcessEvent(first); err != nil {
+		t.Fatal(err)
+	}
+	next := event("two")
+	if err := p.ProcessEvent(next); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.ProcessEvent(first); err == nil {
+		t.Fatal("superseded session overwrote the new trip")
+	}
+	first.Operation = "delete"
+	if err := p.ProcessEvent(first); err != nil {
+		t.Fatal(err)
+	}
+	path := "TestOrg.PUBLIC_BUS.BUSES.81207"
+	if got := p.deviceSession(path); got != "two" {
+		t.Fatalf("delayed delete removed new trip: %q", got)
+	}
+	p = NewProcessor(ops)
+	p.SetLifecycleStore(store)
+	if err := p.ReconcileRetiredDevices(); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.deviceSession(path); got != "two" {
+		t.Fatalf("active vehicle removed on restart: %q", got)
+	}
+	first.Operation = ""
+	if err := p.ProcessEvent(first); err == nil {
+		t.Fatal("old session accepted after receiver restart")
+	}
+	next.Operation = "delete"
+	if err := p.ProcessEvent(next); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ops.FindNode(path); err == nil {
+		t.Fatal("current trip not retired")
+	}
+	third := event("three")
+	if err := p.ProcessEvent(third); err != nil {
+		t.Fatal(err)
+	}
+	next.Operation = ""
+	if err := p.ProcessEvent(next); err == nil {
+		t.Fatal("second retired session recreated device")
+	}
+	if err := p.ProcessEvent(first); err == nil {
+		t.Fatal("first retired session lost its fence")
+	}
+	// Restore an outdated tree while the lifecycle record identifies session three.
+	if err := ops.DeleteNode(path); err != nil {
+		t.Fatal(err)
+	}
+	restored := NewProcessor(ops)
+	if err := restored.ProcessEvent(first); err != nil {
+		t.Fatal(err)
+	}
+	p = NewProcessor(ops)
+	p.SetLifecycleStore(store)
+	if err := p.ReconcileRetiredDevices(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ops.FindNode(path); err == nil {
+		t.Fatal("old tree session survived restart reconciliation")
+	}
+	if err := p.ProcessEvent(third); err != nil {
+		t.Fatalf("current trip could not republish: %v", err)
+	}
+}
+
+func TestSessionTransitionPersistenceFailureLeavesCurrentTripUsable(t *testing.T) {
+	ops := setupTree(t)
+	store := &lifecycleMemoryStore{data: map[string]json.RawMessage{}}
+	p := NewProcessor(ops)
+	p.SetLifecycleStore(store)
+	first := IngestEvent{Tenant: "TestOrg", DeviceType: "PUBLIC_BUS.BUSES", DeviceName: "81207", Session: "one", TagData: TagData{Groups: map[string]map[string]any{"meta": {"online": true}}}}
+	if err := p.ProcessEvent(first); err != nil {
+		t.Fatal(err)
+	}
+	next := first
+	next.Session = "two"
+	store.fail = true
+	if err := p.ProcessEvent(next); err == nil {
+		t.Fatal("transition acknowledged before durable state")
+	}
+	if got := p.deviceSession("TestOrg.PUBLIC_BUS.BUSES.81207"); got != "one" {
+		t.Fatalf("failed transition changed session: %q", got)
+	}
+	if err := p.ProcessEvent(first); err != nil {
+		t.Fatalf("failed transition retired current session: %v", err)
+	}
+	store.fail = false
+	if err := p.ProcessEvent(next); err != nil {
+		t.Fatal(err)
+	}
+	first.Operation = "delete"
+	if err := p.ProcessEvent(first); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.deviceSession("TestOrg.PUBLIC_BUS.BUSES.81207"); got != "two" {
+		t.Fatalf("old delete affected new session: %q", got)
+	}
+}
