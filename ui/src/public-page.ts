@@ -103,7 +103,7 @@ async function start(): Promise<void> {
   }
 
   fitPublicMaps(dashboard, values);
-  getMirrorStore().applyPublicSnapshot(org, values);
+  getMirrorStore().applyPublicSnapshot(org, values, true);
   document.title = dashboard.name + ' · XACT';
 
   const header = document.createElement('header');
@@ -138,12 +138,7 @@ async function start(): Promise<void> {
     polling = true;
     try {
       const next = await getJSON<Record<string, PublicValue>>(base + '/data');
-      const added = getMirrorStore().applyPublicSnapshot(org, next);
-      if (added) {
-        for (const map of container.querySelectorAll<any>('area-map-widget')) {
-          void map.refreshLayers?.();
-        }
-      }
+      getMirrorStore().applyPublicSnapshot(org, next, true);
     } catch (error) {
       if ((error as Error).message === '404') {
         window.clearInterval(timer);

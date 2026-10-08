@@ -3,6 +3,7 @@ package persistence
 import (
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 
 	"github.com/xact-iot/xact/rtdb/tree"
@@ -42,11 +43,13 @@ type LeafConfig struct {
 // SerializeTree walks the tree and produces a TreeConfig
 func SerializeTree(root *tree.Node) (*TreeConfig, error) {
 	config := &TreeConfig{}
-	walkNode(root, "", config)
+	if err := walkNode(root, "", config); err != nil {
+		return nil, err
+	}
 	return config, nil
 }
 
-func walkNode(node *tree.Node, parentPath string, config *TreeConfig) {
+func walkNode(node *tree.Node, parentPath string, config *TreeConfig) error {
 	children := node.GetChildren()
 
 	path := parentPath
@@ -58,40 +61,9 @@ func walkNode(node *tree.Node, parentPath string, config *TreeConfig) {
 		}
 	}
 
-	nc := NodeConfig{
-		Path:         path,
-		Description:  node.GetDescription(),
-		TemplateName: node.GetTemplateName(),
-		Type:         string(node.GetNodeType()),
-		Locked:       node.IsLocked(),
-		IsArray:      node.GetIsArray(),
-	}
-
-	// Gather leaves first
-	for _, child := range children {
-		if leaf, ok := child.(tree.Leaf); ok {
-			lc := LeafConfig{
-				Name:         leaf.GetName(),
-				Type:         leaf.ValueType().String(),
-				Description:  leaf.GetDescription(),
-				Units:        leaf.GetShared().Units,
-				Deadband:     leaf.GetShared().Deadband,
-				TemplateName: leaf.GetConfig().TemplateName,
-			}
-			if leaf.ValueType() == tree.TypeEnum {
-				lc.EnumValues = leaf.GetShared().EnumValues
-			}
-			// Serialize the local pipeline only (not the effective/inherited pipeline).
-			// Template-linked leaves have an empty local pipeline; the template leaf's
-			// pipeline is serialized on the template node itself and re-linked on restore.
-			if pipeline := leaf.GetShared().Pipeline; len(pipeline) > 0 {
-				envelopes, err := tree.MarshalPipeline(pipeline)
-				if err == nil {
-					lc.Pipeline = envelopes
-				}
-			}
-			nc.Children = append(nc.Children, lc)
-		}
+	nc, err := serializeNode(node, path, children)
+	if err != nil {
+		return err
 	}
 
 	// Add parent node before recursing (pre-order) ensures parents are unlocked before children process
@@ -103,9 +75,67 @@ func walkNode(node *tree.Node, parentPath string, config *TreeConfig) {
 	for _, child := range children {
 		if child.IsNode() {
 			childNode := child.(*tree.Node)
-			walkNode(childNode, path, config)
+			if err := walkNode(childNode, path, config); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
+}
+
+// SerializeNode captures metadata and immediate leaves without walking descendants.
+func SerializeNode(node *tree.Node, path string) (NodeConfig, error) {
+	return serializeNode(node, path, node.GetChildren())
+}
+
+func serializeNode(node *tree.Node, path string, children map[string]tree.TreeNode) (NodeConfig, error) {
+	nc := NodeConfig{
+		Path:         path,
+		Description:  node.GetDescription(),
+		TemplateName: node.GetTemplateName(),
+		Type:         string(node.GetNodeType()),
+		Locked:       node.IsLocked(),
+		IsArray:      node.GetIsArray(),
+	}
+
+	// Gather leaves first
+	names := make([]string, 0, len(children))
+	for name, child := range children {
+		if _, ok := child.(tree.Leaf); ok {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		child := children[name]
+		if leaf, ok := child.(tree.Leaf); ok {
+			shared := leaf.GetShared()
+			lc := LeafConfig{
+				Name:         leaf.GetName(),
+				Type:         leaf.ValueType().String(),
+				Description:  leaf.GetDescription(),
+				Units:        shared.Units,
+				Deadband:     shared.Deadband,
+				TemplateName: leaf.GetConfig().TemplateName,
+			}
+			if leaf.ValueType() == tree.TypeEnum {
+				lc.EnumValues = shared.EnumValues
+			}
+			// Serialize the local pipeline only (not the effective/inherited pipeline).
+			// Template-linked leaves have an empty local pipeline; the template leaf's
+			// pipeline is serialized on the template node itself and re-linked on restore.
+			if pipeline := shared.Pipeline; len(pipeline) > 0 {
+				envelopes, err := tree.MarshalPipeline(pipeline)
+				if err != nil {
+					return NodeConfig{}, fmt.Errorf("serialize pipeline %s.%s: %w", path, name, err)
+				}
+				lc.Pipeline = envelopes
+			}
+			nc.Children = append(nc.Children, lc)
+		}
+	}
+
+	return nc, nil
 }
 
 // DeserializeTree rebuilds a tree from a TreeConfig
@@ -151,8 +181,9 @@ func DeserializeTree(config *TreeConfig, treeOps *tree.TreeWithOperations) error
 			scalarType := parseScalarType(lc.Type)
 
 			config := tree.TagConfig{
-				Name: lc.Name,
-				Type: scalarType,
+				Name:         lc.Name,
+				Type:         scalarType,
+				TemplateName: lc.TemplateName,
 			}
 			shared := tree.TagShared{
 				Description: lc.Description,
@@ -164,6 +195,15 @@ func DeserializeTree(config *TreeConfig, treeOps *tree.TreeWithOperations) error
 			if err := treeOps.CreateTag(leafPath, scalarType, config, shared); err != nil {
 				return fmt.Errorf("creating tag %s: %w", leafPath, err)
 			}
+			// Device/organisation creation has already provisioned mandatory
+			// meta leaves. CreateTag is idempotent, so explicitly restore their
+			// saved metadata too instead of keeping constructor defaults.
+			leaf, err := treeOps.FindLeaf(leafPath)
+			if err != nil {
+				return err
+			}
+			shared.Pipeline = leaf.GetShared().Pipeline
+			leaf.SetShared(shared)
 
 			// Restore pipeline if present
 			if len(lc.Pipeline) > 0 {
@@ -171,6 +211,7 @@ func DeserializeTree(config *TreeConfig, treeOps *tree.TreeWithOperations) error
 				if err == nil {
 					pipeline, err := tree.UnmarshalPipeline(lc.Pipeline)
 					if err == nil {
+						tree.ClosePipelineBlocks(leaf, leaf.GetShared().Pipeline)
 						shared := leaf.GetShared()
 						shared.Pipeline = pipeline
 						leaf.SetShared(shared)

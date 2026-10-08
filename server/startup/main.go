@@ -345,7 +345,7 @@ func main() {
 		}
 		log.Printf("persistence: tree and saved values restored in %s", time.Since(restoreStarted).Round(time.Millisecond))
 		if err != nil {
-			console.Warn("db", "", "Failed to restore tree config", "error", err)
+			log.Fatalf("Failed to restore tree config: %v", err)
 		}
 		if !restored {
 			console.Info("db", "", "No saved tree config found, starting with empty tree")
@@ -355,7 +355,13 @@ func main() {
 	}
 
 	// Publish all changes (including value updates) to NATS.
+	tagPublisher.SeedTagValues(treeOps)
 	treeOps.SetOnChange(func(path string, node tree.TreeNode) {
+		if node == nil {
+			if err := tagPublisher.ForgetTagValues(path); err != nil {
+				console.Error("tree", "", "Failed to remove retained tag values", "error", err)
+			}
+		}
 		if err := treeSync.PublishChange(path, node); err != nil {
 			console.Error("tree", "", "Failed to publish change", "error", err)
 		}
@@ -365,7 +371,7 @@ func main() {
 	// not on leaf value updates, so periodic script writes don't trigger saves.
 	if persistMgr != nil {
 		treeOps.SetOnStructureChange(func(path string, node tree.TreeNode) {
-			persistMgr.MarkDirty()
+			persistMgr.MarkStructureDirty(path, node)
 		})
 	}
 
@@ -493,12 +499,12 @@ func main() {
 		defer schedEngine.Stop()
 
 		if visualStore, ok := database.(visualscripts.Store); ok {
-			visualServices, visualTagSubscription, err := visualScriptServices(database, treeOps, nc, publisher)
+			visualServices, visualTagSubscriptions, err := visualScriptServices(database, treeOps, nc, publisher)
 			if err != nil {
 				log.Printf("Warning: visual script tag subscription unavailable: %v", err)
 			}
-			if visualTagSubscription != nil {
-				defer visualTagSubscription.Unsubscribe()
+			for _, subscription := range visualTagSubscriptions {
+				defer subscription.Unsubscribe()
 			}
 			visualEngine := visualscripts.NewWithServices(visualStore, visualServices)
 			defer visualEngine.Close()

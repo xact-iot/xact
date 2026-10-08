@@ -1,7 +1,9 @@
 package nats
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/xact-iot/xact/rtdb/tree"
 )
 
 // Common stream subjects and kv keys
@@ -19,6 +22,7 @@ type SubjectName string
 
 const (
 	TagValueStream SubjectName = "tagvalue"
+	TagBatchStream SubjectName = "tagbatch"
 )
 
 // Publisher
@@ -37,7 +41,8 @@ var workerQueueRegistry sync.Map
 // Broadcast Stream
 // ------------------------------
 type BroadcastStream struct {
-	js jetstream.JetStream
+	js   jetstream.JetStream
+	tags tagPublicationState
 }
 
 // name is the subclass of messages, e.g. TagValue
@@ -62,6 +67,9 @@ func GetBroadcastStream(name SubjectName) (*BroadcastStream, error) {
 		Storage:           jetstream.MemoryStorage,
 		MaxMsgsPerSubject: 1,
 	}
+	if name == TagValueStream {
+		cfg.Subjects = append(cfg.Subjects, BroadcastStreamPrefix+string(TagBatchStream)+".>")
+	}
 
 	_, err = bcast.js.CreateOrUpdateStream(context.Background(), cfg)
 	if err != nil {
@@ -71,9 +79,20 @@ func GetBroadcastStream(name SubjectName) (*BroadcastStream, error) {
 	return bcast, err
 }
 func (bcast *BroadcastStream) TagValuePublish(tagPath string, data []byte) error {
-	_, err := bcast.Publish(tagPath, data, 0)
-	if err != nil {
-		return fmt.Errorf("publish failed: %w", err)
+	var values map[string]tree.TagValue
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&values); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data[decoder.InputOffset():])) != 0 {
+		return fmt.Errorf("trailing data in tag publication")
+	}
+	if len(values) != 1 {
+		return fmt.Errorf("expected one tag value for %s", tagPath)
+	}
+	for _, value := range values {
+		return bcast.PublishTagValue(tagPath, value)
 	}
 	return nil
 }

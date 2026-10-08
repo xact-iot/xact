@@ -17,7 +17,7 @@ import (
 	"github.com/xact-iot/xact/visualscripts"
 )
 
-func visualScriptServices(database sqldb.DB, treeOps *tree.TreeWithOperations, nc *natsgo.Conn, publisher *events.Publisher) (visualscripts.RuntimeServices, *natsgo.Subscription, error) {
+func visualScriptServices(database sqldb.DB, treeOps *tree.TreeWithOperations, nc *natsgo.Conn, publisher *events.Publisher) (visualscripts.RuntimeServices, []*natsgo.Subscription, error) {
 	router := visualscripts.NewTagChangeRouter(1000, 100)
 	services := visualscripts.RuntimeServices{
 		TagRouter:  router,
@@ -88,10 +88,20 @@ func visualScriptServices(database sqldb.DB, treeOps *tree.TreeWithOperations, n
 	if nc == nil {
 		return services, nil, nil
 	}
-	subscription, err := nc.Subscribe(xactnats.BroadcastStreamPrefix+string(xactnats.TagValueStream)+".>", func(message *natsgo.Msg) {
-		dispatchVisualScriptTag(router, message.Subject, message.Data)
-	})
-	return services, subscription, err
+	var subscriptions []*natsgo.Subscription
+	for _, stream := range []xactnats.SubjectName{xactnats.TagValueStream, xactnats.TagBatchStream} {
+		sub, err := nc.Subscribe(xactnats.BroadcastStreamPrefix+string(stream)+".>", func(message *natsgo.Msg) {
+			dispatchVisualScriptTag(router, message.Subject, message.Data)
+		})
+		if err != nil {
+			for _, previous := range subscriptions {
+				_ = previous.Unsubscribe()
+			}
+			return services, nil, err
+		}
+		subscriptions = append(subscriptions, sub)
+	}
+	return services, subscriptions, nil
 }
 
 type notificationProfileResolver interface {
@@ -193,24 +203,16 @@ func normalizeEventSeverity(value string) string {
 }
 
 func dispatchVisualScriptTag(router *visualscripts.TagChangeRouter, subject string, data []byte) {
-	prefix := xactnats.BroadcastStreamPrefix + string(xactnats.TagValueStream) + "."
-	remainder := strings.TrimPrefix(subject, prefix)
-	parts := strings.Split(remainder, ".")
-	if len(parts) < 2 || remainder == subject {
+	values, err := xactnats.DecodeTagValueChanges(subject, data)
+	if err != nil {
 		return
 	}
-	org := parts[0]
-	path := strings.Join(parts[1:], ".")
-	device := parts[1]
-	var values map[string]struct {
-		Value     any    `json:"value"`
-		Status    string `json:"status"`
-		Timestamp int64  `json:"timestamp"`
-	}
-	if json.Unmarshal(data, &values) != nil {
-		return
-	}
-	for _, value := range values {
+	for fullPath, value := range values {
+		org, path, ok := strings.Cut(fullPath, ".")
+		if !ok {
+			continue
+		}
+		device, _, _ := strings.Cut(path, ".")
 		timestamp := time.Now().UTC()
 		if value.Timestamp > 0 {
 			timestamp = time.UnixMilli(value.Timestamp).UTC()

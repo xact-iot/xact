@@ -656,6 +656,70 @@ void main() {
       api.close();
     },
   );
+
+  test(
+    'NATS batches preserve exact tag paths and dispatch only changed values',
+    () async {
+      final channel = _FakeChannel();
+      final api = XactApiClient(
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'natsWsUrl': 'wss://broker.example.test',
+              'username': 'browser',
+              'password': _token(),
+            }),
+            200,
+          ),
+        ),
+      )..configure(serverUrl: _session().serverUrl, token: _token());
+      final realtime = RealtimeService(api, connectChannel: (_) => channel);
+      final updates = <TagUpdate>[];
+      final subscription = realtime.updates.listen(updates.add);
+      await realtime.connect(_user);
+      expect(
+        channel.sink.sent.any(
+          (frame) => '$frame'.contains(
+            'SUB xact.internal.bcast.tagbatch.audit-org.> 3',
+          ),
+        ),
+        isTrue,
+      );
+      final data = jsonEncode({
+        'values': {
+          'audit-org.Bus.meta.lat': {
+            'type': 'value',
+            'value': 49.283456,
+            'timestamp': 1750000000123,
+          },
+          'audit-org.Bus.meta.online': {'type': 'value', 'value': true},
+        },
+        'changed': ['audit-org.Bus.meta.lat'],
+      });
+      channel.incoming.add(
+        'MSG xact.internal.bcast.tagbatch.audit-org.Bus.meta.all 3 ${utf8.encode(data).length}\r\n$data\r\n',
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(updates.length, 1);
+      expect(updates.single.path, 'audit-org.Bus.meta.lat');
+      expect(updates.single.value, 49.283456);
+      final invalid = jsonEncode({
+        'values': {
+          'other-org.Bus.meta.lat': {'type': 'value', 'value': 1},
+        },
+        'changed': ['other-org.Bus.meta.lat'],
+      });
+      channel.incoming.add(
+        'MSG xact.internal.bcast.tagbatch.audit-org.Bus.meta.all 3 ${utf8.encode(invalid).length}\r\n$invalid\r\n',
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(updates.length, 1);
+      await subscription.cancel();
+      await realtime.dispose();
+      await channel.incoming.close();
+      api.close();
+    },
+  );
 }
 
 class _FakeChannel extends StreamChannelMixin<dynamic>

@@ -1,6 +1,7 @@
 import *  as nats from "@nats-io/nats-core";
 import { loadNode, loadTag } from '../api';
 import { getCurrentUser } from '../auth';
+import { decodeTagBatch, tagBatchPatterns, TAG_BATCH_PREFIX, type TagValueUpdate } from './tag-batches';
 
 
 /**
@@ -35,6 +36,17 @@ function sharedWithDescription(data: any): any | null {
         shared.description = data.description;
     }
     return hasShared || Object.keys(shared).length > 0 ? shared : null;
+}
+
+type PublicTagValue = { value: any; units?: string; description?: string; status?: string; timestamp?: number };
+
+function publicValuesEqual(a: any, b: any): boolean {
+    if (Object.is(a, b)) return true;
+    if (Array.isArray(a) && Array.isArray(b)) {
+        return a.length === b.length && a.every((value, index) => publicValuesEqual(value, b[index]));
+    }
+    return a !== null && b !== null && typeof a === 'object' && typeof b === 'object' &&
+        JSON.stringify(a) === JSON.stringify(b);
 }
 
 class Node {
@@ -197,6 +209,7 @@ export class MirrorStore {
     public searchTruncated = false;
     private tagValuePrefixSubscriptions: Map<string, Set<TagValueChangeCallback>> = new Map();
     private watchedTagValuePaths: Map<string, nats.Subscription> = new Map();
+    private watchedTagBatchPaths: Map<string, nats.Subscription> = new Map();
     private tagValueSyncQueued = false;
     private pendingValuePaths = new Set<string>();
     private rebuildValueSubscriptions = true;
@@ -211,6 +224,8 @@ export class MirrorStore {
     private treeSubscriptionsActive: boolean = false;
     private treeSubscription: nats.Subscription | null = null;
     private orgName: string = '';
+    private publicSnapshotMode = false;
+    private publicSnapshotValues = new Map<string, PublicTagValue>();
     private natsConnectionState: NatsConnectionState = 'unknown';
     private natsConnectionStateSubscribers: Set<NatsConnectionStateCallback> = new Set();
 
@@ -221,6 +236,7 @@ export class MirrorStore {
 
     // Connect to NAT and get the subtree below a root node.
     public async storeConnectNats(url: string, username?: string, password?: string, inboxPrefix?: string): Promise<void> {
+        this.publicSnapshotMode = false;
         this.setNatsConnectionState('connecting');
         try {
             // Determine the current org from the JWT. Fall back to 'default' if
@@ -302,6 +318,8 @@ export class MirrorStore {
             sub.unsubscribe();
         }
         this.watchedTagValuePaths.clear();
+        for (const sub of this.watchedTagBatchPaths.values()) sub.unsubscribe();
+        this.watchedTagBatchPaths.clear();
         this.rebuildValueSubscriptions = true;
         this.hydratedTagValuePaths.clear();
 
@@ -682,7 +700,7 @@ export class MirrorStore {
 
     /** Load only this branch's immediate children, shared across widgets. */
     public ensureChildren(path: Path = ''): Promise<void> {
-        if (!getCurrentUser()) return Promise.resolve();
+        if (this.publicSnapshotMode || !getCurrentUser()) return Promise.resolve();
         if (!this.orgName) this.orgName = getCurrentUser()?.tenant_id ?? 'default';
         const absolute = path ? this.toAbsolute(path) : this.orgName;
         if (this.loadedChildrenPaths.has(absolute)) return Promise.resolve();
@@ -699,7 +717,7 @@ export class MirrorStore {
 
     /** Project the requested fields without mirroring unrelated device tags. */
     public async loadSelectedPaths(paths: string[]): Promise<void> {
-        if (!paths.length || !getCurrentUser()) return;
+        if (this.publicSnapshotMode || !paths.length || !getCurrentUser()) return;
         if (!this.orgName) this.orgName = getCurrentUser()?.tenant_id ?? 'default';
         const selected = [...new Set(paths.map(path => this.toRelative(path)))];
         for (let index = 0; index < selected.length; index += 128) await this.loadTreeFromAPI('', -1, selected.slice(index, index + 128));
@@ -709,6 +727,7 @@ export class MirrorStore {
     // When depth is specified, fetches that many levels of children in a single request
     // (depth=-1 fetches entire subtree). When depth is undefined, uses recursive per-node fetching.
     public async loadTreeFromAPI(path: Path = '', depth?: number, select?: string[], filter?: { search: string; status: string; limit?: number }): Promise<void> {
+        if (this.publicSnapshotMode) return;
         // REST hydration can precede live connection setup. Scope subscriptions
         // and relative widget paths to the authenticated org immediately.
         if (!path) this.orgName = getCurrentUser()?.tenant_id ?? 'default';
@@ -736,7 +755,7 @@ export class MirrorStore {
             const rootShared = sharedWithDescription(data);
             if (rootShared) currentNode.setShared(rootShared);
             currentNode.setNodeType('node');
-            if (data.isArray) currentNode.setIsArray(true);
+            if (data.isArray) this.markArrayNode(currentNode, effectivePath);
 
             if (!select && !filter) this.loadedChildrenPaths.add(effectivePath);
             // Process children
@@ -763,7 +782,7 @@ export class MirrorStore {
                         const childShared = sharedWithDescription(child);
                         if (childShared) currentNode.setShared(childShared);
                         currentNode.setNodeType('node');
-                        if (child.isArray) currentNode.setIsArray(true);
+                        if (child.isArray) this.markArrayNode(currentNode, childPath);
                         if (child.value !== undefined) { currentNode.setStatus(child.status ?? ''); currentNode.setValue(child.value); }
 
                         // If depth was specified, children are already included in response
@@ -799,7 +818,7 @@ export class MirrorStore {
                 const childShared = sharedWithDescription(child);
                 if (childShared) childNode.setShared(childShared);
                 childNode.setNodeType('node');
-                if (child.isArray) childNode.setIsArray(true);
+                if (child.isArray) this.markArrayNode(childNode, childPath);
                 if (child.value !== undefined) { childNode.setStatus(child.status ?? ''); childNode.setValue(child.value); }
 
                 // Recurse if we haven't hit maxDepth (and there are children to process)
@@ -837,6 +856,7 @@ export class MirrorStore {
 
     // Load metadata for a tag (leaf node)
     private loadTagMetadata(path: Path, skipIfNewerThanTimestamp?: number): Promise<boolean> {
+        if (this.publicSnapshotMode) return Promise.resolve(false);
         const pending = this.tagMetadataLoads.get(path);
         if (pending) return pending;
 
@@ -903,7 +923,7 @@ export class MirrorStore {
             this.hydratedTagValuePaths.delete(path);
             this.unwatchedValueTimes.delete(path);
         }
-        if (!this.nc || !path || this.hydratedTagValuePaths.has(path)) {
+        if (this.publicSnapshotMode || !this.nc || !path || this.hydratedTagValuePaths.has(path)) {
             return;
         }
         const pathElements = path.split('.');
@@ -921,38 +941,93 @@ export class MirrorStore {
     }
 
     /** Apply only the tag values approved by the public dashboard endpoint. */
-    public applyPublicSnapshot(org: string, values: Record<string, {
-        value: any; units?: string; description?: string; status?: string; timestamp?: number;
-    }>): boolean {
+    public applyPublicSnapshot(org: string, values: Record<string, PublicTagValue>, replace = false): boolean {
         if (this.orgName && this.orgName !== org) {
             this.root = new Node('root', null);
+            this.publicSnapshotValues.clear();
         }
+        this.publicSnapshotMode = true;
         this.orgName = org;
         let added = false;
+        const structure = new Map<string, { type: string } | null>();
+        const changedValues = new Set<string>();
         for (const [path, data] of Object.entries(values)) {
-            if (!path.startsWith(org + '.') || !data) continue;
+            if (!path.startsWith(org + '.') || path.includes('..') || !data) continue;
+            const previous = this.publicSnapshotValues.get(path);
+            this.publicSnapshotValues.set(path, data);
+            if (previous && publicValuesEqual(previous.value, data.value) &&
+                previous.units === data.units && previous.description === data.description &&
+                previous.status === data.status && previous.timestamp === data.timestamp) continue;
             const parts = path.split('.');
             let node: Node = this.root!;
             for (const [index, part] of parts.entries()) {
                 if (!part) { node = this.root!; break; }
                 const existing = node.getChildren().has(part);
                 node = node.getOrCreateChild(part);
-                if (!existing) added = true;
+                if (!existing) {
+                    added = true;
+                    structure.set(parts.slice(0, index + 1).join('.'), { type: 'snapshot' });
+                }
                 node.setNodeType(index === parts.length - 1 ? 'leaf' : 'node');
             }
             if (node === this.root) continue;
-            node.setShared({ units: data.units ?? '', description: data.description ?? '' });
-            node.setStatus(data.status ?? '');
-            if (data.timestamp) node.setTimestamp(data.timestamp);
-            if (node.getRawValue() !== data.value) {
-                node.setValue(data.value);
-                for (const callback of this.tagValuePrefixListenersFor(path)) callback(path);
+            const shared = node.getShared();
+            if (shared.units !== (data.units ?? '') || shared.description !== (data.description ?? '')) {
+                node.setShared({ units: data.units ?? '', description: data.description ?? '' });
             }
+            if (node.getStatus() !== (data.status ?? '')) node.setStatus(data.status ?? '');
+            if (data.timestamp) node.setTimestamp(data.timestamp);
+            if (!publicValuesEqual(node.getRawValue(), data.value)) {
+                node.setValue(data.value);
+                changedValues.add(path);
+            }
+        }
+        if (replace) {
+            const removed = [...this.publicSnapshotValues.keys()].filter(path => !Object.prototype.hasOwnProperty.call(values, path));
+            const retainedBranches = new Set<string>(['']);
+            if (removed.length) {
+                for (const path of this.publicSnapshotValues.keys()) {
+                    if (!Object.prototype.hasOwnProperty.call(values, path)) continue;
+                    const parts = path.split('.');
+                    for (let index = 1; index < parts.length; index++) retainedBranches.add(parts.slice(0, index).join('.'));
+                }
+            }
+            for (const path of removed) {
+                this.publicSnapshotValues.delete(path);
+                const parts = path.split('.');
+                const nodes: Node[] = [this.root!];
+                for (const part of parts) {
+                    const child = nodes.at(-1)!.getChildren().get(part);
+                    if (!child) break;
+                    nodes.push(child);
+                }
+                if (nodes.length !== parts.length + 1) continue;
+                nodes.at(-1)!.setValue(undefined);
+                for (let index = parts.length - 1; index >= 0; index--) {
+                    nodes[index].removeChild(parts[index]);
+                    structure.set(parts.slice(0, index + 1).join('.'), null);
+                    // Subscriptions may have created placeholders for missing
+                    // rule tags. They must not keep a departed bus on the map.
+                    if (retainedBranches.has(parts.slice(0, index).join('.'))) break;
+                }
+                changedValues.add(path);
+            }
+        }
+        // Publish structure after all coordinates have been applied. Existing
+        // map subscriptions can add/remove devices without rebuilding layers.
+        for (const [path, data] of structure) {
+            const parent = path.slice(0, path.lastIndexOf('.'));
+            for (const callback of this.treeSubscriptions.get(parent) ?? []) callback(path, data);
+        }
+        for (const path of changedValues) {
+            for (const callback of this.tagValuePrefixListenersFor(path)) callback(path);
         }
         return added;
     }
 
     public setAuthenticatedOrg(): void {
+        this.publicSnapshotMode = false;
+        this.publicSnapshotValues.clear();
         this.orgName = getCurrentUser()?.tenant_id ?? 'default';
     }
 
@@ -1150,14 +1225,14 @@ export class MirrorStore {
     private syncTagValueSubscriptions(): void {
         if (!this.nc || !this.orgName) return;
         const base = 'xact.internal.bcast.tagvalue.';
-        const subscribe = (subject: string) => {
-            if (this.watchedTagValuePaths.has(subject)) return;
+        const subscribe = (subject: string, subscriptions = this.watchedTagValuePaths) => {
+            if (subscriptions.has(subject)) return;
             const sub = this.nc!.subscribe(subject);
-            this.watchedTagValuePaths.set(subject, sub);
+            subscriptions.set(subject, sub);
             (async () => {
                 try { for await (const msg of sub) this.handleTagValueMessage(msg); }
                 catch { /* subscription closed */ }
-                finally { if (this.watchedTagValuePaths.get(subject) === sub) this.watchedTagValuePaths.delete(subject); }
+                finally { if (subscriptions.get(subject) === sub) subscriptions.delete(subject); }
             })();
         };
         const covered = (path: string) => {
@@ -1189,11 +1264,33 @@ export class MirrorStore {
             }
         }
         this.pendingValuePaths.clear();
+        const containers = new Set([...this.tagValuePrefixSubscriptions.keys()].filter(prefix =>
+            this.descendantValueReferences.has(prefix) || [...this.selectedValueReferences.keys()].some(path => path.startsWith(prefix + '.'))));
+        const paths = [...this.watchedTagValuePaths.keys()].map(subject => subject.slice(base.length)).filter(path =>
+            !containers.has(path) || this.desiredTagValuePaths.has(path) || this.getIsArray(path));
+        const batches = new Set(tagBatchPatterns(paths));
+        for (const [subject, sub] of this.watchedTagBatchPaths) {
+            if (!batches.has(subject)) { sub.unsubscribe(); this.watchedTagBatchPaths.delete(subject); }
+        }
+        for (const subject of batches) subscribe(subject, this.watchedTagBatchPaths);
     }
 
     // Parse and apply a live tag value update message.
     private handleTagValueMessage(msg: nats.Msg): void {
         const org = this.orgName;
+        if (msg.subject.startsWith(TAG_BATCH_PREFIX)) {
+            try {
+                for (const [path, value] of decodeTagBatch(msg.subject, JSON.parse(msg.string()), org)) {
+                    const parts = path.split('.');
+                    const selected = this.desiredTagValuePaths.has(path) || this.tagValuePrefixSubscriptions.has(path) ||
+                        this.valueCoverage.some(pattern => pattern.every((part, index) =>
+                            part === '>' ? parts.length > index : part === '*' ? parts[index] !== undefined : part === parts[index]) &&
+                            (pattern.at(-1) === '>' || pattern.length === parts.length));
+                    if (selected) this.applyTagValue(path, value);
+                }
+            } catch { /* Ignore malformed updates. */ }
+            return;
+        }
         // Strip everything up to and including the org segment so the remainder
         // is the relative device+taggroup+tag path (e.g. "NASA.ISS.env.cabin_pressure").
         // Prepend the org to get the full store path ("default.NASA.ISS.env.cabin_pressure").
@@ -1211,8 +1308,12 @@ export class MirrorStore {
         // data = { "leafname": { type: "value", value: ..., status: ... } }
         const tagValue = Object.values(data)[0] as { type: string; value: any; status?: string; timestamp?: number };
         if (!tagValue) return;
+        this.applyTagValue(path, tagValue);
+    }
 
-
+    private applyTagValue(path: string, tagValue: TagValueUpdate): void {
+        const listeners = this.tagValuePrefixListenersFor(path);
+        if (!this.desiredTagValuePaths.has(path) && listeners.length === 0) return;
         const pathElements = path.split('.');
         let currentNode = this.root!;
         let parentNode: Node | null = null;
@@ -1237,6 +1338,12 @@ export class MirrorStore {
         currentNode.setStatus(tagValue.status ?? '');
         currentNode.setValue(displayValue);
         for (const callback of listeners) callback(path);
+    }
+
+    private markArrayNode(node: Node, path: string): void {
+        const wasArray = node.getIsArray();
+        node.setIsArray(true);
+        if (!wasArray && this.tagValuePrefixSubscriptions.has(path)) this.scheduleTagValueSubscriptions(path, true);
     }
 
     private processIncomingNats(e: { key: string; value: Uint8Array }, parsed?: any) {
@@ -1282,7 +1389,7 @@ export class MirrorStore {
                 if (decodedValue.timestamp) currentNode.setTimestamp(decodedValue.timestamp);
                 if ('status' in decodedValue) currentNode.setStatus(decodedValue.status);
                 if (decodedValue.value !== undefined) currentNode.setValue(decodedValue.value);
-                if (decodedValue.isArray) currentNode.setIsArray(true);
+                if (decodedValue.isArray) this.markArrayNode(currentNode, e.key);
             } else if (decodedValue.type === 'value') {
                 if (currentNode.getNodeType() === 'unknown') currentNode.setNodeType('leaf');
                 if (decodedValue.timestamp) currentNode.setTimestamp(decodedValue.timestamp);

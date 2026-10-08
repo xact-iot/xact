@@ -163,3 +163,63 @@ func TestPublicRoutesReturnOnlyConfiguredGeometryAndNames(t *testing.T) {
 		t.Fatalf("native coordinate array = %#v", values["default.Routes.A.route.coordinates"].Value)
 	}
 }
+
+func TestPublicMapIncludesAllLargeLayersAndLaterRoutes(t *testing.T) {
+	db := securityTestDB(t, false)
+	ops := tree.NewTreeWithOperations(nil)
+	for _, group := range []string{"Buses", "Stops"} {
+		for i := 0; i < 1001; i++ {
+			for tag, value := range map[string]float64{"lat": 49.28, "lon": -123.12, "online": 1} {
+				path := fmt.Sprintf("default.%s.%04d.meta.%s", group, i, tag)
+				if err := ops.CreateTag(path, tree.TypeFloat, tree.TagConfig{}); err != nil {
+					t.Fatal(err)
+				}
+				if err := ops.SetLeafValue(path, value); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	for path, value := range map[string]string{
+		"default.Routes.A.route.coordinates": "[49.28,-123.12,49.29,-123.13]",
+		"default.Routes.A.route.name":        "Route A",
+		"default.Stops.1000.meta.name":       "Final stop",
+		"default.Stops.1000.secret":          "PRIVATE_VALUE",
+	} {
+		if err := ops.CreateTag(path, tree.TypeString, tree.TagConfig{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := ops.SetLeafValue(path, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dashboard := &sqldb.Dashboard{Name: "Large public map", IsPublic: true, Widgets: json.RawMessage(`[{"type":"area-map-widget","config":{"layers":[{"itemType":"icon","pathPattern":"Buses.*","enabled":true,"iconRules":[{"tag":"meta.online"}]},{"itemType":"icon","pathPattern":"Stops.*","enabled":true,"iconRules":[{"tag":"meta.online"}]},{"itemType":"route","pathPattern":"Routes.*","enabled":true}]}}]`)}
+	if err := db.CreateDashboard(context.Background(), "default", dashboard); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(ServerConfig{ProxyPath: "/xact"}, ops, nil, nil, "test-secret", db, "")
+	response := securityRequest(server, "GET", fmt.Sprintf("/xact/api/v1/public/default/dashboards/%d/data", dashboard.ID), "", nil)
+	var values map[string]publicTagValue
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &values) != nil {
+		t.Fatalf("public map status = %d", response.Code)
+	}
+	if len(values) != 6009 {
+		t.Fatalf("public map returned %d tags, want 6009", len(values))
+	}
+	for _, path := range []string{"default.Buses.1000.meta.lat", "default.Buses.1000.meta.lon", "default.Stops.1000.meta.lat", "default.Stops.1000.meta.lon", "default.Stops.1000.meta.name", "default.Routes.A.route.coordinates", "default.Routes.A.route.name"} {
+		if _, ok := values[path]; !ok {
+			t.Errorf("missing %s", path)
+		}
+	}
+	if _, ok := values["default.Stops.1000.secret"]; ok {
+		t.Fatal("public map exposed an unconfigured private tag")
+	}
+	devices, truncated := server.expandPublicPattern("default", "Buses.*", 1001)
+	if len(devices) != 1001 || truncated {
+		t.Fatal("exactly matching the device limit should not truncate")
+	}
+	_, truncated = server.expandPublicPattern("default", "Buses.*", 1000)
+	if !truncated {
+		t.Fatal("device overflow must be reported")
+	}
+}

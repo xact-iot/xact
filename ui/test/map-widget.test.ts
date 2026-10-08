@@ -1304,6 +1304,29 @@ describe('area-map-widget coordinate loading', () => {
     expect(markerEl.querySelector('.xact-map-dw-body test-map-child')).toBe(entry.divWidgetEl);
   });
 
+  it('refreshes selection styling only on the marker whose icon is updated', async () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock();
+    mockStore.getNodeValue.mockImplementation((path: string) => path.endsWith('.lat') ? 49.28 : -123.12);
+    await widget.addDevice(layer, 'default.Buses.A');
+    await widget.addDevice(layer, 'default.Buses.B');
+    const a = widget.devices.get('default.Buses.A');
+    const b = widget.devices.get('default.Buses.B');
+    const readA = vi.spyOn(a.marker, 'getElement');
+    const readB = vi.spyOn(b.marker, 'getElement');
+    widget.updateDeviceMarker('default.Buses.A');
+    expect(readA).toHaveBeenCalled();
+    expect(readB).not.toHaveBeenCalled();
+    readA.mockClear();
+    readB.mockClear();
+    widget.selectedDevicePath = 'default.Buses.B';
+    widget.applySelectedMarker();
+    expect(readA).toHaveBeenCalled();
+    expect(readB).toHaveBeenCalled();
+    expect(b.marker.getElement().querySelector('.xact-map-marker-selected')).not.toBeNull();
+    widget.destroyMap();
+  });
+
   it('shows a permanent bus-name label and heading in the public map', () => {
     document.body.dataset.publicDashboard = 'true';
     try {

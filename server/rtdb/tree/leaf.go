@@ -60,6 +60,16 @@ type TagValuePublish interface {
 	TagValuePublish(tagPath string, data []byte) error
 }
 
+// TypedTagValuePublisher avoids encoding each leaf separately when its publisher
+// can collect the processed values into a group snapshot.
+type TypedTagValuePublisher interface {
+	PublishTagValue(tagPath string, value TagValue) error
+}
+
+type TagValueBatchPublisher interface {
+	BeginTagValueBatch(devicePath string) func() error
+}
+
 // baseLeaf contains common fields for all leaf types
 type baseLeaf struct {
 	mu       sync.RWMutex // protects shared, runtime, and template
@@ -699,6 +709,10 @@ func (l *LeafNode) Publish(value any) error {
 		l.runtime.lastPubUpdateTime = updatedTime
 
 		metricPath := l.GetMetricPath()
+		update := TagValue{Type: "value", Value: value, Status: status, Timestamp: updatedTime.UnixMilli()}
+		if publisher, ok := TagValuePublisher.(TypedTagValuePublisher); ok {
+			return publisher.PublishTagValue(tagPath(l), update)
+		}
 		msg := make(map[string]TagValue, 1)
 		msg[metricPath] = TagValue{
 			Type:      "value",

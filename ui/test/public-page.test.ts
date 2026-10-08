@@ -47,7 +47,7 @@ it('opens a public dashboard without an org using default and skips the login UI
     '/xact/api/v1/public/default/dashboards/42',
     '/xact/api/v1/public/default/dashboards/42/data',
   ]);
-  expect(state.snapshot).toHaveBeenCalledWith('default', { 'default.device.value': { value: 23 } });
+  expect(state.snapshot).toHaveBeenCalledWith('default', { 'default.device.value': { value: 23 } }, true);
   expect(state.load).toHaveBeenCalledWith(expect.objectContaining({ id: 42, name: 'Public status' }));
   expect(document.querySelector('login-page')).toBeNull();
   expect(document.querySelector('app-header')).toBeNull();

@@ -86,6 +86,7 @@ func (a *ClientAuthenticator) Check(client server.ClientAuthentication) bool {
 	}
 	if session.ReadTags {
 		permissions.Subscribe.Allow = append(permissions.Subscribe.Allow, BroadcastStreamPrefix+"tagvalue."+session.Org+".>")
+		permissions.Subscribe.Allow = append(permissions.Subscribe.Allow, BroadcastStreamPrefix+"tagbatch."+session.Org+".>")
 	}
 	if session.UserID != "0" {
 		permissions.Subscribe.Allow = append(permissions.Subscribe.Allow, BroadcastStreamPrefix+"mobile."+session.Org+"."+session.UserID)

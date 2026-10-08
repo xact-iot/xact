@@ -173,6 +173,25 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 		)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_org_role_unique ON permissions(org_id, role)`,
 
+		`CREATE TABLE IF NOT EXISTS rtdb_config_snapshots (
+			org_id INTEGER PRIMARY KEY REFERENCES organisations(id) ON DELETE CASCADE,
+			format_version INTEGER NOT NULL DEFAULT 1,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS rtdb_config_nodes (
+			org_id INTEGER NOT NULL REFERENCES rtdb_config_snapshots(org_id) ON DELETE CASCADE,
+			path TEXT COLLATE BINARY NOT NULL,
+			parent_path TEXT COLLATE BINARY NOT NULL,
+			node_type TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			template_name TEXT NOT NULL DEFAULT '',
+			locked INTEGER NOT NULL DEFAULT 0,
+			is_array INTEGER NOT NULL DEFAULT 0,
+			tags TEXT NOT NULL DEFAULT '[]',
+			PRIMARY KEY (org_id, path)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_rtdb_config_nodes_parent ON rtdb_config_nodes(org_id, parent_path)`,
+
 		`CREATE TABLE IF NOT EXISTS system_config (
 			id          INTEGER PRIMARY KEY,
 			org_id      INTEGER NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,

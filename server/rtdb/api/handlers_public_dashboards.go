@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/xact-iot/xact/rtdb/tree"
 	"github.com/xact-iot/xact/sqldb"
 )
 
@@ -88,6 +89,15 @@ func (s *Server) handlePublicDashboardData(w http.ResponseWriter, r *http.Reques
 
 	paths := make(map[string]struct{})
 	arrayPaths := make(map[string]struct{})
+	// Bound work without silently dropping later layers or half a coordinate pair.
+	const maxPublicTags = 100000
+	const maxPublicDevices = 20000
+	tooLarge := false
+	expand := func(pattern string) []string {
+		devices, truncated := s.expandPublicPattern(org, pattern, maxPublicDevices)
+		tooLarge = tooLarge || truncated
+		return devices
+	}
 	add := func(path string) {
 		path = strings.Trim(strings.TrimSpace(strings.SplitN(path, ":", 2)[0]), ".")
 		if path == "" || strings.ContainsAny(path, "*/\\ >") || strings.Contains(path, "..") {
@@ -96,9 +106,8 @@ func (s *Server) handlePublicDashboardData(w http.ResponseWriter, r *http.Reques
 		if !strings.HasPrefix(path, org+".") {
 			path = org + "." + path
 		}
-		if len(paths) < 5000 {
-			paths[path] = struct{}{}
-		}
+		paths[path] = struct{}{}
+		tooLarge = tooLarge || len(paths) > maxPublicTags
 	}
 	for _, widget := range widgets {
 		c := widget.Config
@@ -109,7 +118,7 @@ func (s *Server) handlePublicDashboardData(w http.ResponseWriter, r *http.Reques
 				if prefix == "" || strings.HasPrefix(c.TagPath, org+".") || strings.HasPrefix(c.TagPath, prefix+".") {
 					add(c.TagPath)
 				} else if strings.Contains(prefix, "*") {
-					for _, base := range s.expandPublicPattern(org, prefix, 1000) {
+					for _, base := range expand(prefix) {
 						add(base + "." + c.TagPath)
 					}
 				} else {
@@ -124,7 +133,7 @@ func (s *Server) handlePublicDashboardData(w http.ResponseWriter, r *http.Reques
 				if !layer.Enabled || layer.PathPattern == "" {
 					continue
 				}
-				for _, device := range s.expandPublicPattern(org, layer.PathPattern, 1000) {
+				for _, device := range expand(layer.PathPattern) {
 					if layer.ItemType == "route" {
 						coordinates := strings.TrimSpace(layer.RouteCoordinatesTag)
 						if coordinates == "" {
@@ -142,6 +151,7 @@ func (s *Server) handlePublicDashboardData(w http.ResponseWriter, r *http.Reques
 					}
 					add(device + ".meta.lat")
 					add(device + ".meta.lon")
+					add(device + ".meta.name")
 					if layer.IconRotationEnabled && layer.IconRotationTag != "" {
 						add(publicDeviceTag(org, device, layer.IconRotationTag))
 					}
@@ -153,6 +163,10 @@ func (s *Server) handlePublicDashboardData(w http.ResponseWriter, r *http.Reques
 				}
 			}
 		}
+	}
+	if tooLarge {
+		http.Error(w, "public dashboard exceeds the supported tag or device limit", http.StatusRequestEntityTooLarge)
+		return
 	}
 	names := make([]string, 0, len(paths))
 	for path := range paths {
@@ -194,8 +208,8 @@ func (s *Server) publicRouteCoordinates(path string) ([]float64, bool) {
 	}
 	coordinates := make([]float64, len(children))
 	for i := range coordinates {
-		leaf, err := s.tree.FindLeaf(path + "." + strconv.Itoa(i))
-		if err != nil {
+		leaf, ok := children[strconv.Itoa(i)].(tree.Leaf)
+		if !ok {
 			return nil, false
 		}
 		var value float64
@@ -234,10 +248,10 @@ func publicDeviceTag(org, device, tag string) string {
 	return device + "." + tag
 }
 
-func (s *Server) expandPublicPattern(org, pattern string, max int) []string {
+func (s *Server) expandPublicPattern(org, pattern string, max int) ([]string, bool) {
 	pattern = strings.Trim(pattern, ".")
 	if pattern == "" || strings.ContainsAny(pattern, "/\\: >") || strings.Contains(pattern, "..") {
-		return nil
+		return nil, false
 	}
 	if !strings.HasPrefix(pattern, org+".") {
 		pattern = org + "." + pattern
@@ -245,13 +259,19 @@ func (s *Server) expandPublicPattern(org, pattern string, max int) []string {
 	parts := strings.Split(pattern, ".")
 	result := make([]string, 0)
 	visited := 0
+	truncated := false
 	var walk func(prefix string, index int)
 	walk = func(prefix string, index int) {
 		visited++
-		if visited > 10000 || len(result) >= max {
+		if visited > 200000 {
+			truncated = true
 			return
 		}
 		if index == len(parts) {
+			if len(result) >= max {
+				truncated = true
+				return
+			}
 			result = append(result, prefix)
 			return
 		}
@@ -279,5 +299,5 @@ func (s *Server) expandPublicPattern(org, pattern string, max int) []string {
 		}
 	}
 	walk("", 0)
-	return result
+	return result, truncated
 }

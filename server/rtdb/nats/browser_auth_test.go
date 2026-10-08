@@ -57,7 +57,7 @@ func TestBrowserBrokerEnforcesTenantAndJetStreamPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, subject := range []string{"rtdb.tree.alpha.device", "xact.internal.bcast.tagvalue.alpha.device.temp", "xact.internal.bcast.mobile.alpha.7", BrowserInboxPrefix("alpha-session") + ".reply"} {
+	for _, subject := range []string{"rtdb.tree.alpha.device", "xact.internal.bcast.tagvalue.alpha.device.temp", "xact.internal.bcast.tagbatch.alpha.device.all", "xact.internal.bcast.mobile.alpha.7", BrowserInboxPrefix("alpha-session") + ".reply"} {
 		sub, err := browser.SubscribeSync(subject)
 		if err != nil {
 			t.Fatal(err)
@@ -90,7 +90,7 @@ func TestBrowserBrokerEnforcesTenantAndJetStreamPermissions(t *testing.T) {
 			t.Fatal("expected broker permission rejection")
 		}
 	}
-	for _, subject := range []string{"rtdb.tree.>", "rtdb.tree.beta.>", "xact.internal.bcast.tagvalue.beta.>", "xact.internal.bcast.mobile.alpha.8", "$KV.>", "$JS.>", "_INBOX.>", BrowserInboxPrefix("other-session") + ".>"} {
+	for _, subject := range []string{"rtdb.tree.>", "rtdb.tree.beta.>", "xact.internal.bcast.tagvalue.beta.>", "xact.internal.bcast.tagbatch.beta.>", "xact.internal.bcast.mobile.alpha.8", "$KV.>", "$JS.>", "_INBOX.>", BrowserInboxPrefix("other-session") + ".>"} {
 		t.Run("subscribe/"+subject, func(t *testing.T) {
 			assertDenied(func() error { _, err := browser.SubscribeSync(subject); return err })
 		})

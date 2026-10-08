@@ -332,7 +332,7 @@ func (db *PostgresDB) Migrate(ctx context.Context) error {
 		ALTER TABLE permissions ALTER COLUMN updated_at SET NOT NULL;
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_org_role_unique
 			ON permissions(org_id, role);
-
+` + treeConfigSchema + `
 		CREATE TABLE IF NOT EXISTS system_config (
 			id           SERIAL PRIMARY KEY,
 			org_id       INTEGER NOT NULL REFERENCES organisations(id),

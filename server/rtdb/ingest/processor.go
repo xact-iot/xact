@@ -434,7 +434,7 @@ func (p *Processor) WriteDeviceData(tenant, zone, deviceType, deviceName string,
 	return p.writeDeviceData(tenant, zone, deviceType, deviceName, data)
 }
 
-func (p *Processor) writeDeviceData(tenant, zone, deviceType, deviceName string, data TagData) error {
+func (p *Processor) writeDeviceData(tenant, zone, deviceType, deviceName string, data TagData) (writeErr error) {
 	var devicePath, deviceTypePath string
 	if zone != "" {
 		devicePath = tenant + "." + zone + "." + deviceType + "." + deviceName
@@ -442,6 +442,14 @@ func (p *Processor) writeDeviceData(tenant, zone, deviceType, deviceName string,
 	} else {
 		devicePath = tenant + "." + deviceType + "." + deviceName
 		deviceTypePath = tenant + "." + deviceType
+	}
+	if publisher, ok := tree.TagValuePublisher.(tree.TagValueBatchPublisher); ok {
+		finish := publisher.BeginTagValueBatch(devicePath)
+		defer func() {
+			if err := finish(); err != nil && writeErr == nil {
+				writeErr = err
+			}
+		}()
 	}
 	if err := p.treeOps.EnsureDeviceNode(tenant, deviceTypePath, devicePath); err != nil {
 		log.Printf("ingest:352 device node %s, %v\n", devicePath, err)
@@ -820,13 +828,19 @@ func (p *Processor) publishArraySnapshot(path, tagGroup, tagName string, count i
 		values[i] = leaf.GetAnyValue()
 	}
 	metric := strings.ReplaceAll(strings.Trim(tagGroup+"/"+tagName, "/"), "/", ".")
+	subject := "tagvalue." + strings.Trim(strings.ReplaceAll(path, "/", "."), ".")
+	if publisher, ok := tree.TagValuePublisher.(tree.TypedTagValuePublisher); ok {
+		if err := publisher.PublishTagValue(subject, tree.TagValue{Type: "value", Value: values, Timestamp: timestamp}); err != nil {
+			log.Printf("ingest: publish array snapshot %s: %v", path, err)
+		}
+		return
+	}
 	data, err := json.Marshal(map[string]tree.TagValue{metric: {
 		Type: "value", Value: values, Timestamp: timestamp,
 	}})
 	if err != nil {
 		return
 	}
-	subject := "tagvalue." + strings.Trim(strings.ReplaceAll(path, "/", "."), ".")
 	if err := tree.TagValuePublisher.TagValuePublish(subject, data); err != nil {
 		log.Printf("ingest: publish array snapshot %s: %v", path, err)
 	}

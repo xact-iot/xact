@@ -1742,7 +1742,7 @@ export class AreaMapWidget extends BaseComponent {
         this.mountDivWidget(devicePath);
         this.mountHoverWidget(devicePath);
       }
-      this.applySelectedMarker();
+      this.applySelectedMarker(devicePath);
       return;
     }
     entry.lastIconHtml = iconHtml;
@@ -1758,7 +1758,7 @@ export class AreaMapWidget extends BaseComponent {
       this.mountDivWidget(devicePath);
       this.mountHoverWidget(devicePath);
     }
-    this.applySelectedMarker();
+    this.applySelectedMarker(devicePath);
   }
 
   private scheduleZoomWidgetMount(devicePath: string, attempts = 6): void {
@@ -2144,8 +2144,10 @@ export class AreaMapWidget extends BaseComponent {
     this.emit('dashboard-open', { dashboard: dashboardId, id: dashboardId, devicePath });
   }
 
-  private applySelectedMarker(): void {
-    for (const [path, entry] of this.devices) {
+  private applySelectedMarker(devicePath?: string): void {
+    const device = devicePath ? this.devices.get(devicePath) : undefined;
+    const entries = devicePath ? (device ? [[devicePath, device] as const] : []) : this.devices;
+    for (const [path, entry] of entries) {
       const markerEl = entry.marker?.getElement?.() as HTMLElement | null;
       const root = markerEl?.querySelector<HTMLElement>('.xact-map-marker-root');
       if (root) root.classList.toggle('xact-map-marker-selected', path === this.selectedDevicePath);

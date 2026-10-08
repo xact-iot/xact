@@ -384,6 +384,72 @@ describe('MirrorStore connection and NATS helpers', () => {
   });
 });
 
+describe('MirrorStore public snapshots', () => {
+  it('never hydrates protected APIs in public mode even with a saved login', async () => {
+    const store = new MirrorStore();
+    authMock.getCurrentUser.mockReturnValue({ tenant_id: 'private-org' });
+    apiMock.loadNode.mockClear();
+    apiMock.loadTag.mockClear();
+    store.applyPublicSnapshot('default', { 'default.Buses.A.meta.lat': { value: 49.28 } });
+    const unsubscribe = store.subscribeToTreeChanges('default.Buses', () => {});
+    await store.ensureChildren('default.Buses');
+    await store.loadSelectedPaths(['Buses.*.meta.lat']);
+    await store.loadTreeFromAPI('');
+    await (store as any).loadTagMetadata('default.Buses.A.meta.lat');
+    expect(apiMock.loadNode).not.toHaveBeenCalled();
+    expect(apiMock.loadTag).not.toHaveBeenCalled();
+    expect(store.getOrg()).toBe('default');
+    unsubscribe();
+  });
+
+  it('does not redraw unchanged values, metadata, or freshly parsed route arrays', () => {
+    const store = new MirrorStore();
+    const snapshot = () => ({
+      'default.Buses.A.meta.orientation': { value: 90, status: 'N', timestamp: 100 },
+      'default.Routes.A.route.coordinates': { value: [49.28, -123.12, 49.29, -123.13] },
+    });
+    store.applyPublicSnapshot('default', snapshot());
+    const heading = vi.fn();
+    const route = vi.fn();
+    store.subscribe('default.Buses.A.meta.orientation', heading);
+    store.subscribeToTagValueChanges('default.Routes', route, false);
+    heading.mockClear();
+    store.applyPublicSnapshot('default', snapshot());
+    store.applyPublicSnapshot('default', {
+      'default.Buses.A.meta.orientation': { value: 90, status: 'N', timestamp: 200 },
+    });
+    expect(heading).not.toHaveBeenCalled();
+    expect(route).not.toHaveBeenCalled();
+    store.applyPublicSnapshot('default', {
+      'default.Routes.A.route.coordinates': { value: [49.30, -123.12, 49.29, -123.13] },
+    });
+    expect(route).toHaveBeenCalledExactlyOnceWith('default.Routes.A.route.coordinates');
+  });
+
+  it('publishes device additions with complete coordinates and removes missing devices', async () => {
+    const store = new MirrorStore();
+    store.applyPublicSnapshot('default', { 'default.Buses.A.meta.lat': { value: 1 } }, true);
+    const missingRule = store.subscribe('default.Buses.A.meta.missing', () => {});
+    const changes: Array<[string, any, any]> = [];
+    const unsub = store.subscribeToTreeChanges('default.Buses', (path, data) => {
+      changes.push([path, data, store.getNodeValue(path + '.meta.lon')]);
+    });
+    await Promise.resolve();
+    changes.length = 0;
+    store.applyPublicSnapshot('default', {
+      'default.Buses.B.meta.lat': { value: 2 },
+      'default.Buses.B.meta.lon': { value: 3 },
+    }, true);
+    expect(changes).toEqual([
+      ['default.Buses.B', { type: 'snapshot' }, 3],
+      ['default.Buses.A', null, undefined],
+    ]);
+    expect(store.listChildrenNames('default.Buses')).toEqual(['B']);
+    missingRule();
+    unsub();
+  });
+});
+
 describe('MirrorStore local tree operations and selectors', () => {
   let store: MirrorStore;
 
@@ -1084,6 +1150,68 @@ describe('MirrorStore demand loading and subscription ownership', () => {
     expect(apiMock.loadNode).toHaveBeenCalledWith('default', 0);
     store['handleTreeChange'](msg('rtdb.tree.default.PUBLIC_BUS.STOPS.A.trips.unneeded', { type: 'leaf', value: 7 }));
     expect(store.nodeExists('default.PUBLIC_BUS.STOPS')).toBe(false);
+  });
+
+  it('receives group batches once through selected coordinate subscriptions', async () => {
+    const store = new MirrorStore();
+    const nc = createNatsConnection();
+    natsMock.wsconnect.mockResolvedValue(nc);
+    await store.storeConnectNats('ws://test');
+    const callback = vi.fn();
+    const releasePrefix = store.subscribeToTagValueChanges('default.BUSES', callback, false, ['*.meta.lat', '*.meta.lon']);
+    const releaseTag = store.subscribe('default.BUSES.Bus1.meta.lat', vi.fn());
+    await flushAsyncWork();
+    callback.mockClear();
+    expect(nc.subscribe).toHaveBeenCalledWith('xact.internal.bcast.tagbatch.default.BUSES.*.meta.>');
+    expect(nc.subscribe).not.toHaveBeenCalledWith('xact.internal.bcast.tagbatch.default.>');
+    expect(nc.subscribe).not.toHaveBeenCalledWith('xact.internal.bcast.tagbatch.default.BUSES.Bus1.meta.>');
+    nc.publish(msg('xact.internal.bcast.tagbatch.default.BUSES.Bus1.meta.all', {
+      values: { 'default.BUSES.Bus1.meta.lat': { type: 'value', value: 49.283456, timestamp: 200 }, 'default.BUSES.Bus1.meta.lon': { type: 'value', value: -123.114567, timestamp: 100 }, 'default.BUSES.Bus1.meta.online': { type: 'value', value: true } },
+      changed: ['default.BUSES.Bus1.meta.lat', 'default.BUSES.Bus1.meta.online'],
+    }));
+    await flushAsyncWork();
+    expect(store.getNodeValue('default.BUSES.Bus1.meta.lat')).toBe(49.283456);
+    expect(callback).toHaveBeenCalledOnce();
+    expect(store.nodeExists('default.BUSES.Bus1.meta.online')).toBe(false);
+    releaseTag(); releasePrefix();
+    await flushAsyncWork();
+    expect(nc.subscriptions['xact.internal.bcast.tagbatch.default.BUSES.*.meta.>'].unsubscribe).toHaveBeenCalledOnce();
+    await store.storeDisconnectNats();
+  });
+
+  it('receives complete arrays in batches without subscribing to numbered elements', async () => {
+    const store = new MirrorStore();
+    const nc = createNatsConnection();
+    natsMock.wsconnect.mockResolvedValue(nc);
+    await store.storeConnectNats('ws://test');
+    const path = 'default.Routes.A.points';
+    const callback = vi.fn();
+    const release = store.subscribeToTagValueChanges(path, callback, false);
+    await flushAsyncWork();
+    nc.publish(msg('xact.internal.bcast.tagbatch.default.Routes.A.all', { values: { [path]: { type: 'value', value: [49.283456, -123.114567] } }, changed: [path] }));
+    await flushAsyncWork();
+    expect(store.getNodeValue(path)).toEqual([49.283456, -123.114567]);
+    expect(callback).toHaveBeenCalledOnce();
+    release(); await store.storeDisconnectNats();
+  });
+
+  it('adds the complete snapshot subscription when watched array metadata arrives later', async () => {
+    const store = new MirrorStore();
+    const nc = createNatsConnection();
+    natsMock.wsconnect.mockResolvedValue(nc);
+    await store.storeConnectNats('ws://test');
+    const path = 'default.Routes.A.route.coordinates';
+    const callback = vi.fn();
+    const release = store.subscribeToTagValueChanges(path, callback);
+    await flushAsyncWork();
+    store['processIncomingNats'](kvEntry(path, { type: 'node', isArray: true }));
+    await flushAsyncWork();
+    callback.mockClear();
+    nc.publish(msg('xact.internal.bcast.tagbatch.default.Routes.A.route.all', { values: { [path]: { type: 'value', value: [49.283456, -123.114567] } }, changed: [path] }));
+    await flushAsyncWork();
+    expect(store.getNodeValue(path)).toEqual([49.283456, -123.114567]);
+    expect(callback).toHaveBeenCalledOnce();
+    release(); await store.storeDisconnectNats();
   });
 
   it('keeps a shared tag live until the last consumer releases it', async () => {
