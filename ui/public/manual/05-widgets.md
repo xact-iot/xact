@@ -93,12 +93,19 @@ An interactive geographic map displaying device locations with live status indic
 - Device markers displayed on a zoomable, pannable map
 - **Icon markers** - show a glyph (icon) with conditional colouring based on tag values
 - **Div template markers** - render custom HTML overlays at high zoom levels, with access to device tag values
-- **Layers** - group devices by tag path patterns for organised display
+- **Layers** - group devices or routes by tag path patterns for organised display
+- **Route layers** - draw live polylines from arrays of latitude/longitude pairs, with route names on hover
 - **Animations** - markers can pulse or shake to draw attention to alarm conditions
 - **Click interaction** - clicking a device marker opens a side panel showing device details (either a status table or a list of tag values)
 - **Detail dashboard link** - each map layer can select a dashboard; when set, the side-panel device name links to that dashboard and carries the clicked device context. If the selected dashboard has device subtype variations, XACT opens the matching subtype dashboard automatically.
 - Supports TomTom traffic overlay integration
 - Default map bounds set from the organisation's geographic area configuration
+
+**Route layers:**
+
+Add a layer, set **Item Type** to **route**, and use a whole-segment wildcard path such as `Routes.*`. Each matched route node supplies `route.coordinates` (a flat numeric array `[lat, lon, lat, lon, ...]` with at least two points, either as one value or numbered child tags) and `route.name`. You can change those relative tag paths in the layer editor. Set the layer's color with the picker, and enter its width in pixels and appearance zoom directly. These style settings apply to every route in the layer.
+
+A route appears when the map reaches the configured appearance zoom. Its line width starts at the configured width there and adds 25% of that base width for each further zoom level. Hovering over the line shows its name. Changes to route coordinates or name tags update the line live.
 
 **Icon Rules:**
 

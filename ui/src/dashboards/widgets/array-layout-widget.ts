@@ -572,6 +572,9 @@ export class ArrayLayoutWidget extends BaseComponent {
       : rawPath;
 
     if (!path) return;
+    void store.loadSelectedPaths([rawPath]).then(() => {
+      if (this.isConnected && store.toAbsolute(this.config.arrayPath) === rawPath) this.rerender();
+    });
     this._unsubTreeChange = store.subscribeToTreeChanges(path, (_p, _data) => {
       const newElements = this._resolveElements();
       const changed = newElements.length !== this._renderedElements.length

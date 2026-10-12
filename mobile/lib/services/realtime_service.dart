@@ -119,6 +119,7 @@ class RealtimeService {
       });
       _send('CONNECT $connect\r\n');
       _send('SUB xact.internal.bcast.tagvalue.$_org.> 1\r\nPING\r\n');
+      _send('SUB xact.internal.bcast.tagbatch.$_org.> 3\r\n');
       _send('SUB xact.internal.bcast.mobile.$_org.${user.id} 2\r\n');
     } catch (_) {
       if (current()) await disconnect();
@@ -145,6 +146,33 @@ class RealtimeService {
     const prefix = 'xact.internal.bcast.tagvalue.';
     final orgPrefix = '$prefix$_org.';
     final mobileSubject = 'xact.internal.bcast.mobile.$_org.$_userId';
+    final batchPrefix = 'xact.internal.bcast.tagbatch.$_org.';
+    if (subject.startsWith(batchPrefix)) {
+      try {
+        final batch = jsonDecode(utf8.decode(payload)) as Map<String, dynamic>;
+        final values = batch['values'] as Map<String, dynamic>;
+        final changed = batch['changed'] as List<dynamic>;
+        final group = subject.substring(
+          'xact.internal.bcast.tagbatch.'.length,
+          subject.lastIndexOf('.'),
+        );
+        final updates = <TagUpdate>[];
+        for (final path in changed.toSet()) {
+          if (path is! String ||
+              !path.startsWith('$group.') ||
+              path.substring(group.length + 1).contains('.')) {
+            return;
+          }
+          final data = values[path] as Map<String, dynamic>;
+          if (data['type'] != 'value') continue;
+          updates.add(_tagUpdate(path, data));
+        }
+        for (final update in updates) {
+          _updates.add(update);
+        }
+      } catch (_) {}
+      return;
+    }
     if (subject == mobileSubject) {
       try {
         final data = jsonDecode(utf8.decode(payload)) as Map<String, dynamic>;
@@ -163,18 +191,22 @@ class RealtimeService {
       final decoded = jsonDecode(utf8.decode(payload)) as Map<String, dynamic>;
       if (decoded.isEmpty) return;
       final data = decoded.values.first as Map<String, dynamic>;
-      final millis = (data['timestamp'] as num?)?.toInt();
       _updates.add(
-        TagUpdate(
-          path: '$_org.${subject.substring(orgPrefix.length)}',
-          value: data['value'],
-          status: '${data['status'] ?? ''}',
-          timestamp: millis == null
-              ? null
-              : DateTime.fromMillisecondsSinceEpoch(millis).toLocal(),
-        ),
+        _tagUpdate('$_org.${subject.substring(orgPrefix.length)}', data),
       );
     } catch (_) {}
+  }
+
+  TagUpdate _tagUpdate(String path, Map<String, dynamic> data) {
+    final millis = (data['timestamp'] as num?)?.toInt();
+    return TagUpdate(
+      path: path,
+      value: data['value'],
+      status: '${data['status'] ?? ''}',
+      timestamp: millis == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(millis).toLocal(),
+    );
   }
 
   Future<void> disconnect() async {

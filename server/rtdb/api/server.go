@@ -82,6 +82,7 @@ type Server struct {
 	jwtSecret            []byte
 	db                   sqldb.DB
 	pluginDir            string
+	busMu                sync.Mutex
 	authPlugin           *pluginauth.AuthPlugin
 	natsBrowserConfig    NATSBrowserConfig
 	natsInternalConfig   NATSInternalConfig
@@ -303,7 +304,7 @@ func (s *Server) setupRoutes() {
 	s.openAPIRoutes = nil
 
 	s.router.Use(securityHeaders)
-	s.router.Use(limitRequestBody(s.maxRequestBodyBytes()))
+	s.router.Use(limitRequestBodyWithImport(s.maxRequestBodyBytes(), maxBusGTFSRequestBytes))
 	if len(s.config.AllowedOrigins) > 0 {
 		s.router.Use(cors.Handler(cors.Options{
 			AllowedOrigins:   s.config.AllowedOrigins,
@@ -352,6 +353,14 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 		api.Get("/openapi.json", s.handleOpenAPIWithSchema())
 		api.Get("/api/v1/openapi.json", s.handleOpenAPIWithSchema())
 		api.Post("/login", s.handleLoginWithSchema())
+		if s.dashboardHandlers != nil {
+			api.Get("/api/v1/public/dashboards", s.dashboardHandlers.HandleListPublicDashboardsWithSchema())
+			api.Get("/api/v1/public/{org}/dashboards", s.dashboardHandlers.HandleListPublicDashboardsWithSchema())
+			api.Get("/api/v1/public/{org}/dashboards/{id}", s.dashboardHandlers.HandleGetPublicDashboardWithSchema())
+			api.Get("/api/v1/public/{org}/dashboards/{id}/data",
+				handlerWithSchema(s.handlePublicDashboardData, nil, map[string]publicTagValue{}, "public dashboards"))
+		}
+
 		api.Get("/api/v1/mobile/bootstrap", s.handleMobileBootstrapWithSchema())
 		if s.notificationHandlers != nil {
 			api.Get("/api/v1/mobile/firebase-config", s.notificationHandlers.HandleGetFirebaseClientConfigWithSchema())
@@ -391,6 +400,12 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 			r.Get("/logo.svg", fs.ServeHTTP)
 			r.Get("/favicon.svg", fs.ServeHTTP)
 
+			r.Get("/public", s.serveIndexFallback)
+			r.Get("/public/", s.serveIndexFallback)
+			r.Get("/public/{org}", s.serveIndexFallback)
+			r.Get("/public/{org}/", s.serveIndexFallback)
+			r.Get("/public/{org}/{id}", s.serveIndexFallback)
+			r.Get("/public/{org}/{id}/", s.serveIndexFallback)
 			r.Get("/", s.serveIndexFallback)
 		}
 	})
@@ -401,6 +416,11 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 		r.Use(JSONContentType)
 		api := newAPIRoutes(r, &s.openAPIRoutes, "", false)
 
+		// Generic extension discovery and current session permissions.
+		api.Get("/api/v1/applications", handlerWithSchema(s.handleApplications, nil, []map[string]any{}, "applications"))
+		api.Get("/api/v1/applications/{application}/session", handlerWithSchema(s.handleApplicationSession, nil, map[string]any{}, "applications"))
+		api.Post("/api/v1/applications/public_bus/upload", handlerWithSchema(s.handlePublicBusUpload, nil, map[string]string{}, "applications"))
+		api.Post("/api/v1/applications/public_bus/request/{operation}", handlerWithSchema(s.handlePublicBusRequest, map[string]any{}, map[string]any{}, "applications"))
 		// Auth helpers
 		api.Get("/api/v1/auth/my-orgs", s.handleMyOrgsWithSchema())
 		api.Post("/api/v1/auth/switch-org", s.handleSwitchOrgWithSchema())

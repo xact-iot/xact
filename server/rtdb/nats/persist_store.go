@@ -31,7 +31,9 @@ type PersistStore struct {
 	stopCh chan struct{}
 	done   chan struct{}
 
-	stopOnce sync.Once
+	stopOnce     sync.Once
+	restoreMu    sync.RWMutex
+	restoreCache map[string]PersistEntry
 }
 
 type persistWrite struct {
@@ -201,9 +203,60 @@ func (s *PersistStore) putNow(key string, entry PersistEntry) error {
 	return err
 }
 
+// BeginRestore reads the initial KV snapshot through one streaming consumer,
+// avoiding a separate request/reply for each tag while rebuilding the tree.
+func (s *PersistStore) BeginRestore(ctx context.Context) error {
+	watcher, err := s.kv.WatchAll(ctx, jetstream.IgnoreDeletes())
+	if err != nil {
+		return err
+	}
+	defer watcher.Stop()
+	cache := make(map[string]PersistEntry)
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case item, ok := <-watcher.Updates():
+			if !ok {
+				return fmt.Errorf("persist restore snapshot closed before completion")
+			}
+			if item == nil {
+				s.restoreMu.Lock()
+				s.restoreCache = cache
+				s.restoreMu.Unlock()
+				log.Printf("persistence: preloaded %d saved tag values", len(cache))
+				return nil
+			}
+			var entry PersistEntry
+			if err := json.Unmarshal(item.Value(), &entry); err != nil {
+				return fmt.Errorf("persist restore %s: %w", item.Key(), err)
+			}
+			cache[item.Key()] = entry
+		}
+	}
+}
+
+// EndRestore releases the startup snapshot so subsequent tag creation reads
+// current values from KV rather than the old startup cache.
+func (s *PersistStore) EndRestore() {
+	s.restoreMu.Lock()
+	s.restoreCache = nil
+	s.restoreMu.Unlock()
+}
+
 // Get retrieves and deserialises the entry for key. Returns nil, nil when the
 // key does not exist.
 func (s *PersistStore) Get(key string) (*PersistEntry, error) {
+	s.restoreMu.RLock()
+	if s.restoreCache != nil {
+		entry, ok := s.restoreCache[key]
+		s.restoreMu.RUnlock()
+		if !ok {
+			return nil, nil
+		}
+		return &entry, nil
+	}
+	s.restoreMu.RUnlock()
 	e, err := s.kv.Get(context.Background(), key)
 	if err == jetstream.ErrKeyNotFound {
 		return nil, nil

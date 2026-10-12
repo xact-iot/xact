@@ -77,6 +77,7 @@ const NODE_TYPE_LABELS: Record<string, string> = {
 };
 
 const TAGS_MANAGER_MODAL_Z_INDEX = 19000;
+const TREE_PAGE_SIZE = 100;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -160,12 +161,23 @@ export class TagsManagerWidget extends BaseComponent {
   private searchQuery = '';
   private statusFilter: string | null = null;
   private subscribedPaths: Set<string> = new Set();
+  private valueUnsubscribers = new Map<string, () => void>();
+  private lifecycleGeneration = 0;
+  private renderedLeafPaths = new Set<string>();
+  private knownLeafStatuses: Map<string, string> = new Map();
   private valueCache: Map<string, CachedValue> = new Map();
   private tagCountCache: Map<string, number> = new Map();
   private matchingTagCountCache: Map<string, number> = new Map();
+  private searchMatchCache: Map<string, boolean> = new Map();
+  private visibleNodeCounts: Map<string, number> = new Map();
+  private visibleLeafCounts: Map<string, number> = new Map();
+  private latestTimestampByNode: Map<string, number> = new Map();
   private treeScrollTop = 0;
   private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private treeUnsubscribe: (() => void) | null = null;
+  private branchUnsubscribers = new Map<string, () => void>();
+  private treeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingDeletedPaths = new Set<string>();
 
   // Lock state (populated lazily via API)
   private lockedNodes: Map<string, boolean> = new Map();
@@ -197,6 +209,7 @@ export class TagsManagerWidget extends BaseComponent {
   // Delete confirmation state
   private isDeleteConfirmOpen = false;
   private deleteTarget: { type: 'node' | 'tag'; path: string } | null = null;
+  private deleting = false;
 
   // Block schemas (loaded from server)
   private blockSchemas: BlockSchema[] = [];
@@ -226,47 +239,63 @@ export class TagsManagerWidget extends BaseComponent {
 
   connectedCallback(): void {
     super.connectedCallback();
-    this.initWithPermissions();
+    void this.initWithPermissions(++this.lifecycleGeneration);
   }
 
-  private async initWithPermissions(): Promise<void> {
+  private async initWithPermissions(generation: number): Promise<void> {
     const [canRead, canWrite] = await Promise.all([can('tags.read'), can('tags.write')]);
+    if (!this.isConnected || generation !== this.lifecycleGeneration) return;
     this.canWrite = canWrite;
     if (!canRead && !canWrite) {
       this.innerHTML = `<div class="p-4 text-sm opacity-60">Insufficient permissions</div>`;
       return;
     }
     const store = getMirrorStore();
-    this.treeUnsubscribe = store.subscribeToTreeChanges('', (path, data) => {
-      if (data === null) {
-        // A node subtree was deleted. The store discarded those Node objects
-        // (and their subscriber lists). Evict the affected paths from
-        // subscribedPaths and valueCache so ensureSubscribed() re-registers
-        // callbacks on the fresh Node objects when the subtree reappears.
-        const prefix = path + '.';
-        for (const p of Array.from(this.subscribedPaths)) {
-          if (p === path || p.startsWith(prefix)) {
-            this.subscribedPaths.delete(p);
-            this.valueCache.delete(p);
-          }
-        }
-      }
-      this.rerender();
-    });
-    // Eagerly hydrate the store from the REST API so the initial render shows
-    // real tree data rather than waiting for NATS events to trickle in.
-    const orgRoot = getCurrentUser()?.tenant_id ?? '';
-    if (orgRoot) {
-      store.loadTreeFromAPI('', -1).then(() => this.rerender()).catch(() => {});
-    }
+    this.treeUnsubscribe = store.subscribeToTreeChanges('', (path, data) => this.scheduleTreeRefresh(path, data));
+    await this.loadExpandedBranches(generation);
+    if (!this.isConnected || generation !== this.lifecycleGeneration) return;
     this.rerender();
   }
 
   disconnectedCallback(): void {
+    this.lifecycleGeneration++;
+    for (const unsubscribe of this.branchUnsubscribers.values()) unsubscribe();
+    this.branchUnsubscribers.clear();
+    for (const unsubscribe of this.valueUnsubscribers.values()) unsubscribe();
+    this.valueUnsubscribers.clear();
+    this.subscribedPaths.clear();
     if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
+    if (this.treeRefreshTimer !== null) clearTimeout(this.treeRefreshTimer);
+    this.treeRefreshTimer = null;
+    this.pendingDeletedPaths.clear();
     if (this.treeUnsubscribe) { this.treeUnsubscribe(); this.treeUnsubscribe = null; }
     this.applyModalStacking(false);
     super.disconnectedCallback();
+  }
+
+  private watchExpandedBranches(): void {
+    const store = getMirrorStore();
+    for (const [path, unsubscribe] of this.branchUnsubscribers) {
+      if (!this.expandedNodes.has(path)) { unsubscribe(); this.branchUnsubscribers.delete(path); }
+    }
+    for (const path of this.expandedNodes) {
+      if (!this.branchUnsubscribers.has(path)) this.branchUnsubscribers.set(path, store.subscribeToTreeChanges(path, (changedPath, data) => this.scheduleTreeRefresh(changedPath, data)));
+    }
+  }
+
+  private async loadExpandedBranches(generation = this.lifecycleGeneration): Promise<void> {
+    const store = getMirrorStore();
+    const root = getCurrentUser()?.tenant_id ?? '';
+    if (!root) return;
+    this.watchExpandedBranches();
+    await store.ensureChildren(root);
+    for (const path of [...this.expandedNodes].sort((a, b) => a.split('.').length - b.split('.').length)) {
+      if (!this.isConnected || generation !== this.lifecycleGeneration) return;
+      await store.ensureChildren(path);
+    }
+    this.tagCountCache.clear();
+    this.matchingTagCountCache.clear();
+    this.searchMatchCache.clear();
   }
 
   setConfig(config: Record<string, any>): void {
@@ -291,13 +320,17 @@ export class TagsManagerWidget extends BaseComponent {
 
   setTransientState(state: any): void {
     this.expandedNodes = new Set(Array.isArray(state?.expandedNodes) ? state.expandedNodes : []);
+    void this.loadExpandedBranches().then(() => { if (this.isConnected) this.rerender(); });
     this.searchQuery = typeof state?.searchQuery === 'string' ? state.searchQuery : '';
     this.statusFilter = typeof state?.statusFilter === 'string' ? state.statusFilter : null;
+    if (this.searchQuery || this.statusFilter) void this.loadFilterMatches();
+    this.searchMatchCache.clear();
+    this.matchingTagCountCache.clear();
     const scrollTop = Number.isFinite(state?.scrollTop) ? state.scrollTop : 0;
     this.rerender();
-    // render() first records the old DOM's scroll position. Apply the restored
-    // value afterwards so its queued update uses the snapshot from this tab.
     this.treeScrollTop = scrollTop;
+    const treeBody = this.querySelector<HTMLElement>('#tv-tree-body');
+    if (treeBody) treeBody.scrollTop = scrollTop;
   }
 
   getConfig(): Record<string, any> {
@@ -317,6 +350,74 @@ export class TagsManagerWidget extends BaseComponent {
   }
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
+
+  private scheduleTreeRefresh(path: string, data: any): void {
+    const orgRoot = getCurrentUser()?.tenant_id ?? '';
+    if (!orgRoot || (path !== orgRoot && !path.startsWith(orgRoot + '.'))) return;
+    const parent = path.slice(0, path.lastIndexOf('.'));
+    if (data !== null && parent !== orgRoot && !this.expandedNodes.has(parent) && !this.knownLeafStatuses.has(path) && !this.searchQuery && !this.statusFilter) return;
+    // Existing tags update their cells through value subscriptions. Replacing
+    // the scroll container here interrupts wheel/drag scrolling on every update.
+    // New tags still need a structural refresh, even with a value-only payload.
+    if (data?.type === 'value' && this.knownLeafStatuses.has(path)) {
+      const previousStatus = this.knownLeafStatuses.get(path)!;
+      const status = getMirrorStore().getNodeStatus(path);
+      this.knownLeafStatuses.set(path, status);
+      if (!this.statusFilter || this.statusMatchesFilter(previousStatus, this.statusFilter) === this.statusMatchesFilter(status, this.statusFilter)) return;
+    }
+    if (data === null) {
+      // The server sends the subtree root first, followed by all descendants.
+      // Keep only uncovered paths; never scan subscriptions for every event.
+      let ancestor = path;
+      while (ancestor && !this.pendingDeletedPaths.has(ancestor)) {
+        const dot = ancestor.lastIndexOf('.');
+        ancestor = dot < 0 ? '' : ancestor.slice(0, dot);
+      }
+      if (!ancestor) this.pendingDeletedPaths.add(path);
+    }
+    // Throttle rather than debounce: a continuous stream still updates the UI.
+    if (this.treeRefreshTimer !== null) return;
+    this.treeRefreshTimer = setTimeout(() => this.flushTreeRefresh(), 50);
+  }
+
+  private flushTreeRefresh(): void {
+    if (this.treeRefreshTimer !== null) clearTimeout(this.treeRefreshTimer);
+    this.treeRefreshTimer = null;
+    this.tagCountCache.clear();
+    this.matchingTagCountCache.clear();
+    this.searchMatchCache.clear();
+    // Discard callbacks attached to removed Node objects so recreated tags
+    // receive fresh subscriptions. Check ancestors once per subscribed path.
+    if (this.pendingDeletedPaths.size) {
+      for (const path of this.knownLeafStatuses.keys()) {
+        let ancestor = path;
+        while (ancestor) {
+          if (this.pendingDeletedPaths.has(ancestor)) {
+            this.knownLeafStatuses.delete(path);
+            break;
+          }
+          const dot = ancestor.lastIndexOf('.');
+          ancestor = dot < 0 ? '' : ancestor.slice(0, dot);
+        }
+      }
+      for (const path of this.subscribedPaths) {
+        let ancestor = path;
+        while (ancestor) {
+          if (this.pendingDeletedPaths.has(ancestor)) {
+            this.valueUnsubscribers.get(path)?.();
+            this.valueUnsubscribers.delete(path);
+            this.subscribedPaths.delete(path);
+            this.valueCache.delete(path);
+            break;
+          }
+          const dot = ancestor.lastIndexOf('.');
+          ancestor = dot < 0 ? '' : ancestor.slice(0, dot);
+        }
+      }
+      this.pendingDeletedPaths.clear();
+    }
+    this.rerender();
+  }
 
   private statusBadgeHtml(status: string): string {
     const code = status.toUpperCase();
@@ -361,19 +462,6 @@ export class TagsManagerWidget extends BaseComponent {
     }
   }
 
-  private countLeaves(path: string): number {
-    const cached = this.tagCountCache.get(path);
-    if (cached !== undefined) return cached;
-    const store = getMirrorStore();
-    let count = 0;
-    for (const child of store.listChildrenNames(path)) {
-      const cp = path ? `${path}.${child}` : child;
-      count += store.getNodeType(cp) === 'leaf' ? 1 : this.countLeaves(cp);
-    }
-    this.tagCountCache.set(path, count);
-    return count;
-  }
-
   private countMatchingLeaves(path: string): number {
     const cached = this.matchingTagCountCache.get(path);
     if (cached !== undefined) return cached;
@@ -382,9 +470,9 @@ export class TagsManagerWidget extends BaseComponent {
     for (const child of store.listChildrenNames(path)) {
       const cp = path ? `${path}.${child}` : child;
       const nt = store.getNodeType(cp);
-      if (nt === 'leaf' || (nt === 'unknown' && !store.listChildrenNames(cp).length)) {
+      if (nt === 'leaf') {
         if (this.leafMatchesFilters(cp)) count += 1;
-      } else {
+      } else if (nt === 'node') {
         count += this.countMatchingLeaves(cp);
       }
     }
@@ -395,13 +483,22 @@ export class TagsManagerWidget extends BaseComponent {
   private escapeId(path: string): string { return path.replace(/\./g, '_'); }
 
   private nodeMatchesSearch(path: string, query: string): boolean {
+    const cached = this.searchMatchCache.get(path);
+    if (cached !== undefined) return cached;
     const lq = query.toLowerCase();
     const store = getMirrorStore();
     const name = path.split('.').pop()!;
-    if (name.toLowerCase().includes(lq) || path.toLowerCase().includes(lq)) return true;
-    for (const child of store.listChildrenNames(path)) {
-      if (this.nodeMatchesSearch(path ? `${path}.${child}` : child, query)) return true;
+    if (name.toLowerCase().includes(lq) || path.toLowerCase().includes(lq)) {
+      this.searchMatchCache.set(path, true);
+      return true;
     }
+    for (const child of store.listChildrenNames(path)) {
+      if (this.nodeMatchesSearch(path ? `${path}.${child}` : child, query)) {
+        this.searchMatchCache.set(path, true);
+        return true;
+      }
+    }
+    this.searchMatchCache.set(path, false);
     return false;
   }
 
@@ -421,19 +518,20 @@ export class TagsManagerWidget extends BaseComponent {
   }
 
   private ensureSubscribed(leafPath: string): void {
+    this.renderedLeafPaths.add(leafPath);
     if (this.subscribedPaths.has(leafPath)) return;
     this.subscribedPaths.add(leafPath);
     const store = getMirrorStore();
-    store.subscribe(leafPath, (value: any) => {
+    this.valueUnsubscribers.set(leafPath, store.subscribe(leafPath, (value: any) => {
       if (!this.isConnected) return;
       const ts = store.getNodeTimestamp(leafPath);
       const status = store.getNodeStatus(leafPath);
+      if (this.valueCache.get(leafPath)?.status !== status) this.matchingTagCountCache.clear();
       this.valueCache.set(leafPath, { value, timestamp: ts, status });
       const eid = this.escapeId(leafPath);
-      const rowEl = this.querySelector(`[data-leaf-path="${escapeSelector(leafPath)}"]`);
-      if (this.statusFilter && rowEl && !this.statusMatchesFilter(status, this.statusFilter)) {
-        this.rerender();
-        return;
+      if (this.statusFilter && this.knownLeafStatuses.has(leafPath) &&
+          this.statusMatchesFilter(this.knownLeafStatuses.get(leafPath)!, this.statusFilter) !== this.statusMatchesFilter(status, this.statusFilter)) {
+        this.scheduleTreeRefresh(leafPath, { type: 'value' });
       }
       const valEl  = this.querySelector(`#val-${escapeSelector(eid)}`);
       const statEl = this.querySelector(`#stat-${escapeSelector(eid)}`);
@@ -445,7 +543,15 @@ export class TagsManagerWidget extends BaseComponent {
       }
       if (statEl) statEl.innerHTML = this.statusBadgeHtml(status);
       if (timeEl) timeEl.textContent = this.formatTimestamp(ts);
-    });
+      const parts = leafPath.split('.');
+      for (let i = 1; i < parts.length; i++) {
+        const ancestor = parts.slice(0, i).join('.');
+        const latest = Math.max(ts, this.latestTimestampByNode.get(ancestor) ?? 0);
+        this.latestTimestampByNode.set(ancestor, latest);
+        const timestampEl = this.querySelector(`[data-node-path="${escapeSelector(ancestor)}"] .tv-node-timestamp`);
+        if (timestampEl) timestampEl.textContent = latest ? this.formatTimestamp(latest) : '';
+      }
+    }));
   }
 
   private formatValue(val: any): string {
@@ -480,8 +586,13 @@ export class TagsManagerWidget extends BaseComponent {
     for (const child of children) {
       const cp = path ? `${path}.${child}` : child;
       const nt = store.getNodeType(cp);
-      if (nt === 'leaf' || (nt === 'unknown' && !store.listChildrenNames(cp).length)) leaves.push(cp);
-      else nodes.push(cp);
+      // Subscriptions can create placeholders before REST metadata arrives.
+      // Only authoritative metadata establishes a tag or a group; an empty
+      // placeholder is not a float tag (and may reference a deleted device).
+      if (nt === 'leaf') {
+        this.knownLeafStatuses.set(cp, store.getNodeStatus(cp));
+        leaves.push(cp);
+      } else if (nt === 'node') nodes.push(cp);
     }
 
     let html = '';
@@ -489,15 +600,22 @@ export class TagsManagerWidget extends BaseComponent {
     // Direct leaves rendered before child nodes so tags appear just below the "Add Tag" button
     if (leaves.length > 0 && depth > 0) {
       const filtered = leaves.filter(p => this.leafMatchesFilters(p));
-      if (filtered.length > 0) html += this.renderLeafTable(filtered, depth);
+      if (filtered.length > 0) {
+        const limit = this.visibleLeafCounts.get(path) ?? TREE_PAGE_SIZE;
+        html += this.renderLeafTable(filtered.slice(0, limit), depth);
+        if (filtered.length > limit) html += this.renderMoreButton(path, 'leaf', filtered.length - limit, depth);
+      }
     }
 
-    for (const nodePath of nodes) {
-      if (this.searchQuery && !this.nodeMatchesSearch(nodePath, this.searchQuery)) continue;
+    const matchingNodes = this.searchQuery
+      ? nodes.filter(nodePath => this.nodeMatchesSearch(nodePath, this.searchQuery))
+      : nodes;
+    const nodeLimit = this.visibleNodeCounts.get(path) ?? TREE_PAGE_SIZE;
+    for (const nodePath of matchingNodes.slice(0, nodeLimit)) {
 
       const name       = nodePath.split('.').pop()!;
       const isExpanded = this.expandedNodes.has(nodePath);
-      const leafCount  = this.countLeaves(nodePath);
+      const leafCount = store.listChildrenNames(nodePath).filter(name => store.getNodeType(`${nodePath}.${name}`) === 'leaf').length;
       const matchCount = this.statusFilter ? this.countMatchingLeaves(nodePath) : 0;
       const indent     = depth * 20;
       const desc       = store.getNodeShared(nodePath)?.description || '';
@@ -521,10 +639,7 @@ export class TagsManagerWidget extends BaseComponent {
                  style="background:color-mix(in srgb,${this.statusFilterColor()} 24%,transparent);color:${this.statusFilterColor()};border:1px solid color-mix(in srgb,${this.statusFilterColor()} 45%,transparent)">${matchCount} ${this.statusFilterLabel()}</span>`
         : '';
 
-      let latestTs = 0;
-      for (const [cp, c] of this.valueCache) {
-        if (cp.startsWith(nodePath + '.') && c.timestamp > latestTs) latestTs = c.timestamp;
-      }
+      const latestTs = this.latestTimestampByNode.get(nodePath) ?? 0;
 
       html += `
         <div class="tv-node-row flex items-center py-1 px-2 cursor-pointer hover:opacity-80"
@@ -534,9 +649,9 @@ export class TagsManagerWidget extends BaseComponent {
           ${typeBadge}${arrayBadge}
           <span class="font-medium text-sm" style="color:var(--accent-color)">${store.getIsArray(path) && /^\d+$/.test(name) ? `[${escapeHtml(name)}]` : escapeHtml(name)}</span>
           ${desc ? `<span class="ml-2 text-xs opacity-50">${escapeHtml(desc)}</span>` : ''}
-          <span class="ml-2 px-1.5 py-0.5 rounded text-xs" style="background:color-mix(in srgb,var(--accent-color) 20%,transparent);color:var(--accent-color)">${leafCount} tags</span>
+          ${leafCount > 0 ? `<span class="ml-2 px-1.5 py-0.5 rounded text-xs" title="Tags in this group" style="background:color-mix(in srgb,var(--accent-color) 20%,transparent);color:var(--accent-color)">${leafCount} tags</span>` : ''}
           ${matchBadge}
-          <span class="ml-auto text-xs opacity-40">${latestTs ? this.formatTimestamp(latestTs) : ''}</span>
+          <span class="tv-node-timestamp ml-auto text-xs opacity-40">${latestTs ? this.formatTimestamp(latestTs) : ''}</span>
           <span class="flex items-center gap-1 ml-3" style="flex-shrink:0">
             <button class="tv-node-action px-1.5 py-0.5 text-xs rounded opacity-60 hover:opacity-100"
                     data-action="edit" title="${this.canWrite ? 'Edit node' : 'View node'}"><span style="font-size:0.7rem;line-height:1;vertical-align:middle">✏️</span></button>
@@ -562,7 +677,19 @@ export class TagsManagerWidget extends BaseComponent {
       }
     }
 
+    if (matchingNodes.length > nodeLimit) {
+      html += this.renderMoreButton(path, 'node', matchingNodes.length - nodeLimit, depth);
+    }
     return html;
+  }
+
+  private renderMoreButton(path: string, kind: 'node' | 'leaf', remaining: number, depth: number): string {
+    return `<div style="padding-left:${depth * 20 + 8}px" class="py-2">
+      <button class="tv-show-more px-2 py-1 text-xs rounded" data-parent-path="${escapeHtml(path)}" data-kind="${kind}"
+              style="color:var(--accent-color);border:1px solid var(--border-color)">
+        Show more ${kind === 'leaf' ? 'tags' : 'nodes'} (${remaining} remaining)
+      </button>
+    </div>`;
   }
 
   private renderLeafTable(leaves: string[], depth: number): string {
@@ -961,8 +1088,8 @@ export class TagsManagerWidget extends BaseComponent {
             ? `<p class="text-xs mb-4" style="color:#f87171">⚠ All child nodes and tags will be permanently deleted.</p>`
             : `<p class="text-xs mb-4 opacity-50">This action cannot be undone.</p>`}
           <div class="flex gap-2">
-            <button id="delete-confirm-yes" class="flex-1 px-4 py-2 text-xs font-semibold rounded" style="background:#ef4444;color:#fff">Delete</button>
-            <button id="delete-confirm-no"  class="flex-1 px-4 py-2 text-xs font-semibold rounded" style="background:color-mix(in srgb,var(--border-color) 50%,transparent);color:var(--content-text)">Cancel</button>
+            <button id="delete-confirm-yes" class="flex-1 px-4 py-2 text-xs font-semibold rounded" style="background:#ef4444;color:#fff" ${this.deleting ? 'disabled aria-busy="true"' : ''}>${this.deleting ? 'Deleting…' : 'Delete'}</button>
+            <button id="delete-confirm-no" ${this.deleting ? 'disabled' : ''} class="flex-1 px-4 py-2 text-xs font-semibold rounded" style="background:color-mix(in srgb,var(--border-color) 50%,transparent);color:var(--content-text)">Cancel</button>
           </div>
         </div>
       </div>`;
@@ -1099,10 +1226,19 @@ export class TagsManagerWidget extends BaseComponent {
   // ─── Main Render ─────────────────────────────────────────────────────────────
 
   protected render(): void {
+    this.renderedLeafPaths.clear();
     const currentTreeBody = this.querySelector<HTMLElement>('#tv-tree-body');
     if (currentTreeBody) this.treeScrollTop = currentTreeBody.scrollTop;
-    this.tagCountCache.clear();
-    this.matchingTagCountCache.clear();
+    this.latestTimestampByNode.clear();
+    for (const [path, cached] of this.valueCache) {
+      const parts = path.split('.');
+      for (let i = 1; i < parts.length; i++) {
+        const ancestor = parts.slice(0, i).join('.');
+        if (cached.timestamp > (this.latestTimestampByNode.get(ancestor) ?? 0)) {
+          this.latestTimestampByNode.set(ancestor, cached.timestamp);
+        }
+      }
+    }
 
     const sFilters = [
       { key: 'N', label: 'NORMAL', rgb: '34,197,94',   col: '#22c55e' },
@@ -1143,6 +1279,7 @@ export class TagsManagerWidget extends BaseComponent {
           ${filterBtns}
         </div>
 
+        ${(this.searchQuery || this.statusFilter) && getMirrorStore().searchTruncated ? '<div class="px-3 py-1 text-xs opacity-70">Showing up to 1,000 matches. Refine your search to see more.</div>' : ''}
         <!-- Tree body -->
         <div id="tv-tree-body" class="flex-1 overflow-auto">${treeHtml}</div>
       </div>
@@ -1152,15 +1289,17 @@ export class TagsManagerWidget extends BaseComponent {
       ${this.renderDeleteConfirm()}
       ${this.renderDebugger()}
       ${this.renderValueEditModal()}`;
-    queueMicrotask(() => {
-      const treeBody = this.querySelector<HTMLElement>('#tv-tree-body');
-      if (treeBody) treeBody.scrollTop = this.treeScrollTop;
-    });
+    const treeBody = this.querySelector<HTMLElement>('#tv-tree-body');
+    if (treeBody) treeBody.scrollTop = this.treeScrollTop;
   }
 
   // ─── Event Wiring ────────────────────────────────────────────────────────────
 
   protected attachEventListeners(): void {
+    for (const [path, unsubscribe] of this.valueUnsubscribers) {
+      if (!this.renderedLeafPaths.has(path)) { unsubscribe(); this.valueUnsubscribers.delete(path); this.subscribedPaths.delete(path); }
+    }
+    this.querySelectorAll('.tv-show-more').forEach(el => el.addEventListener('click', this.handleShowMore));
     this.querySelectorAll('.tv-node-row').forEach(el => el.addEventListener('click', this.handleNodeToggle));
     this.querySelectorAll('.tv-node-action').forEach(el => el.addEventListener('click', this.handleNodeAction));
     this.querySelectorAll('.tv-add-tag-btn').forEach(el => el.addEventListener('click', this.handleAddTagBtn));
@@ -1215,6 +1354,7 @@ export class TagsManagerWidget extends BaseComponent {
   }
 
   protected detachEventListeners(): void {
+    this.querySelectorAll('.tv-show-more').forEach(el => el.removeEventListener('click', this.handleShowMore));
     this.querySelectorAll('.tv-node-row').forEach(el => el.removeEventListener('click', this.handleNodeToggle));
     this.querySelectorAll('.tv-node-action').forEach(el => el.removeEventListener('click', this.handleNodeAction));
     this.querySelectorAll('.tv-add-tag-btn').forEach(el => el.removeEventListener('click', this.handleAddTagBtn));
@@ -1255,28 +1395,50 @@ export class TagsManagerWidget extends BaseComponent {
     const path = (e.currentTarget as HTMLElement).dataset.nodePath;
     if (!path) return;
     const wasExpanded = this.expandedNodes.has(path);
-    if (wasExpanded) this.expandedNodes.delete(path);
-    else this.expandedNodes.add(path);
-    this.rerender();
-    if (!wasExpanded) {
-      // Scroll expanded node to top of tree body so its children are visible below
-      const nodeRow = this.querySelector(`[data-node-path="${path}"]`) as HTMLElement | null;
-      nodeRow?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (wasExpanded) { this.expandedNodes.delete(path); this.watchExpandedBranches(); }
+    else {
+      this.expandedNodes.add(path);
+      this.watchExpandedBranches();
+      void getMirrorStore().ensureChildren(path).then(() => {
+        if (this.isConnected && this.expandedNodes.has(path)) this.rerender();
+      });
     }
+    this.rerender();
+  };
+
+  private handleShowMore = (e: Event): void => {
+    const button = e.currentTarget as HTMLElement;
+    const path = button.dataset.parentPath!;
+    const counts = button.dataset.kind === 'leaf' ? this.visibleLeafCounts : this.visibleNodeCounts;
+    counts.set(path, (counts.get(path) ?? TREE_PAGE_SIZE) + TREE_PAGE_SIZE);
+    this.rerender();
   };
 
   private handleSearchInput = (e: Event): void => {
     this.searchQuery = (e.target as HTMLInputElement).value;
+    this.searchMatchCache.clear();
     if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
     this.searchDebounceTimer = setTimeout(() => {
       this.searchDebounceTimer = null;
+      if (this.searchQuery || this.statusFilter) void this.loadFilterMatches();
       this.rerender();
     }, 200);
   };
 
+  private async loadFilterMatches(): Promise<void> {
+    const query = this.searchQuery, status = this.statusFilter;
+    await getMirrorStore().loadMatchingTags(query, status);
+    if (!this.isConnected || query !== this.searchQuery || status !== this.statusFilter) return;
+    this.searchMatchCache.clear();
+    this.matchingTagCountCache.clear();
+    this.rerender();
+  }
+
   private handleStatusFilter = (e: Event): void => {
     const key = (e.currentTarget as HTMLElement).dataset.status!;
     this.statusFilter = this.statusFilter === key ? null : key;
+    if (this.statusFilter || this.searchQuery) void this.loadFilterMatches();
+    this.matchingTagCountCache.clear();
     this.rerender();
   };
 
@@ -1803,12 +1965,14 @@ export class TagsManagerWidget extends BaseComponent {
 
   // ─── Delete Logic ─────────────────────────────────────────────────────────────
 
-  private closeDeleteConfirm = (): void => { this.isDeleteConfirmOpen = false; this.deleteTarget = null; this.rerender(); };
+  private closeDeleteConfirm = (): void => { if (this.deleting) return; this.isDeleteConfirmOpen = false; this.deleteTarget = null; this.rerender(); };
 
   private handleConfirmDelete = async (): Promise<void> => {
     if (!this.canWrite) return;
-    if (!this.deleteTarget) return;
+    if (!this.deleteTarget || this.deleting) return;
     const { type, path } = this.deleteTarget;
+    this.deleting = true;
+    this.rerender();
     try {
       if (type === 'node') {
         // Unlock the node itself first - top-level nodes are auto-locked on creation
@@ -1818,6 +1982,8 @@ export class TagsManagerWidget extends BaseComponent {
         await deleteTag(path);
       }
     } catch (err) {
+      this.deleting = false;
+      this.rerender();
       await showAlert(`Failed to delete: ${err}`, {
         title: 'Delete failed',
         tone: 'danger',
@@ -1826,9 +1992,11 @@ export class TagsManagerWidget extends BaseComponent {
     }
     this.isDeleteConfirmOpen = false;
     this.deleteTarget = null;
+    this.deleting = false;
     this.lockedNodes.delete(path);
     getMirrorStore().removeNode(path);
-    this.rerender();
+    this.scheduleTreeRefresh(path, null);
+    this.flushTreeRefresh();
   };
 
   // ─── Debugger Logic ───────────────────────────────────────────────────────────
@@ -1947,15 +2115,9 @@ export class TagsManagerWidget extends BaseComponent {
     const searchSelectionEnd = restoreSearchFocus ? activeSearchInput?.selectionEnd : null;
 
     this.preserveOpenDialogFormValues();
-    const treeBody = this.querySelector('.flex-1.overflow-auto') as HTMLElement | null;
-    const scrollTop = treeBody?.scrollTop ?? 0;
     this.detachEventListeners();
     this.render();
     this.attachEventListeners();
-    if (scrollTop > 0) {
-      const newTreeBody = this.querySelector('.flex-1.overflow-auto') as HTMLElement | null;
-      if (newTreeBody) newTreeBody.scrollTop = scrollTop;
-    }
     if (restoreSearchFocus) {
       const newSearchInput = this.querySelector<HTMLInputElement>('#tv-search');
       if (newSearchInput) {

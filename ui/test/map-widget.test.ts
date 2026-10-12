@@ -35,12 +35,15 @@ const treeDialogMock = vi.hoisted(() => ({
 }));
 
 const mockStore = {
+  ensureChildren: vi.fn(async () => {}),
+  loadSelectedPaths: vi.fn(async () => {}),
   startKvWatch: vi.fn(),
   toAbsolute: vi.fn((path: string) => path.startsWith('default.') ? path : `default.${path}`),
   toRelative: vi.fn((path: string) => path.startsWith('default.') ? path.slice('default.'.length) : path),
   listChildrenNames: vi.fn(() => []),
   getNodeValue: vi.fn(),
   getNodeShared: vi.fn(() => ({})),
+  getNodeStatus: vi.fn(() => ''),
   resolveTagReference: vi.fn(() => undefined),
   baseTagPath: vi.fn((path: string) => String(path).split(':')[0]),
   getNodeType: vi.fn(() => 'leaf'),
@@ -50,6 +53,7 @@ const mockStore = {
     return vi.fn();
   }),
   subscribeToTreeChanges: vi.fn(() => vi.fn()),
+  subscribeToTagValueChanges: vi.fn(() => vi.fn()),
 };
 
 const mockUiStore = {
@@ -190,12 +194,15 @@ function flush(): Promise<void> {
 describe('area-map-widget coordinate loading', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockStore.getNodeType.mockReturnValue('leaf');
+    mockStore.getNodeStatus.mockReturnValue('');
     defineTestWidgets();
     Element.prototype.scrollIntoView = vi.fn();
     globalThis.requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
-      cb(0);
+      cb(performance.now() + 2000);
       return 1;
     }) as any;
+    globalThis.cancelAnimationFrame = vi.fn();
     (window as any).L = {
       map: vi.fn(() => createMapMock()),
       tileLayer: vi.fn(() => ({
@@ -203,6 +210,17 @@ describe('area-map-widget coordinate loading', () => {
         setOpacity: vi.fn(),
       })),
       divIcon: vi.fn((options) => ({ options })),
+      polyline: vi.fn((_coordinates, _options) => {
+        const line = {
+          bindTooltip: vi.fn().mockReturnThis(),
+          addTo: vi.fn().mockReturnThis(),
+          setLatLngs: vi.fn(),
+          setStyle: vi.fn(),
+          setTooltipContent: vi.fn(),
+          remove: vi.fn(),
+        };
+        return line;
+      }),
       marker: vi.fn((_position, options) => {
         const el = document.createElement('div');
         el.innerHTML = options?.icon?.options?.html ?? '';
@@ -215,7 +233,10 @@ describe('area-map-widget coordinate loading', () => {
             return marker;
           }),
           remove: vi.fn(),
+          bindPopup: vi.fn().mockReturnThis(),
+          closePopup: vi.fn(),
           setLatLng: vi.fn(),
+          setZIndexOffset: vi.fn(),
           setIcon: vi.fn((icon) => {
             marker.options.icon = icon;
             el.innerHTML = icon?.options?.html ?? '';
@@ -230,9 +251,573 @@ describe('area-map-widget coordinate loading', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
     document.body.innerHTML = '';
     delete (window as any).L;
     delete (window as any).XACT;
+  });
+
+  it('cancels map initialization when the widget disconnects while layers load', async () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.render();
+    const map = createMapMock();
+    (window as any).L.map.mockReturnValue(map);
+    vi.spyOn(widget, 'refreshLayers').mockImplementation(async () => widget.destroyMap());
+    await expect(widget.initMap()).resolves.toBeUndefined();
+    expect(map.on).not.toHaveBeenCalled();
+    expect(map.remove).toHaveBeenCalled();
+  });
+
+  it('sets a view before loading layers that request map bounds', async () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.render();
+    widget.config.savedBounds = { north: 55, south: 50, east: -1, west: -5 };
+    let viewReady = false;
+    const map = createMapMock({
+      setView: vi.fn(() => { viewReady = true; }),
+      getBounds: vi.fn(() => {
+        if (!viewReady) throw new Error('Set map center and zoom first.');
+        return { getNorth: () => 55, getSouth: () => 50, getEast: () => -1, getWest: () => -5 };
+      }),
+    });
+    (window as any).L.map.mockReturnValue(map);
+    // Plugins and dense layers both read bounds while refreshLayers is running.
+    const refreshLayers = vi.spyOn(widget, 'refreshLayers').mockImplementation(async () => {
+      widget.getPluginBounds();
+      widget.map.getBounds();
+    });
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      disconnect() {}
+    });
+    try {
+      await expect(widget.initMap()).resolves.toBeUndefined();
+      expect(refreshLayers).toHaveBeenCalledOnce();
+      expect(map.setView).toHaveBeenCalledWith([52.5, -3], 6);
+      expect(map.getBounds).toHaveBeenCalled();
+      // Saved bounds must still override the temporary initial view.
+      widget.config.savedBounds = { north: 55, south: 50, east: -1, west: -5 };
+      widget.fitOrgBounds();
+      expect(map.fitBounds).toHaveBeenCalledWith([[50, -5], [55, -1]]);
+    } finally {
+      widget.destroyMap();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each(['icon', 'plugin'])('hides %s markers below Show at Zoom and restores them at the threshold', async (itemType) => {
+    let zoom = 11;
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock({ getZoom: () => zoom });
+    const gatedLayer = { ...layer, itemType, showAtZoom: 12, pluginType: 'custom-marker' };
+    widget.config.layers = [gatedLayer];
+    widget.ensureDeviceLayerPanes();
+    const pluginMarker = { options: {}, addTo: vi.fn().mockReturnThis(), on: vi.fn(), remove: vi.fn() };
+    (window as any).XACT = { getMapItemType: () => () => pluginMarker };
+    mockStore.getNodeValue.mockImplementation((path: string) => path.endsWith('.meta.lat') ? 49.28 : path.endsWith('.meta.lon') ? -123.12 : undefined);
+    widget.updateDeviceMarker = vi.fn();
+    await widget.addDevice(gatedLayer, 'default.LA_LongBeach.AirQuality.A');
+    const marker = widget.devices.get('default.LA_LongBeach.AirQuality.A').marker;
+    const pane = widget.map.getPane('xact-device-layer-aq');
+    expect(marker.addTo).not.toHaveBeenCalled();
+    expect(pane.style.display).toBe('none');
+    zoom = 12;
+    widget.onZoomChange();
+    expect(marker.addTo).toHaveBeenCalledOnce();
+    expect(pane.style.display).toBe('');
+    zoom = 11;
+    widget.onZoomChange();
+    expect(marker.remove).toHaveBeenCalledOnce();
+    expect(pane.style.display).toBe('none');
+    gatedLayer.enabled = false;
+    zoom = 13;
+    widget.onZoomChange();
+    expect(marker.addTo).toHaveBeenCalledOnce();
+    widget.destroyMap();
+  });
+
+  it('applies Show at Zoom to route polylines and whole plugin panes', async () => {
+    let zoom = 11;
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock({ getZoom: () => zoom });
+    const route = { ...layer, id: 'routes', itemType: 'route', pathPattern: 'Routes.A', routeZoom: 10, showAtZoom: 12 };
+    const plugin = { ...layer, id: 'heatmap', itemType: 'plugin', showAtZoom: 12 };
+    widget.config.layers = [route, plugin];
+    widget.ensureDeviceLayerPanes();
+    mockStore.getNodeValue.mockImplementation((path: string) => path.endsWith('.route.coordinates') ? [49.28, -123.12, 49.29, -123.11] : undefined);
+    await widget.initLayer(route);
+    expect((window as any).L.polyline).not.toHaveBeenCalled();
+    zoom = 12;
+    widget.onZoomChange();
+    expect((window as any).L.polyline).toHaveBeenCalledOnce();
+    expect(widget.map.getPane('xact-device-layer-heatmap').style.display).toBe('');
+    const line = (window as any).L.polyline.mock.results[0].value;
+    zoom = 11;
+    widget.onZoomChange();
+    expect(line.remove).toHaveBeenCalledOnce();
+    expect(widget.map.getPane('xact-device-layer-heatmap').style.display).toBe('none');
+    widget.destroyMap();
+  });
+
+  it('shows and saves Show at Zoom for every layer type', () => {
+    const widget = document.createElement('area-map-widget') as any;
+    for (const itemType of ['icon', 'route', 'plugin']) {
+      const editedLayer = { ...layer, itemType };
+      widget.config.layers = [editedLayer];
+      widget.cfgEditLayerId = editedLayer.id;
+      const overlay = document.createElement('div');
+      overlay.innerHTML = widget.renderConfigPanelHtml();
+      const input = overlay.querySelector<HTMLInputElement>('#le-show-at-zoom')!;
+      expect(input.value).toBe('0');
+      input.value = '14';
+      widget.collectLayerFromPanel(overlay);
+      expect(editedLayer).toMatchObject({ showAtZoom: 14 });
+    }
+  });
+
+  it('clusters a dense stop layer and avoids creating thousands of DOM markers', async () => {
+    let zoom = 10;
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock({
+      getZoom: () => zoom,
+      getSize: () => ({ x: 800, y: 600 }),
+      getBounds: () => ({ pad: () => ({ getSouth: () => 49, getNorth: () => 50, getWest: () => -124, getEast: () => -122 }) }),
+      project: ([lat, lon]: [number, number]) => ({ x: lon * 100, y: lat * 100 }),
+    });
+    const names = Array.from({ length: 8588 }, (_, i) => `stop${i}`);
+    mockStore.listChildrenNames.mockImplementation((path: string) => path === 'default.PUBLIC_BUS_STOP' ? names : []);
+    mockStore.getNodeValue.mockImplementation((path: string) => {
+      const match = path.match(/stop(\d+)\.meta\.(lat|lon)$/);
+      if (!match) return undefined;
+      const index = Number(match[1]);
+      return match[2] === 'lat' ? 49.2 + (index % 40) * 0.001 : -123.2 + Math.floor(index / 40) * 0.001;
+    });
+    const layer = { id: 'stops', name: 'Bus Stops', pathPattern: 'PUBLIC_BUS_STOP.*', itemType: 'icon', enabled: true, showAtZoom: 0, iconRules: [], defaultGlyph: 'mdi:bus-stop' };
+    await widget.initLayer(layer);
+    widget.refreshDenseIconLayers();
+    const markers = (window as any).L.marker.mock.calls.length;
+    expect(widget.denseIconLayers.get('stops').paths.size).toBe(8588);
+    expect(markers).toBeLessThan(20);
+    expect(widget.devices.size).toBeLessThan(20);
+    const firstCluster = (window as any).L.marker.mock.results[0].value;
+    firstCluster.handlers.click();
+    expect(widget.map.flyTo).toHaveBeenCalledWith(expect.any(Array), 12);
+    layer.showAtZoom = 11;
+    widget.config.layers = [layer];
+    widget.updateLayerVisibility(layer);
+    expect(widget.denseIconLayers.get('stops').clusters).toHaveLength(0);
+    zoom = 11;
+    widget.onZoomChange();
+    expect(widget.denseIconLayers.get('stops').clusters.length).toBeGreaterThan(0);
+    layer.enabled = false;
+    widget.updateLayerVisibility(layer);
+    expect(widget.denseIconLayers.get('stops').clusters).toHaveLength(0);
+    widget.clearDenseIconLayers();
+  });
+
+  it('adds individual markers for a dense layer when clustering is disabled', async () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock();
+    const names = Array.from({ length: 500 }, (_, i) => `bus${i}`);
+    mockStore.listChildrenNames.mockImplementation((path: string) => path === 'default.PUBLIC_BUS.BUSES' ? names : []);
+    const addDevice = vi.spyOn(widget, 'addDevice').mockResolvedValue(undefined);
+    const busLayer = { ...layer, pathPattern: 'PUBLIC_BUS.BUSES.*', clusteringEnabled: false };
+    await widget.initLayer(busLayer);
+    expect(widget.denseIconLayers.size).toBe(0);
+    expect(addDevice).toHaveBeenCalledTimes(500);
+    expect(addDevice).toHaveBeenCalledWith(busLayer, 'default.PUBLIC_BUS.BUSES.bus0');
+    expect(addDevice).toHaveBeenCalledWith(busLayer, 'default.PUBLIC_BUS.BUSES.bus499');
+    const onChange = mockStore.subscribeToTreeChanges.mock.calls.find(([path]: [string]) => path === 'default.PUBLIC_BUS.BUSES')![1];
+    onChange('default.PUBLIC_BUS.BUSES.bus500', {});
+    expect(addDevice).toHaveBeenLastCalledWith(busLayer, 'default.PUBLIC_BUS.BUSES.bus500');
+  });
+
+  it('shows and saves the clustering option in the icon layer editor', () => {
+    const widget = document.createElement('area-map-widget') as any;
+    const editedLayer = { ...layer };
+    widget.config.layers = [editedLayer];
+    widget.cfgEditLayerId = editedLayer.id;
+    const overlay = document.createElement('div');
+    overlay.innerHTML = widget.renderConfigPanelHtml();
+    const input = overlay.querySelector<HTMLInputElement>('#le-clustering-enabled')!;
+    expect(input.checked).toBe(true);
+    input.checked = false;
+    widget.collectLayerFromPanel(overlay);
+    expect(editedLayer).toMatchObject({ clusteringEnabled: false });
+    overlay.innerHTML = widget.renderConfigPanelHtml();
+    const restoredInput = overlay.querySelector<HTMLInputElement>('#le-clustering-enabled')!;
+    expect(restoredInput.checked).toBe(false);
+    restoredInput.checked = true;
+    widget.collectLayerFromPanel(overlay);
+    expect(editedLayer).toMatchObject({ clusteringEnabled: true });
+  });
+
+  it('renders clustered stops under a nested root when coordinate values arrive after the snapshot', async () => {
+    vi.useFakeTimers();
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock({
+      getSize: () => ({ x: 800, y: 600 }),
+      getBounds: () => ({ pad: () => ({ getSouth: () => 49, getNorth: () => 50, getWest: () => -124, getEast: () => -122 }) }),
+      project: ([lat, lon]: [number, number]) => ({ x: lon * 100, y: lat * 100 }),
+    });
+    const root = 'default.PUBLIC_BUS.PUBLIC_BUS_STOP';
+    const names = Array.from({ length: 500 }, (_, i) => `stop${i}`);
+    mockStore.listChildrenNames.mockImplementation((path: string) => path === root ? names : []);
+    let coordinatesReady = false;
+    mockStore.getNodeValue.mockImplementation((path: string) => {
+      if (!coordinatesReady || !path.startsWith(root + '.')) return undefined;
+      return path.endsWith('.meta.lat') ? 49.28 : path.endsWith('.meta.lon') ? -123.12 : undefined;
+    });
+    const stopLayer = { ...layer, id: 'stops', name: 'Stops', pathPattern: 'PUBLIC_BUS.PUBLIC_BUS_STOP.*' };
+    await widget.initLayer(stopLayer);
+    await vi.advanceTimersByTimeAsync(75);
+    expect((window as any).L.marker).not.toHaveBeenCalled();
+    expect(mockStore.subscribeToTagValueChanges).toHaveBeenCalledWith(root, expect.any(Function), false, ['*.meta.lat', '*.meta.lon']);
+    const onValue = mockStore.subscribeToTagValueChanges.mock.calls.at(-1)![1] as (path: string) => void;
+    const unsubscribe = mockStore.subscribeToTagValueChanges.mock.results.at(-1)!.value;
+    coordinatesReady = true;
+    // Ignore unrelated data, including a bus with the same leaf name.
+    onValue('default.PUBLIC_BUS.stop0.meta.lat');
+    onValue(root + '.stop0.status.active');
+    await vi.advanceTimersByTimeAsync(75);
+    expect((window as any).L.marker).not.toHaveBeenCalled();
+    onValue(root + '.stop0.meta.lat');
+    onValue(root + '.stop0.meta.lon');
+    await vi.advanceTimersByTimeAsync(75);
+    expect((window as any).L.marker).toHaveBeenCalledOnce();
+    expect(widget.denseIconLayers.get('stops').clusters).toHaveLength(1);
+    widget.destroyMap();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it('lets the user select a stop from a cluster at maximum zoom', async () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock({
+      getZoom: () => 18,
+      getSize: () => ({ x: 800, y: 600 }),
+      getBounds: () => ({ pad: () => ({ getSouth: () => 49, getNorth: () => 50, getWest: () => -124, getEast: () => -122 }) }),
+      project: () => ({ x: 100, y: 100 }),
+    });
+    widget.addDevice = vi.fn(async () => {});
+    widget.onDeviceClick = vi.fn();
+    const names = Array.from({ length: 500 }, (_, i) => `stop${i}`);
+    mockStore.listChildrenNames.mockImplementation((path: string) => path === 'default.PUBLIC_BUS_STOP' ? names : []);
+    mockStore.getNodeValue.mockImplementation((path: string) => path.endsWith('.meta.lat') ? 49.2 : path.endsWith('.meta.lon') ? -123.2 : 'Stop');
+    await widget.initLayer({ id: 'stops', name: 'Stops', pathPattern: 'PUBLIC_BUS_STOP.*', itemType: 'icon', enabled: true });
+    widget.refreshDenseIconLayers();
+    const marker = (window as any).L.marker.mock.results[0].value;
+    expect(marker.bindPopup).toHaveBeenCalled();
+    const popup = document.createElement('div');
+    popup.innerHTML = '<button data-stop-index="1">Second stop</button>';
+    marker.handlers.popupopen({ popup: { getElement: () => popup } });
+    popup.querySelector('button')!.click();
+    await flush();
+    expect(widget.onDeviceClick).toHaveBeenCalledWith('default.PUBLIC_BUS_STOP.stop1');
+    widget.clearDenseIconLayers();
+  });
+
+  it('renders routes with layer style, updates tag data live, and scales width from appearance zoom', async () => {
+    vi.useFakeTimers();
+    const widget = document.createElement('area-map-widget') as any;
+    let zoom = 10;
+    widget.map = createMapMock({ getZoom: () => zoom });
+    const routeLayer = {
+      id: 'routes', name: 'Routes', pathPattern: 'Routes.*', itemType: 'route', enabled: true,
+      routeColor: '#123456', routeWidth: 4, routeZoom: 10,
+    };
+    const values: Record<string, unknown> = {
+      'default.Routes.A.route.coordinates': [15.3, -61.4, 15.4, -61.5],
+      'default.Routes.A.route.name': '<Route A>',
+      'default.Routes.A.route.color': '#abcdef',
+      'default.Routes.A.route.width': 99,
+      'default.Routes.A.route.zoom': 19,
+      'default.Routes.B.route.coordinates': [15.2, -61.3, 15.3, -61.4],
+      'default.Routes.B.route.name': 'Route B',
+    };
+    const callbacks: Record<string, (path: string) => void> = {};
+    let treeChange: ((path: string, data: unknown) => void) | undefined;
+    mockStore.listChildrenNames.mockImplementation((path: string) => path === 'default.Routes' ? ['A', 'B'] : []);
+    mockStore.subscribeToTreeChanges.mockImplementation((path: string, callback: typeof treeChange) => {
+      if (path === 'default.Routes') treeChange = callback;
+      return vi.fn();
+    });
+    mockStore.getNodeValue.mockImplementation((path: string) => values[path]);
+    mockStore.subscribeToTagValueChanges.mockImplementation((path: string, callback: (path: string) => void) => {
+      callbacks[path] = callback;
+      return vi.fn();
+    });
+
+    await widget.initLayer(routeLayer);
+    const leaflet = (window as any).L;
+    expect(leaflet.polyline).toHaveBeenCalledTimes(2);
+    expect(leaflet.polyline).toHaveBeenCalledWith([[15.3, -61.4], [15.4, -61.5]],
+      expect.objectContaining({ color: '#123456', weight: 4, pane: 'xact-device-layer-routes' }));
+    expect(leaflet.polyline).toHaveBeenCalledWith([[15.2, -61.3], [15.3, -61.4]],
+      expect.objectContaining({ color: '#123456', weight: 4 }));
+    for (const field of ['color', 'width', 'zoom']) {
+      const path = `default.Routes.A.route.${field}`;
+      expect(mockStore.subscribeTagReference).not.toHaveBeenCalledWith(path, expect.any(Function));
+      expect(mockStore.getNodeValue).not.toHaveBeenCalledWith(path);
+    }
+    const firstLine = leaflet.polyline.mock.results[0].value;
+    expect(firstLine.bindTooltip).toHaveBeenCalledWith('&lt;Route A&gt;', { sticky: true });
+
+    zoom = 11;
+    widget.onZoomChange();
+    expect(firstLine.setStyle).toHaveBeenCalledWith(expect.objectContaining({ weight: 5 }));
+    expect(leaflet.polyline).toHaveBeenCalledTimes(2);
+
+    values['default.Routes.A.route.name'] = 'Renamed';
+    values['default.Routes.A.route.color'] = '#654321';
+    values['default.Routes.A.route.coordinates'] = [15.5, -61.6, 15.6, -61.7];
+    callbacks['default.Routes.A.route.coordinates']('default.Routes.A.route.coordinates');
+    vi.advanceTimersByTime(16);
+    expect(firstLine.setLatLngs).toHaveBeenLastCalledWith([[15.5, -61.6], [15.6, -61.7]]);
+    expect(firstLine.setStyle).toHaveBeenLastCalledWith(expect.objectContaining({ color: '#123456', weight: 5 }));
+    expect(firstLine.setTooltipContent).toHaveBeenLastCalledWith('Renamed');
+
+    values['default.Routes.C.route.coordinates'] = [15.1, -61.2, 15.2, -61.3];
+    values['default.Routes.C.route.name'] = 'Route C';
+    treeChange?.('default.Routes.C.route.coordinates', {});
+    expect(leaflet.polyline).toHaveBeenCalledTimes(3);
+    const thirdLine = leaflet.polyline.mock.results[2].value;
+    expect(leaflet.polyline).toHaveBeenLastCalledWith(expect.any(Array),
+      expect.objectContaining({ color: '#123456', weight: 5 }));
+    treeChange?.('default.Routes.C', null);
+    expect(thirdLine.remove).toHaveBeenCalled();
+    expect(widget.routes.size).toBe(2);
+
+    routeLayer.enabled = false;
+    widget.updateLayerVisibility(routeLayer);
+    expect(firstLine.remove).toHaveBeenCalled();
+    routeLayer.enabled = true;
+    widget.updateLayerVisibility(routeLayer);
+    expect(leaflet.polyline).toHaveBeenCalledTimes(5);
+
+    zoom = 9;
+    widget.onZoomChange();
+    expect(leaflet.polyline.mock.results[3].value.remove).toHaveBeenCalled();
+    expect(leaflet.polyline.mock.results[4].value.remove).toHaveBeenCalled();
+  });
+
+  it('cycles each layer palette and keeps assignments through route removal and zoom changes', () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock({ getZoom: () => 12 });
+    const layer = { id: 'routes', itemType: 'route', enabled: true, routeColors: ['#1d4ed8', '#b91c1c'] };
+    mockStore.getNodeValue.mockImplementation((path: string) => path.endsWith('.coordinates') ? [15.3, -61.4, 15.4, -61.5] : undefined);
+    for (const path of ['A', 'B', 'C']) widget.addRoute(layer, path);
+    const polyline = (window as any).L.polyline;
+    expect(polyline.mock.calls.map((call: any[]) => call[1].color)).toEqual(['#1d4ed8', '#b91c1c', '#1d4ed8']);
+    widget.removeRoute(layer, 'B');
+    widget.addRoute(layer, 'D');
+    expect(polyline.mock.lastCall[1].color).toBe('#b91c1c');
+    widget.onZoomChange();
+    expect(polyline.mock.results[2].value.setStyle).toHaveBeenLastCalledWith(expect.objectContaining({ color: '#1d4ed8' }));
+    widget.addRoute({ ...layer, id: 'other' }, 'E');
+    expect(polyline.mock.lastCall[1].color).toBe('#1d4ed8');
+  });
+
+  it('edits one to ten route colors, preserves edits when resizing, and migrates legacy colors', () => {
+    const widget = document.createElement('area-map-widget') as any;
+    const layer = { id: 'routes', name: 'Routes', pathPattern: 'Routes.*', itemType: 'route', enabled: true };
+    widget.config = { ...widget.config, layers: [layer] };
+    widget.cfgEditLayerId = layer.id;
+    const overlay = document.createElement('div');
+    overlay.innerHTML = widget.renderConfigPanelHtml();
+    widget.attachConfigListeners(overlay);
+    expect(overlay.querySelectorAll('.le-route-color')).toHaveLength(10);
+    expect(new Set(Array.from(overlay.querySelectorAll<HTMLInputElement>('.le-route-color'), input => input.value)).size).toBe(10);
+    overlay.querySelector<HTMLInputElement>('#le-route-color-0')!.value = '#123456';
+    for (const count of [1, 3, 10]) {
+      const select = overlay.querySelector<HTMLSelectElement>('#le-route-color-count')!;
+      select.value = String(count);
+      select.dispatchEvent(new Event('change'));
+      expect(overlay.querySelectorAll('.le-route-color')).toHaveLength(count);
+      expect(overlay.querySelector<HTMLInputElement>('#le-route-color-0')!.value).toBe('#123456');
+    }
+    widget.collectLayerFromPanel(overlay);
+    expect(widget.config.layers[0].routeColors).toHaveLength(10);
+    widget.config.layers[0] = { ...layer, routeColors: undefined, routeColor: '#654321' };
+    overlay.innerHTML = widget.renderConfigPanelHtml();
+    expect(overlay.querySelectorAll('.le-route-color')).toHaveLength(1);
+    widget.collectLayerFromPanel(overlay);
+    expect(widget.config.layers[0].routeColors).toEqual(['#654321']);
+    expect(widget.config.layers[0]).not.toHaveProperty('routeColor');
+  });
+
+  it('reads numbered RTDB array children and refreshes when a coordinate changes', () => {
+    vi.useFakeTimers();
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock();
+    const routeLayer = { id: 'routes', name: 'Routes', pathPattern: 'Routes.*', itemType: 'route', enabled: true };
+    const coordinatesPath = 'default.Routes.A.route.coordinates';
+    const values: Record<string, unknown> = {
+      [coordinatesPath + '.0']: 15.3,
+      [coordinatesPath + '.1']: -61.4,
+      [coordinatesPath + '.2']: 15.4,
+      [coordinatesPath + '.3']: -61.5,
+      'default.Routes.A.route.width': 4,
+      'default.Routes.A.route.zoom': 10,
+    };
+    let arrayChange: (() => void) | undefined;
+    const callbacks: Record<string, (path: string) => void> = {};
+    mockStore.getNodeValue.mockImplementation((path: string) => values[path]);
+    mockStore.getNodeType.mockImplementation((path: string) => path === coordinatesPath ? 'node' : 'leaf');
+    mockStore.listChildrenNames.mockImplementation((path: string) =>
+      path === coordinatesPath ? ['3', '1', '2', '0'] : []);
+    mockStore.subscribeToTreeChanges.mockImplementation((path: string, callback: () => void) => {
+      if (path === coordinatesPath) arrayChange = callback;
+      return vi.fn();
+    });
+    mockStore.subscribeToTagValueChanges.mockImplementation((path: string, callback: (path: string) => void) => {
+      callbacks[path] = callback;
+      return vi.fn();
+    });
+    widget.addRoute(routeLayer, 'default.Routes.A');
+    const leaflet = (window as any).L;
+    expect(leaflet.polyline).toHaveBeenCalledWith([[15.3, -61.4], [15.4, -61.5]],
+      expect.objectContaining({ weight: 4 }));
+    const line = leaflet.polyline.mock.results[0].value;
+    values[coordinatesPath + '.2'] = 15.6;
+    callbacks[coordinatesPath](coordinatesPath + '.2');
+    vi.advanceTimersByTime(16);
+    expect(line.setLatLngs).not.toHaveBeenCalled();
+    values[coordinatesPath + '.3'] = -61.7;
+    arrayChange?.();
+    vi.advanceTimersByTime(150);
+    expect(line.setLatLngs).toHaveBeenLastCalledWith([[15.3, -61.4], [15.6, -61.7]]);
+  });
+
+  it('keeps route geometry stable until a complete array snapshot arrives', () => {
+    vi.useFakeTimers();
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock();
+    const coordinatePath = 'default.Routes.A.route.coordinates';
+    const previous = [49.283456, -123.114567, 49.294567, -123.125678];
+    const next = [49.303456, -123.134567, 49.314567, -123.145678];
+    const values: Record<string, unknown> = { [coordinatePath]: previous };
+    const callbacks: Record<string, (path: string) => void> = {};
+    mockStore.getNodeValue.mockImplementation((path: string) => values[path]);
+    mockStore.subscribeToTagValueChanges.mockImplementation((path: string, callback: (path: string) => void) => {
+      callbacks[path] = callback;
+      return vi.fn();
+    });
+    widget.addRoute({ ...layer, id: 'routes', itemType: 'route' }, 'default.Routes.A');
+    const line = (window as any).L.polyline.mock.results[0].value;
+    let updating = true;
+    mockStore.getNodeStatus.mockImplementation(() => updating ? 'array-updating' : '');
+    // The first batch after loading a REST snapshot may not yet have a
+    // committed parent broadcast. An explicit start still prevents partial draws.
+    delete values[coordinatePath];
+    callbacks[coordinatePath](coordinatePath);
+    for (let i = 0; i < next.length; i++) {
+      values[`${coordinatePath}.${i}`] = next[i];
+      callbacks[coordinatePath](`${coordinatePath}.${i}`);
+      vi.advanceTimersByTime(200);
+      expect(line.setLatLngs).not.toHaveBeenCalled();
+      expect(line.remove).not.toHaveBeenCalled();
+    }
+    values[coordinatePath] = next;
+    updating = false;
+    callbacks[coordinatePath](coordinatePath);
+    vi.advanceTimersByTime(16);
+    expect(line.setLatLngs).toHaveBeenCalledExactlyOnceWith([[49.303456, -123.134567], [49.314567, -123.145678]]);
+    widget.destroyMap();
+  });
+
+  it('refreshes a large route without per-coordinate subscriptions or repeated redraws', async () => {
+    vi.useFakeTimers();
+    const widget = document.createElement('area-map-widget') as any;
+    let zoom = 10;
+    widget.map = createMapMock({ getZoom: () => zoom });
+    const routeLayer = { id: 'routes', name: 'Routes', pathPattern: 'Routes.*', itemType: 'route', enabled: true, routeZoom: 15 };
+    const coordinatesPath = 'default.Routes.A.route.coordinates';
+    const coordinateNames = Array.from({ length: 1000 }, (_, i) => String(i));
+    const callbacks: Record<string, (path: string) => void> = {};
+    widget.config = { ...widget.config, layers: [routeLayer] };
+    mockStore.listChildrenNames.mockImplementation((path: string) =>
+      path === 'default.Routes' ? ['A'] : path === coordinatesPath ? coordinateNames : []);
+    mockStore.getNodeType.mockImplementation((path: string) => path === coordinatesPath ? 'node' : 'leaf');
+    mockStore.getNodeValue.mockImplementation((path: string) => {
+      if (path === 'default.Routes.A.route.name') return 'Long route';
+      if (!path.startsWith(coordinatesPath + '.')) return undefined;
+      const index = Number(path.slice(coordinatesPath.length + 1));
+      return index % 2 === 0 ? 15 + index / 10000 : -61 - index / 10000;
+    });
+    mockStore.subscribeToTagValueChanges.mockImplementation((path: string, callback: (path: string) => void) => {
+      callbacks[path] = callback;
+      return vi.fn();
+    });
+
+    await widget.refreshLayers();
+    expect((window as any).L.polyline).not.toHaveBeenCalled();
+    expect(mockStore.getNodeValue).not.toHaveBeenCalledWith(`${coordinatesPath}.0`);
+    expect(mockStore.subscribeToTagValueChanges).toHaveBeenCalledTimes(2);
+    expect(mockStore.subscribeTagReference).not.toHaveBeenCalled();
+
+    zoom = 15;
+    widget.onZoomChange();
+    const line = (window as any).L.polyline.mock.results[0].value;
+    expect((window as any).L.polyline).toHaveBeenCalledTimes(1);
+
+    for (let i = 0; i < 50; i++) callbacks[coordinatesPath](`${coordinatesPath}.${i}`);
+    expect(line.setLatLngs).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(150);
+    expect(line.setLatLngs).toHaveBeenCalledTimes(1);
+
+    await widget.refreshLayers();
+    expect(line.remove).toHaveBeenCalled();
+    expect((window as any).L.polyline).toHaveBeenCalledTimes(2);
+    expect(mockStore.subscribeToTagValueChanges).toHaveBeenCalledTimes(4);
+    expect(mockStore.subscribeTagReference).not.toHaveBeenCalled();
+  });
+
+  it('saves route style inputs and ignores malformed coordinate arrays', async () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock({ getZoom: () => 12 });
+    const routeLayer = {
+      id: 'routes', name: 'Routes', pathPattern: 'Routes.*', itemType: 'route', enabled: true,
+      routeColorTag: 'route.color', routeWidthTag: 'route.width', routeZoomTag: 'route.zoom',
+    };
+    widget.config = { ...widget.config, layers: [routeLayer] };
+    widget.cfgEditLayerId = 'routes';
+    const overlay = document.createElement('div');
+    overlay.innerHTML = widget.renderConfigPanelHtml();
+    expect(overlay.querySelector<HTMLSelectElement>('#le-item-type')?.value).toBe('route');
+    expect(overlay.querySelector('#le-default-glyph')).toBeNull();
+    expect(overlay.querySelector<HTMLInputElement>('#le-route-color-0')?.type).toBe('color');
+    expect(overlay.querySelector<HTMLInputElement>('#le-route-width')?.type).toBe('number');
+    expect(overlay.querySelector<HTMLInputElement>('#le-route-zoom')?.type).toBe('number');
+    overlay.querySelector<HTMLInputElement>('#le-route-coordinates-tag')!.value = 'shape.points';
+    overlay.querySelector<HTMLInputElement>('#le-route-color-0')!.value = '#2277aa';
+    overlay.querySelector<HTMLInputElement>('#le-route-width')!.value = '6.5';
+    overlay.querySelector<HTMLInputElement>('#le-route-zoom')!.value = '12';
+    widget.collectLayerFromPanel(overlay);
+    expect(routeLayer).toMatchObject({
+      routeCoordinatesTag: 'shape.points', routeColors: ['#2277aa', '#b91c1c', '#15803d', '#7e22ce', '#c2410c', '#0e7490', '#be185d', '#4338ca', '#854d0e', '#334155'], routeWidth: 6.5, routeZoom: 12,
+    });
+    expect(routeLayer).not.toHaveProperty('routeColorTag');
+    expect(routeLayer).not.toHaveProperty('routeWidthTag');
+    expect(routeLayer).not.toHaveProperty('routeZoomTag');
+
+    const values: Record<string, unknown> = {
+      'default.Routes.A.shape.points': [15.3, -61.4, 15.5],
+      'default.Routes.A.route.color': '#000000',
+      'default.Routes.A.route.width': 100,
+      'default.Routes.A.route.zoom': 19,
+    };
+    mockStore.getNodeValue.mockImplementation((path: string) => values[path]);
+    mockStore.subscribeTagReference.mockImplementation((_path: string, callback: () => void) => {
+      callback();
+      return vi.fn();
+    });
+    widget.addRoute(routeLayer, 'default.Routes.A');
+    expect((window as any).L.polyline).not.toHaveBeenCalled();
+
+    values['default.Routes.A.shape.points'] = [15.3, -61.4, 15.4, -61.5];
+    widget.updateRoute(widget.routes.get('routes:default.Routes.A'));
+    expect((window as any).L.polyline).toHaveBeenCalledWith([[15.3, -61.4], [15.4, -61.5]],
+      expect.objectContaining({ color: '#2277aa', weight: 6.5 }));
   });
 
   it('hydrates missing coordinates with per-device subscriptions', async () => {
@@ -275,6 +860,31 @@ describe('area-map-widget coordinate loading', () => {
     );
     expect(unsubLat).toHaveBeenCalled();
     expect(unsubLon).toHaveBeenCalled();
+  });
+
+  it('ignores nested bus category containers matched by the bus wildcard', async () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock();
+    const bus = 'default.PUBLIC_BUS.BUS-01';
+    mockStore.getNodeType.mockReturnValue('node');
+    mockStore.listChildrenNames.mockImplementation((path: string) => {
+      if (path === 'default.PUBLIC_BUS') return ['BUS-01', 'PUBLIC_BUS_ROUTE', 'PUBLIC_BUS_STOP'];
+      if (path === bus) return ['meta', 'status'];
+      if (path === 'default.PUBLIC_BUS.PUBLIC_BUS_ROUTE') return ['Route1'];
+      if (path === 'default.PUBLIC_BUS.PUBLIC_BUS_STOP') return ['Stop1'];
+      return [];
+    });
+    mockStore.getNodeValue.mockImplementation((path: string) => {
+      if (path === bus + '.meta.lat') return 49.28;
+      if (path === bus + '.meta.lon') return -123.12;
+      return undefined;
+    });
+    await widget.initLayer({ ...layer, id: 'buses', pathPattern: 'PUBLIC_BUS.*' });
+    expect([...widget.devices.keys()]).toEqual([bus]);
+    expect(widget.pendingDeviceUnsubs.size).toBe(0);
+    expect(mockStore.subscribeTagReference.mock.calls.map(call => call[0])).not.toContain('default.PUBLIC_BUS.PUBLIC_BUS_ROUTE.meta.lon');
+    expect(mockStore.subscribeTagReference.mock.calls.map(call => call[0])).not.toContain('default.PUBLIC_BUS.PUBLIC_BUS_STOP.meta.lat');
+    widget.destroyMap();
   });
 
   it('creates markers from current coordinate tags without raw store subscriptions', async () => {
@@ -330,6 +940,108 @@ describe('area-map-widget coordinate loading', () => {
     expect(marker.setLatLng).toHaveBeenCalledWith([4.7, 48.3]);
   });
 
+  it.each([{ duration: undefined, scale: 1 }, { duration: 8000, scale: 4 }])('uses movement duration $duration, retargets smoothly, and cancels on removal', async ({ duration, scale }) => {
+    let now = 100;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 1;
+    globalThis.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      const id = nextFrame++;
+      frames.set(id, callback);
+      return id;
+    }) as any;
+    globalThis.cancelAnimationFrame = vi.fn((id: number) => { frames.delete(id); }) as any;
+    const advanceFrame = (timestamp: number) => {
+      timestamp = 100 + (timestamp - 100) * scale;
+      now = timestamp;
+      const [id, callback] = frames.entries().next().value!;
+      frames.delete(id);
+      callback(timestamp);
+    };
+
+    const devicePath = 'default.LA_LongBeach.AirQuality.AQ-B-0149';
+    let lat = 0;
+    let lon = 0;
+    mockStore.getNodeValue.mockImplementation((path: string) => {
+      if (path.endsWith('.meta.lat')) return lat;
+      if (path.endsWith('.meta.lon')) return lon;
+      return undefined;
+    });
+    const callbacks: Record<string, () => void> = {};
+    mockStore.subscribeTagReference.mockImplementation((path: string, callback: () => void) => {
+      callbacks[path] = callback;
+      callback();
+      return vi.fn();
+    });
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = { getPane: vi.fn(() => ({ style: {} })), getZoom: vi.fn(() => 10) };
+    await widget.addDevice({ ...layer, positionAnimationMs: duration }, devicePath);
+    const marker = widget.devices.get(devicePath).marker;
+
+    lat = 10;
+    lon = 10;
+    callbacks[devicePath + '.meta.lat']();
+    callbacks[devicePath + '.meta.lon']();
+    expect(marker.setLatLng).not.toHaveBeenCalled();
+    expect(frames.size).toBe(1);
+
+    advanceFrame(600);
+    expect(marker.setLatLng).toHaveBeenLastCalledWith([1.5625, 1.5625]);
+    advanceFrame(1100);
+    expect(marker.setLatLng).toHaveBeenLastCalledWith([5, 5]);
+
+    lat = 20;
+    lon = 20;
+    callbacks[devicePath + '.meta.lat']();
+    expect(marker.setLatLng).toHaveBeenLastCalledWith([5, 5]);
+    expect(frames.size).toBe(1);
+    advanceFrame(2100);
+    expect(marker.setLatLng).toHaveBeenLastCalledWith([12.5, 12.5]);
+    advanceFrame(3100);
+    expect(marker.setLatLng).toHaveBeenLastCalledWith([20, 20]);
+    expect(frames.size).toBe(0);
+
+    lat = 30;
+    callbacks[devicePath + '.meta.lat']();
+    expect(frames.size).toBe(1);
+    widget.removeDevice(devicePath);
+    expect(frames.size).toBe(0);
+  });
+
+  it('moves instantly and cancels an existing animation when the duration is zero', () => {
+    const widget = document.createElement('area-map-widget') as any;
+    const devicePath = 'default.Buses.bus';
+    const entry = {
+      layer: { ...layer, positionAnimationMs: 0 },
+      marker: { setLatLng: vi.fn() },
+      displayedPosition: [0, 0],
+      positionAnimation: { frame: 17, target: [5, 5] },
+    };
+    widget.devices.set(devicePath, entry);
+    mockStore.getNodeValue.mockImplementation((path: string) => path.endsWith('.lat') ? 10 : 20);
+    widget.updateDevicePosition(devicePath);
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(17);
+    expect(entry.marker.setLatLng).toHaveBeenCalledWith([10, 20]);
+    expect(entry.displayedPosition).toEqual([10, 20]);
+    expect(entry.positionAnimation).toBeUndefined();
+  });
+
+  it('shows and saves the movement duration in the icon layer editor', () => {
+    const widget = document.createElement('area-map-widget') as any;
+    const editedLayer = { ...layer };
+    widget.config.layers = [editedLayer];
+    widget.cfgEditLayerId = editedLayer.id;
+    const overlay = document.createElement('div');
+    overlay.innerHTML = widget.renderConfigPanelHtml();
+    const input = overlay.querySelector<HTMLInputElement>('#le-position-animation-ms')!;
+    expect(input.value).toBe('2000');
+    for (const duration of ['8000', '0']) {
+      input.value = duration;
+      widget.collectLayerFromPanel(overlay);
+      expect(editedLayer).toMatchObject({ positionAnimationMs: Number(duration) });
+    }
+  });
+
   it('resolves wildcard patterns recursively and subscribes icon-rule tags', async () => {
     mockStore.listChildrenNames.mockImplementation((path: string) => {
       if (path === 'default.LA_LongBeach') return ['AirQuality'];
@@ -380,6 +1092,369 @@ describe('area-map-widget coordinate loading', () => {
     widget.removeDevice('default.LA_LongBeach.AirQuality.AQ-B-0149');
     expect(unsub).toHaveBeenCalled();
     expect(marker.remove).toHaveBeenCalled();
+  });
+
+  it('recovers an offline icon when online arrives after coordinates in a known meta group', async () => {
+    const devicePath = 'default.PUBLIC_BUS.BUSES.bus_2504_8c0da908476a4044fbcc2627';
+    let online: boolean | undefined;
+    let ruleCallback: (() => void) | undefined;
+    const unsub = vi.fn();
+    mockStore.getNodeType.mockImplementation((path: string) => path === devicePath + '.meta.online' ? 'unknown' : 'node');
+    mockStore.listChildrenNames.mockImplementation((path: string) => path === devicePath ? ['meta'] : []);
+    mockStore.getNodeValue.mockImplementation((path: string) => {
+      if (path.endsWith('.meta.lat')) return 49.28;
+      if (path.endsWith('.meta.lon')) return -123.10;
+      return undefined;
+    });
+    mockStore.resolveTagReference.mockImplementation((path: string) => path.endsWith('.meta.online') ? online : undefined);
+    mockStore.subscribeTagReference.mockImplementation((path: string, callback: () => void) => {
+      if (path.endsWith('.meta.online')) ruleCallback = callback;
+      callback();
+      return unsub;
+    });
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock();
+    await widget.addDevice({
+      ...layer,
+      defaultGlyph: 'BUS',
+      iconRules: [{ tag: 'meta.online', cond: 'ne', value: 'true', glyph: 'OFF' }],
+    }, devicePath);
+    const marker = (window as any).L.marker.mock.results[0].value;
+    expect(marker.options.icon.options.html).toContain('OFF');
+    expect(ruleCallback).toBeDefined();
+    online = true;
+    ruleCallback?.();
+    expect(marker.options.icon.options.html).toContain('BUS');
+    expect(marker.options.icon.options.html).not.toContain('OFF');
+    online = false;
+    ruleCallback?.();
+    expect(marker.options.icon.options.html).toContain('OFF');
+    widget.removeDevice(devicePath);
+    expect(unsub).toHaveBeenCalled();
+  });
+
+  it('rotates the icon from live degree tags without rotating the zoomed widget', async () => {
+    const devicePath = 'default.LA_LongBeach.AirQuality.AQ-B-0149';
+    mockStore.getNodeValue.mockImplementation((path: string) => {
+      if (path.endsWith('.meta.lat')) return 33.7701;
+      if (path.endsWith('.meta.lon')) return -118.1937;
+      return undefined;
+    });
+    let heading: unknown = 90;
+    let headingCallback: (() => void) | undefined;
+    const unsub = vi.fn();
+    mockStore.resolveTagReference.mockImplementation((path: string) => {
+      if (path.endsWith('.meta.heading')) return heading;
+      if (path.endsWith('.meta.online')) return true;
+      return undefined;
+    });
+    mockStore.subscribeTagReference.mockImplementation((path: string, callback: () => void) => {
+      if (path.endsWith('.meta.heading')) headingCallback = callback;
+      callback();
+      return unsub;
+    });
+    let zoom = 10;
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = { getPane: vi.fn(() => ({ style: {} })), getZoom: vi.fn(() => zoom) };
+    await widget.addDevice({
+      ...layer,
+      iconRotationEnabled: true,
+      iconRotationTag: 'meta.heading',
+      zoomWidgetType: 'test-map-child',
+      iconRules: [{ tag: 'meta.online', cond: 'eq', value: 'true', glyph: 'mdi:car', size: 24, color: '#fff', animation: 'pulse' }],
+    }, devicePath);
+
+    const marker = (window as any).L.marker.mock.results[0].value;
+    expect(mockStore.subscribeTagReference).toHaveBeenCalledWith(devicePath + '.meta.heading', expect.any(Function));
+    expect(marker.options.icon.options.html).toContain('transform:rotate(0deg)');
+    expect(marker.options.icon.options.html).toContain('xact-map-hover-tip');
+    expect(marker.options.icon.options.html).toContain('xact-map-anim-pulse');
+
+    heading = 0;
+    headingCallback?.();
+    expect(marker.options.icon.options.html).toContain('transform:rotate(-90deg)');
+    heading = 180;
+    headingCallback?.();
+    expect(marker.options.icon.options.html).toContain('transform:rotate(90deg)');
+    expect(marker.options.icon.options.html).not.toContain('scaleX(-1)');
+    heading = 181;
+    headingCallback?.();
+    expect(marker.options.icon.options.html).toContain('transform:rotate(-89deg) scaleX(-1)');
+    heading = 270;
+    headingCallback?.();
+    expect(marker.options.icon.options.html).toContain('transform:rotate(0deg) scaleX(-1)');
+    heading = 359;
+    headingCallback?.();
+    expect(marker.options.icon.options.html).toContain('transform:rotate(89deg) scaleX(-1)');
+    heading = '450';
+    headingCallback?.();
+    expect(marker.options.icon.options.html).toContain('transform:rotate(0deg)');
+    heading = -45;
+    headingCallback?.();
+    expect(marker.options.icon.options.html).toContain('transform:rotate(45deg) scaleX(-1)');
+    heading = 'invalid';
+    headingCallback?.();
+    expect(marker.options.icon.options.html).toContain('transform:rotate(0deg)');
+    expect(marker.options.icon.options.html).not.toContain('scaleX(-1)');
+
+    zoom = 14;
+    widget.updateDeviceMarker(devicePath);
+    expect(marker.options.icon.options.html).toContain('xact-map-dw-card');
+    expect(marker.options.icon.options.html).not.toContain('xact-map-icon-rotation');
+    widget.removeDevice(devicePath);
+    expect(unsub).toHaveBeenCalled();
+  });
+
+  it('reads each bus heading when the saved tag came from one example bus', async () => {
+    const firstBus = 'default.PUBLIC_BUS.BUS-01';
+    const secondBus = 'default.PUBLIC_BUS.BUS-17';
+    mockStore.getNodeValue.mockImplementation((path: string) => {
+      if (path.endsWith('.meta.lat')) return 15.3;
+      if (path.endsWith('.meta.lon')) return -61.4;
+      return undefined;
+    });
+    mockStore.resolveTagReference.mockImplementation((path: string) => {
+      if (path === firstBus + '.meta.orientation') return 10;
+      if (path === secondBus + '.meta.orientation') return 340;
+      return undefined;
+    });
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = { getPane: vi.fn(() => ({ style: {} })), getZoom: vi.fn(() => 10) };
+    const busLayer = { ...layer, iconRotationEnabled: true, iconRotationTag: 'PUBLIC_BUS.BUS-01.meta.orientation' };
+
+    await widget.addDevice(busLayer, firstBus);
+    await widget.addDevice(busLayer, secondBus);
+
+    const firstMarker = widget.devices.get(firstBus).marker;
+    const secondMarker = widget.devices.get(secondBus).marker;
+    expect(firstMarker.options.icon.options.html).toContain('transform:rotate(-80deg)');
+    expect(secondMarker.options.icon.options.html).toContain('transform:rotate(70deg) scaleX(-1)');
+    expect(mockStore.subscribeTagReference).toHaveBeenCalledWith(firstBus + '.meta.orientation', expect.any(Function));
+    expect(mockStore.subscribeTagReference).toHaveBeenCalledWith(secondBus + '.meta.orientation', expect.any(Function));
+  });
+
+  it('can keep a discreet zoomed-out device label visible and linked to its icon', async () => {
+    const devicePath = 'default.LA_LongBeach.AirQuality.AQ-B-0149';
+    mockStore.getNodeValue.mockImplementation((path: string) => {
+      if (path.endsWith('.meta.lat')) return 33.7701;
+      if (path.endsWith('.meta.lon')) return -118.1937;
+      return undefined;
+    });
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock({ getZoom: vi.fn(() => 10) });
+    const hoverLayer = { ...layer, zoomWidgetType: 'test-map-child', zoomThreshold: 13 };
+    const permanentLayer = { ...hoverLayer, showZoomedTooltipAlways: true };
+
+    await widget.addDevice(permanentLayer, devicePath);
+    const entry = widget.devices.get(devicePath);
+    expect(entry.marker.options.icon.options.html).toContain('xact-map-hover-tip xact-map-tooltip-permanent" style="display:block');
+    expect(entry.marker.options.icon.options.html).toContain('--xact-map-link-color:#f59e0b');
+    expect(entry.marker.options.icon.options.html).toContain('xact-map-device-label');
+    expect(entry.marker.options.icon.options.html).toContain('>AQ-B-0149</span>');
+    expect(entry.marker.options.icon.options.html).not.toContain('xact-map-hover-body');
+    entry.marker.handlers.mouseover();
+    expect(entry.divWidgetEl).toBeUndefined();
+
+    expect(widget.makeIconHtml(null, hoverLayer, devicePath)).toContain('xact-map-hover-tip xact-map-hover-widget');
+    widget.map.getZoom.mockReturnValue(15);
+    widget.updateDeviceMarker(devicePath);
+    expect(entry.marker.options.icon.options.html).not.toContain('xact-map-tooltip-permanent');
+    expect(entry.marker.options.icon.options.html).not.toContain('xact-map-hover-tip');
+  });
+
+  it('mounts the zoomed widget only while hovering over a zoomed-out icon', async () => {
+    const devicePath = 'default.LA_LongBeach.AirQuality.AQ-B-0149';
+    mockStore.getNodeValue.mockImplementation((path: string) => {
+      if (path.endsWith('.meta.lat')) return 33.7701;
+      if (path.endsWith('.meta.lon')) return -118.1937;
+      return undefined;
+    });
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock({ getZoom: vi.fn(() => 10) });
+    const zoomLayer = {
+      ...layer,
+      zoomWidgetType: 'test-map-child',
+      zoomWidgetConfig: { tagPrefix: '*', label: 'Zoom' },
+      zoomThreshold: 13,
+      divWidgetWidth: 320,
+    };
+
+    await widget.addDevice(zoomLayer, devicePath);
+    const entry = widget.devices.get(devicePath);
+    const markerEl = entry.marker.getElement();
+    expect(markerEl.querySelector('.xact-map-hover-widget')).not.toBeNull();
+    expect(markerEl.querySelector('.xact-map-hover-body')).not.toBeNull();
+    expect(entry.divWidgetEl).toBeUndefined();
+
+    entry.marker.handlers.mouseover();
+    const child = markerEl.querySelector('test-map-child');
+    expect(child).toBe(entry.divWidgetEl);
+    expect((child as any).config).toEqual({ tagPrefix: 'AQ-B-0149', label: 'Zoom' });
+    expect((child as any).editMode).toBe(false);
+    widget.onZoomChange();
+    expect(entry.divWidgetEl).toBe(child);
+    entry.marker.handlers.mouseout();
+    expect(markerEl.querySelector('test-map-child')).toBeNull();
+    expect(entry.divWidgetEl).toBeNull();
+
+    entry.marker.handlers.mouseover();
+    expect(markerEl.querySelector('test-map-child')).not.toBeNull();
+    widget.map.getZoom.mockReturnValue(15);
+    widget.updateDeviceMarker(devicePath);
+    expect(markerEl.querySelector('.xact-map-hover-body')).toBeNull();
+    expect(markerEl.querySelector('.xact-map-dw-body test-map-child')).toBe(entry.divWidgetEl);
+  });
+
+  function createHoverPopupGeometry(widgetType = 'test-map-child') {
+    const devicePath = 'default.Buses.Stop';
+    const widget = document.createElement('area-map-widget') as any;
+    widget.innerHTML = '<div id="xact-map"></div>';
+    widget.map = createMapMock();
+    const container = widget.querySelector('#xact-map')!;
+    let mapRect = new DOMRect(100, 100, 800, 600);
+    vi.spyOn(container, 'getBoundingClientRect').mockImplementation(() => mapRect);
+    const popupLayer = { ...layer, zoomWidgetType: widgetType, divWidgetWidth: 280 };
+    const markerEl = document.createElement('div');
+    markerEl.innerHTML = widget.makeIconHtml(null, popupLayer, devicePath);
+    container.appendChild(markerEl);
+    const root = markerEl.querySelector<HTMLElement>('.xact-map-marker-root')!;
+    const tip = markerEl.querySelector<HTMLElement>('.xact-map-hover-widget')!;
+    const card = tip.querySelector<HTMLElement>('.xact-map-dw-card')!;
+    let anchor = new DOMRect(488, 500, 24, 24);
+    let contentHeight = 200;
+    vi.spyOn(root, 'getBoundingClientRect').mockImplementation(() => anchor);
+    vi.spyOn(tip, 'getBoundingClientRect').mockImplementation(() => new DOMRect(
+      anchor.left + parseFloat(tip.style.left || '0'),
+      anchor.top + parseFloat(tip.style.top || '0'),
+      Math.min(280, parseFloat(tip.style.maxWidth) || Infinity),
+      Math.min(contentHeight, parseFloat(card.style.maxHeight) || Infinity) + 9,
+    ));
+    const entry = { marker: { getElement: () => markerEl }, layer: popupLayer, hovered: true, unsubs: [] };
+    widget.devices.set(devicePath, entry);
+    return {
+      widget, devicePath, tip, card,
+      setAnchor: (x: number, y: number) => { anchor = new DOMRect(x, y, 24, 24); },
+      setMapRect: (rect: DOMRect) => { mapRect = rect; },
+      setContentHeight: (height: number) => { contentHeight = height; },
+    };
+  }
+
+  it.each([
+    { x: 488, y: 500, height: 200, placement: 'above', left: 360, top: 291 },
+    { x: 488, y: 110, height: 200, placement: 'below', left: 360, top: 134 },
+    { x: 105, y: 500, height: 200, placement: 'above', left: 108, top: 291 },
+    { x: 870, y: 500, height: 200, placement: 'above', left: 612, top: 291 },
+    { x: 488, y: 390, height: 500, placement: 'overlap', left: 360, top: 108 },
+  ])('keeps hover widgets visible with $placement placement at ($x, $y)', (scenario) => {
+    const popup = createHoverPopupGeometry();
+    popup.setAnchor(scenario.x, scenario.y);
+    popup.setContentHeight(scenario.height);
+    popup.widget.mountHoverWidget(popup.devicePath);
+    expect(popup.tip.dataset.placement).toBe(scenario.placement);
+    const rect = popup.tip.getBoundingClientRect();
+    expect(rect.left).toBe(scenario.left);
+    expect(rect.top).toBe(scenario.top);
+    expect(rect.right).toBeLessThanOrEqual(892);
+    expect(rect.bottom).toBeLessThanOrEqual(692);
+    popup.widget.destroyMap();
+  });
+
+  it.each(['test-map-child', 'test-device-watch-child'])('constrains oversized %s popups to the visible map and allows scrolling', (type) => {
+    const popup = createHoverPopupGeometry(type);
+    popup.setMapRect(new DOMRect(-100, -50, 300, 250));
+    popup.setAnchor(180, 80);
+    popup.setContentHeight(1000);
+    popup.widget.mountHoverWidget(popup.devicePath);
+    const rect = popup.tip.getBoundingClientRect();
+    expect(rect.left).toBe(8);
+    expect(rect.top).toBe(8);
+    expect(rect.right).toBe(192);
+    expect(rect.bottom).toBe(192);
+    expect(popup.card.style.overflow).toBe('auto');
+    expect(popup.tip.querySelector(type)).not.toBeNull();
+    popup.widget.destroyMap();
+  });
+
+  it('repositions live popup content and disconnects observers when hover ends or the map is destroyed', () => {
+    const resized: Array<() => void> = [];
+    const disconnect = vi.fn();
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resized.push(callback); }
+      observe() {}
+      disconnect = disconnect;
+    });
+    try {
+      const popup = createHoverPopupGeometry();
+      popup.widget.mountHoverWidget(popup.devicePath);
+      expect(popup.tip.dataset.placement).toBe('above');
+      popup.setContentHeight(500);
+      resized[0]();
+      expect(popup.tip.getBoundingClientRect().top).toBe(108);
+      expect(popup.tip.dataset.placement).toBe('overlap');
+      popup.setMapRect(new DOMRect(100, 100, 800, 400));
+      popup.widget.refreshHoverPopups();
+      expect(popup.tip.getBoundingClientRect().bottom).toBeLessThanOrEqual(492);
+      popup.widget.unmountHoverWidget(popup.devicePath);
+      expect(disconnect).toHaveBeenCalledOnce();
+      expect(popup.widget.hoverPopups.size).toBe(0);
+      popup.widget.mountHoverWidget(popup.devicePath);
+      popup.widget.destroyMap();
+      expect(disconnect).toHaveBeenCalledTimes(2);
+      expect(popup.widget.hoverPopups.size).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('refreshes selection styling only on the marker whose icon is updated', async () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.map = createMapMock();
+    mockStore.getNodeValue.mockImplementation((path: string) => path.endsWith('.lat') ? 49.28 : -123.12);
+    await widget.addDevice(layer, 'default.Buses.A');
+    await widget.addDevice(layer, 'default.Buses.B');
+    const a = widget.devices.get('default.Buses.A');
+    const b = widget.devices.get('default.Buses.B');
+    const readA = vi.spyOn(a.marker, 'getElement');
+    const readB = vi.spyOn(b.marker, 'getElement');
+    widget.updateDeviceMarker('default.Buses.A');
+    expect(readA).toHaveBeenCalled();
+    expect(readB).not.toHaveBeenCalled();
+    readA.mockClear();
+    readB.mockClear();
+    widget.selectedDevicePath = 'default.Buses.B';
+    widget.applySelectedMarker();
+    expect(readA).toHaveBeenCalled();
+    expect(readB).toHaveBeenCalled();
+    expect(b.marker.getElement().querySelector('.xact-map-marker-selected')).not.toBeNull();
+    widget.destroyMap();
+  });
+
+  it('shows a permanent bus-name label and heading in the public map', () => {
+    document.body.dataset.publicDashboard = 'true';
+    try {
+      const widget = document.createElement('area-map-widget') as any;
+      widget.map = { getZoom: vi.fn(() => 10) };
+      mockStore.resolveTagReference.mockImplementation((path: string) =>
+        path === 'default.PUBLIC_BUS.BUS-17.meta.orientation' ? 340 : undefined);
+      const publicLayer = {
+        ...layer,
+        iconRotationEnabled: true,
+        iconRotationTag: 'PUBLIC_BUS.BUS-01.meta.orientation',
+        showZoomedTooltipAlways: true,
+      };
+
+      const html = widget.makeIconHtml(null, publicLayer, 'default.PUBLIC_BUS.BUS-17');
+
+      expect(html).toContain('transform:rotate(70deg) scaleX(-1)');
+      expect(html).toContain('xact-map-hover-tip xact-map-tooltip-permanent');
+      expect(html).toContain('>BUS-17</span>');
+      expect(html).toContain('--xact-map-link-color:#f59e0b');
+      expect(html).toContain('xact-map-tooltip-permanent" style="display:block"');
+      delete document.body.dataset.publicDashboard;
+      expect(widget.makeIconHtml(null, publicLayer, 'default.PUBLIC_BUS.BUS-17')).toBe(html);
+    } finally {
+      delete document.body.dataset.publicDashboard;
+    }
   });
 
   it('uses plugin renderers and assigns map panes when plugin objects omit one', async () => {
@@ -475,6 +1550,40 @@ describe('area-map-widget coordinate loading', () => {
 
     panel.querySelector<HTMLElement>('#dp-close')!.click();
     expect(panel.style.display).toBe('none');
+  });
+
+  it('keeps sidebar controls visible with a long device name and an embedded widget', async () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.loadAndInit = vi.fn();
+    document.body.appendChild(widget);
+    const longName = 'A_very_long_device_name_that_cannot_fit_in_the_sidebar_header';
+    const devicePath = `default.LA_LongBeach.AirQuality.${longName}`;
+    const sideLayer = { ...layer, sidePanelWidgetType: 'test-device-watch-child' };
+    widget.config = { ...widget.config, layers: [sideLayer] };
+    widget.render();
+    widget.devices.set(devicePath, {
+      marker: { getElement: vi.fn(() => document.createElement('div')) },
+      layer: sideLayer,
+      unsubs: [],
+      divTagPaths: new Set(),
+    });
+
+    widget.onDeviceClick(devicePath);
+    await flush();
+
+    const panel = widget.querySelector<HTMLElement>('#device-panel')!;
+    const header = panel.firstElementChild!.firstElementChild as HTMLElement;
+    const title = header.firstElementChild as HTMLElement;
+    const controls = header.lastElementChild as HTMLElement;
+    expect(title.style.minWidth).toMatch(/^0(?:px)?$/);
+    expect(title.style.overflow).toBe('hidden');
+    expect(title.firstElementChild?.getAttribute('style')).toContain('text-overflow:ellipsis');
+    expect(controls.style.flexShrink).toBe('0');
+    expect(panel.querySelector('test-device-watch-child')).not.toBeNull();
+
+    controls.querySelector<HTMLElement>('#dp-close')!.click();
+    expect(panel.style.display).toBe('none');
+    expect(widget.selectedDevicePath).toBeNull();
   });
 
   it('clears the previous side-panel widget before updating device context on another click', async () => {
@@ -637,6 +1746,53 @@ describe('area-map-widget coordinate loading', () => {
     expect(widget.map.panes['xact-device-layer-lower'].style.zIndex).toBe('890');
   });
 
+  it('dismisses a hover popup with Escape until the icon is hovered again', async () => {
+    mockStore.getNodeValue.mockImplementation((path: string) => path.endsWith('.lat') ? 49.28 : -123.12);
+    const widget = document.createElement('area-map-widget') as any;
+    const popupLayer = { ...layer, zoomWidgetType: 'test-map-child' };
+    widget.map = createMapMock();
+    widget.config.layers = [popupLayer];
+    widget.ensureDeviceLayerPanes();
+    const path = 'default.Buses.Stop';
+    await widget.addDevice(popupLayer, path);
+    const entry = widget.devices.get(path);
+    const marker = entry.marker;
+    marker.handlers.mouseover();
+    const child = entry.divWidgetEl;
+    expect(child).not.toBeNull();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(entry.divWidgetEl).toBe(child);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(entry.divWidgetEl).toBeNull();
+    expect(entry.hovered).toBe(false);
+    expect(marker.getElement().querySelector('.xact-map-hover-dismissed')).not.toBeNull();
+    expect(marker.setZIndexOffset).toHaveBeenLastCalledWith(0);
+    expect(widget.map.panes['xact-device-layer-aq'].style.zIndex).toBe('900');
+    expect(widget.hoverPopups.size).toBe(0);
+    widget.updateDeviceMarker(path);
+    expect(entry.divWidgetEl).toBeNull();
+    expect(marker.getElement().querySelector('.xact-map-hover-dismissed')).not.toBeNull();
+    // A fresh icon DOM must remain dismissed after a live rule update.
+    entry.layer.defaultColor = '#00ff00';
+    widget.updateDeviceMarker(path);
+    expect(marker.getElement().querySelector('.xact-map-hover-dismissed')).not.toBeNull();
+    expect(entry.divWidgetEl).toBeNull();
+
+    marker.handlers.mouseover();
+    expect(entry.divWidgetEl).toBeNull();
+    // Removing popup content can emit mouseout while the icon is still hovered.
+    vi.spyOn(marker.getElement(), 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 100, 24, 24));
+    marker.handlers.mouseout({ originalEvent: new MouseEvent('mouseout', { clientX: 110, clientY: 110 }) });
+    expect(marker.getElement().querySelector('.xact-map-hover-dismissed')).not.toBeNull();
+    marker.handlers.mouseout({ originalEvent: new MouseEvent('mouseout', { clientX: 200, clientY: 200 }) });
+    marker.handlers.mouseover();
+    expect(entry.divWidgetEl).not.toBeNull();
+    expect(marker.getElement().querySelector('.xact-map-hover-dismissed')).toBeNull();
+    widget.destroyMap();
+    expect(marker.setZIndexOffset).toHaveBeenLastCalledWith(0);
+  });
+
   it('raises a hovered marker layer above other device layers while showing hover widgets', async () => {
     mockStore.getNodeValue.mockImplementation((path: string) => {
       if (path.endsWith('.meta.lat')) return 33.7701;
@@ -666,12 +1822,14 @@ describe('area-map-widget coordinate loading', () => {
 
     expect(widget.map.panes['xact-device-layer-lower'].style.zIndex).toBe('950');
     expect(widget.map.panes['xact-device-layer-top'].style.zIndex).toBe('900');
-    expect(widget.devices.get('default.LA_LongBeach.AirQuality.AQ-B-0149').hoverWidgetEl).toBeInstanceOf(HTMLElement);
+    expect(marker.setZIndexOffset).toHaveBeenLastCalledWith(1000000);
+    expect(marker.getElement().querySelector('.xact-map-hover-body test-map-child')).not.toBeNull();
 
     marker.handlers.mouseout();
 
     expect(widget.map.panes['xact-device-layer-top'].style.zIndex).toBe('900');
     expect(widget.map.panes['xact-device-layer-lower'].style.zIndex).toBe('890');
+    expect(marker.setZIndexOffset).toHaveBeenLastCalledWith(0);
   });
 
   it('refreshes layers by clearing existing devices/plugins/subscriptions and skipping disabled layers', async () => {
@@ -732,7 +1890,7 @@ describe('area-map-widget coordinate loading', () => {
 
     const existingMarker = widget.devices.get('default.LA_LongBeach.AirQuality.AQ-B-0149').marker;
     treeChange?.('default.LA_LongBeach.AirQuality.AQ-B-0149.meta.lat', { value: 34 });
-    expect(existingMarker.setLatLng).toHaveBeenCalledWith([33.7701, -118.1937]);
+    expect(existingMarker.setLatLng).not.toHaveBeenCalled();
 
     treeChange?.('default.LA_LongBeach.AirQuality.AQ-B-0150', { type: 'node' });
     expect(widget.devices.has('default.LA_LongBeach.AirQuality.AQ-B-0150')).toBe(true);
@@ -777,6 +1935,10 @@ describe('area-map-widget coordinate loading', () => {
     expect(api.getBounds()).toEqual({ north: 3, south: 1, east: 4, west: 2 });
     expect(api.resolveDeviceTag('default.Area.Device.A', 'meta.lat')).toBe('default.Area.Device.A.meta.lat');
     expect(api.resolveDeviceTag('default.Area.Device.A', 'default.Other.tag')).toBe('default.Other.tag');
+    expect(api.resolveDeviceTag('default.PUBLIC_BUS.BUS-17', 'PUBLIC_BUS.BUS-01.meta.orientation'))
+      .toBe('default.PUBLIC_BUS.BUS-17.meta.orientation');
+    expect(api.resolveDeviceTag('default.PUBLIC_BUS.BUS-17', 'default.PUBLIC_BUS.BUS-01.meta.orientation'))
+      .toBe('default.PUBLIC_BUS.BUS-01.meta.orientation');
 
     api.requestSave({ opacity: 0.5 });
     expect(pluginLayer.pluginConfig).toEqual({ radius: 9, opacity: 0.5 });
@@ -803,7 +1965,7 @@ describe('area-map-widget coordinate loading', () => {
     expect(widget.mapLayerPlugins.has('bad')).toBe(false);
   });
 
-  it('mounts zoom widgets into markers and hover cards with device-specific config', async () => {
+  it('mounts zoom widgets into zoomed-in markers with device-specific config', async () => {
     mockStore.getNodeValue.mockImplementation((path: string) => {
       if (path.endsWith('.meta.lat')) return 33.7701;
       if (path.endsWith('.meta.lon')) return -118.1937;
@@ -831,10 +1993,8 @@ describe('area-map-widget coordinate loading', () => {
 
     widget.map.getZoom.mockReturnValue(10);
     widget.updateDeviceMarker('default.LA_LongBeach.AirQuality.AQ-B-0149');
-    widget.mountHoverWidget('default.LA_LongBeach.AirQuality.AQ-B-0149');
-
-    expect(entry.hoverWidgetEl).toBeInstanceOf(HTMLElement);
-    expect((entry.hoverWidgetEl as any).config.tagPrefix).toBe('AQ-B-0149');
+    expect(entry.marker.options.icon.options.html).toContain('xact-map-hover-body');
+    expect(entry.divWidgetEl).toBeNull();
   });
 
   it('evaluates div templates, subscribes template tags, and renders fallback content on template errors', async () => {
@@ -895,21 +2055,18 @@ describe('area-map-widget coordinate loading', () => {
       sidePanelWidgetConfig: { tagPrefix: '*', side: true },
     };
     const divWidgetEl = document.createElement('test-map-child') as any;
-    const hoverWidgetEl = document.createElement('test-map-child') as any;
     widget.devices.set('default.Area.Device.A', {
       marker: { getElement: vi.fn(() => document.createElement('div')) },
       layer: zoomLayer,
       unsubs: [],
       divTagPaths: new Set(),
       divWidgetEl,
-      hoverWidgetEl,
     });
 
     await widget.openZoomWidgetConfig(zoomLayer);
 
     expect(zoomLayer.zoomWidgetConfig).toEqual({ savedByChild: true });
     expect(divWidgetEl.config).toEqual({ savedByChild: true });
-    expect(hoverWidgetEl.config).toEqual({ savedByChild: true });
     expect(saved).toHaveBeenCalledWith(expect.objectContaining({ detail: expect.objectContaining({ forceDirty: true }) }));
 
     await widget.openSidePanelWidgetConfig(zoomLayer);
@@ -971,6 +2128,11 @@ describe('area-map-widget coordinate loading', () => {
     widget.attachConfigListeners(overlay);
     const dashboardOptionLabels = [...overlay.querySelectorAll<HTMLOptionElement>('#le-detail-dashboard option')].map(o => o.textContent);
     expect(dashboardOptionLabels.filter(label => label === 'Device Detail')).toHaveLength(1);
+    const thresholdInput = overlay.querySelector<HTMLInputElement>('#le-zoom-threshold')!;
+    const labelCheckbox = overlay.querySelector<HTMLInputElement>('#le-show-zoomed-tooltip-always')!;
+    expect(labelCheckbox.parentElement?.textContent).toContain('Always show device label when zoomed out');
+    expect(thresholdInput.compareDocumentPosition(labelCheckbox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(labelCheckbox.compareDocumentPosition(overlay.querySelector('#le-section-zoom-widget')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     overlay.querySelector<HTMLInputElement>('#le-name')!.value = 'Updated Layer';
     overlay.querySelector<HTMLInputElement>('#le-pattern')!.value = 'LA_LongBeach.AirQuality.*';
@@ -981,6 +2143,9 @@ describe('area-map-widget coordinate loading', () => {
     overlay.querySelector<HTMLInputElement>('#le-offset-y')!.value = '8';
     overlay.querySelector<HTMLInputElement>('#le-zoom-threshold')!.value = '12';
     overlay.querySelector<HTMLInputElement>('#le-refresh-interval')!.value = '250';
+    overlay.querySelector<HTMLInputElement>('#le-icon-rotation-enabled')!.checked = true;
+    overlay.querySelector<HTMLInputElement>('#le-show-zoomed-tooltip-always')!.checked = true;
+    overlay.querySelector<HTMLInputElement>('#le-icon-rotation-tag')!.value = 'meta.heading';
     overlay.querySelector<HTMLInputElement>('#le-dw-width')!.value = '360';
     overlay.querySelector<HTMLSelectElement>('#le-zoom-widget-type')!.value = 'test-map-child';
     overlay.querySelector<HTMLSelectElement>('#le-side-panel-widget-type')!.value = 'html-widget';
@@ -1004,6 +2169,11 @@ describe('area-map-widget coordinate loading', () => {
     treeDialogMock.open.mock.calls.at(-1)![2]('LA_LongBeach.AirQuality.AQ-B-0149.meta.status');
     expect(overlay.querySelector<HTMLInputElement>('.rule-tag')!.value).toBe('meta.status');
 
+    overlay.querySelector<HTMLElement>('#le-icon-rotation-browse')!.click();
+    expect(treeDialogMock.open).toHaveBeenLastCalledWith('default.LA_LongBeach.AirQuality.AQ-B-0149', 'Select Heading Tag', expect.any(Function), true);
+    treeDialogMock.open.mock.calls.at(-1)![2]('LA_LongBeach.AirQuality.AQ-B-0150.meta.heading');
+    expect(overlay.querySelector<HTMLInputElement>('#le-icon-rotation-tag')!.value).toBe('meta.heading');
+
     widget.collectLayerFromPanel(overlay);
 
     expect(editableLayer).toMatchObject({
@@ -1017,6 +2187,9 @@ describe('area-map-widget coordinate loading', () => {
       offsetY: 8,
       zoomThreshold: 12,
       refreshInterval: 250,
+      iconRotationEnabled: true,
+      iconRotationTag: 'meta.heading',
+      showZoomedTooltipAlways: true,
       divWidgetWidth: 360,
       zoomWidgetType: 'test-map-child',
       sidePanelWidgetType: 'html-widget',
@@ -1187,4 +2360,29 @@ describe('area-map-widget coordinate loading', () => {
       pluginConfig: {},
     });
   });
+  it('removes a deleted bus from dense paths and closes its detail panel during cascade notifications', async () => {
+    const widget = document.createElement('area-map-widget') as any;
+    widget.render();
+    widget.map = createMapMock();
+    mockStore.listChildrenNames.mockImplementation((path: string) => path === 'default.PUBLIC_BUS.BUSES' ? ['bus_session', ...Array.from({length:499}, (_,i)=>'bus'+i)] : []);
+    vi.spyOn(widget, 'addDevice').mockResolvedValue(undefined);
+    const busLayer = { ...layer, id: 'buses', pathPattern: 'PUBLIC_BUS.BUSES.*', clusteringEnabled: true };
+    await widget.initLayer(busLayer);
+    const path = 'default.PUBLIC_BUS.BUSES.bus_session';
+    widget.selectedDevicePath = path;
+    const panel = widget.querySelector('#device-panel');
+    panel.style.display = 'flex';
+    const body = document.createElement('div');body.id='dp-body';body.textContent='Old trip';panel.append(body);
+    const subscription = mockStore.subscribeToTreeChanges.mock.calls.find(([parent]: any[]) => parent === 'default.PUBLIC_BUS.BUSES');
+    const callback = subscription![1] as any;
+    callback(path, null);
+    callback(path + '.meta.lat', null);
+    callback(path + '.meta.lon', null);
+    expect(widget.denseIconLayers.get('buses').paths.has(path)).toBe(false);
+    expect(widget.selectedDevicePath).toBe(null);
+    expect(panel.style.display).toBe('none');
+    expect(body.textContent).toBe('');
+    widget.destroyMap();
+  });
+
 });

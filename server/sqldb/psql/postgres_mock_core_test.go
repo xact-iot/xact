@@ -19,8 +19,8 @@ func TestPostgresDashboardsPermissionsAndConfigWithPGXMock(t *testing.T) {
 
 	mock.ExpectQuery("SELECT p.id, p.name, p.description, p.icon, p.variation").
 		WithArgs("default").
-		WillReturnRows(pgxmock.NewRows([]string{"id", "name", "description", "icon", "variation", "device_type", "permission", "is_category", "parent_id", "sort_order"}).
-			AddRow(2, "Overview", "desc", "icon", "var", "pump", "view", false, &parentID, 10))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "name", "description", "icon", "variation", "device_type", "permission", "is_public", "is_category", "parent_id", "sort_order"}).
+			AddRow(2, "Overview", "desc", "icon", "var", "pump", "view", false, false, &parentID, 10))
 	dashboards, err := db.ListDashboards(ctx, "default")
 	if err != nil {
 		t.Fatalf("ListDashboards: %v", err)
@@ -31,8 +31,8 @@ func TestPostgresDashboardsPermissionsAndConfigWithPGXMock(t *testing.T) {
 
 	mock.ExpectQuery("SELECT p.id, p.name, p.description, p.icon, p.variation").
 		WithArgs("default", 2).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "name", "description", "icon", "variation", "device_type", "permission", "is_category", "parent_id", "sort_order", "widgets"}).
-			AddRow(2, "Overview", "desc", "icon", "var", "pump", "view", false, nil, 10, json.RawMessage(`[{"id":"w"}]`)))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "name", "description", "icon", "variation", "device_type", "permission", "is_public", "is_category", "parent_id", "sort_order", "widgets"}).
+			AddRow(2, "Overview", "desc", "icon", "var", "pump", "view", false, false, nil, 10, json.RawMessage(`[{"id":"w"}]`)))
 	dashboard, err := db.GetDashboard(ctx, "default", 2)
 	if err != nil {
 		t.Fatalf("GetDashboard: %v", err)
@@ -55,7 +55,7 @@ func TestPostgresDashboardsPermissionsAndConfigWithPGXMock(t *testing.T) {
 	newDashboard := &sqldb.Dashboard{Name: "New", Description: "new", Icon: "mdi:view", Variation: "wide", DeviceType: "pump", Permission: "edit", IsCategory: false, ParentID: &parentID, SortOrder: 4}
 	mock.ExpectQuery("SELECT id FROM organisations").WithArgs("default").WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(9))
 	mock.ExpectQuery("INSERT INTO dashboards").
-		WithArgs(9, newDashboard.Name, newDashboard.Description, newDashboard.Icon, newDashboard.Variation, newDashboard.DeviceType, newDashboard.Permission, newDashboard.IsCategory, newDashboard.ParentID, newDashboard.SortOrder, json.RawMessage("[]")).
+		WithArgs(9, newDashboard.Name, newDashboard.Description, newDashboard.Icon, newDashboard.Variation, newDashboard.DeviceType, newDashboard.Permission, newDashboard.IsPublic, newDashboard.IsCategory, newDashboard.ParentID, newDashboard.SortOrder, json.RawMessage("[]")).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(12))
 	if err := db.CreateDashboard(ctx, "default", newDashboard); err != nil {
 		t.Fatalf("CreateDashboard: %v", err)
@@ -67,7 +67,7 @@ func TestPostgresDashboardsPermissionsAndConfigWithPGXMock(t *testing.T) {
 	newDashboard.Widgets = json.RawMessage(`[{"id":"x"}]`)
 	mock.ExpectQuery("SELECT id FROM organisations").WithArgs("default").WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(9))
 	mock.ExpectExec("UPDATE dashboards SET").
-		WithArgs(9, 12, newDashboard.Name, newDashboard.Description, newDashboard.Icon, newDashboard.Variation, newDashboard.DeviceType, newDashboard.Permission, newDashboard.IsCategory, newDashboard.ParentID, newDashboard.SortOrder, newDashboard.Widgets).
+		WithArgs(9, 12, newDashboard.Name, newDashboard.Description, newDashboard.Icon, newDashboard.Variation, newDashboard.DeviceType, newDashboard.Permission, newDashboard.IsPublic, newDashboard.IsCategory, newDashboard.ParentID, newDashboard.SortOrder, newDashboard.Widgets).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 	if err := db.UpdateDashboard(ctx, "default", 12, newDashboard); err != nil {
 		t.Fatalf("UpdateDashboard: %v", err)

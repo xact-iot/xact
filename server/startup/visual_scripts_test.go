@@ -76,6 +76,19 @@ func TestTenantTagPathAlwaysUsesMessageOrganisation(t *testing.T) {
 	}
 }
 
+func TestDispatchVisualScriptBatchDoesNotRetriggerReplayValues(t *testing.T) {
+	router := visualscripts.NewTagChangeRouter(10, 10)
+	var received []visualscripts.TagChange
+	_, err := router.Register("acme", "batch", "SITE.*.meta.*", func(change visualscripts.TagChange) { received = append(received, change) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatchVisualScriptTag(router, "xact.internal.bcast.tagbatch.acme.SITE.Bus1.meta.all", []byte(`{"values":{"acme.SITE.Bus1.meta.online":{"type":"value","value":true},"acme.SITE.Bus1.meta.lat":{"type":"value","value":49.2}},"changed":["acme.SITE.Bus1.meta.lat"]}`))
+	if len(received) != 1 || received[0].TagPath != "SITE.Bus1.meta.lat" || received[0].Value != 49.2 {
+		t.Fatalf("batch changes = %#v", received)
+	}
+}
+
 func TestVisualScriptTagSnapshotsReturnsDefinedMatchingValues(t *testing.T) {
 	previousPublisher := tree.TagValuePublisher
 	tree.TagValuePublisher = visualScriptSnapshotPublisher{}

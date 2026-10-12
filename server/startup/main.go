@@ -61,6 +61,11 @@ func main() {
 	if err := validateProductionSecrets(); err != nil {
 		log.Fatalf("Production security configuration is invalid: %v", err)
 	}
+	stopProfiling, err := startProfiling()
+	if err != nil {
+		log.Fatalf("Profiling configuration: %v", err)
+	}
+	defer stopProfiling()
 
 	// Resolve plugin directory. In development the server may be started from
 	// either the repo root or server/, so accept both common relative layouts.
@@ -70,7 +75,7 @@ func main() {
 	}
 
 	// Ensure the plugin directory tree exists
-	for _, sub := range []string{"authentication", "widgets", "map-layer", "themes", "visual-script-nodes"} {
+	for _, sub := range []string{"authentication", "widgets", "map-layer", "themes", "visual-script-nodes", "applications"} {
 		if err := os.MkdirAll(filepath.Join(pluginDir, sub), 0o755); err != nil {
 			log.Printf("Warning: could not create plugin dir %s/%s: %v", pluginDir, sub, err)
 		}
@@ -128,6 +133,9 @@ func main() {
 	}
 
 	natsAuth := nats.NewClientAuthenticator(internalPassword)
+	if err := natsAuth.LoadApplicationServices(pluginDir); err != nil {
+		log.Fatalf("Application service configuration: %v", err)
+	}
 
 	opts := &server.Options{
 		Host: natsHost,
@@ -322,9 +330,22 @@ func main() {
 
 		// Try to restore tree from database
 		persistMgr = persistence.NewManager(database, treeOps, "default", 5*time.Second)
+		restoreStarted := time.Now()
+		persistStore := nats.GetPersistStore()
+		if persistStore != nil {
+			snapshotCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			if err := persistStore.BeginRestore(snapshotCtx); err != nil {
+				console.Warn("db", "", "Unable to preload saved tag values; using individual reads", "error", err)
+			}
+			cancel()
+		}
 		restored, err := persistMgr.Restore(ctx)
+		if persistStore != nil {
+			persistStore.EndRestore()
+		}
+		log.Printf("persistence: tree and saved values restored in %s", time.Since(restoreStarted).Round(time.Millisecond))
 		if err != nil {
-			console.Warn("db", "", "Failed to restore tree config", "error", err)
+			log.Fatalf("Failed to restore tree config: %v", err)
 		}
 		if !restored {
 			console.Info("db", "", "No saved tree config found, starting with empty tree")
@@ -334,7 +355,13 @@ func main() {
 	}
 
 	// Publish all changes (including value updates) to NATS.
+	tagPublisher.SeedTagValues(treeOps)
 	treeOps.SetOnChange(func(path string, node tree.TreeNode) {
+		if node == nil {
+			if err := tagPublisher.ForgetTagValues(path); err != nil {
+				console.Error("tree", "", "Failed to remove retained tag values", "error", err)
+			}
+		}
 		if err := treeSync.PublishChange(path, node); err != nil {
 			console.Error("tree", "", "Failed to publish change", "error", err)
 		}
@@ -344,7 +371,7 @@ func main() {
 	// not on leaf value updates, so periodic script writes don't trigger saves.
 	if persistMgr != nil {
 		treeOps.SetOnStructureChange(func(path string, node tree.TreeNode) {
-			persistMgr.MarkDirty()
+			persistMgr.MarkStructureDirty(path, node)
 		})
 	}
 
@@ -407,8 +434,12 @@ func main() {
 	// by any server in the cluster (including itself).
 	processor := ingest.NewProcessor(treeOps)
 	processor.SetNotificationResolver(database)
+	processor.SetLifecycleStore(database)
+	if err := processor.ReconcileRetiredDevices(); err != nil {
+		log.Fatalf("Failed to reconcile retired ingest devices: %v", err)
+	}
 	ingestSub, err := ingest.SubscribeIngest(nc, func(evt ingest.IngestEvent) error {
-		if err := processor.WriteDeviceData(evt.Tenant, evt.Zone, evt.DeviceType, evt.DeviceName, evt.TagData); err != nil {
+		if err := processor.ProcessEvent(evt); err != nil {
 			console.Error("ingest", "", "Failed to process ingest event", "error", err)
 			return err
 		}
@@ -468,12 +499,12 @@ func main() {
 		defer schedEngine.Stop()
 
 		if visualStore, ok := database.(visualscripts.Store); ok {
-			visualServices, visualTagSubscription, err := visualScriptServices(database, treeOps, nc, publisher)
+			visualServices, visualTagSubscriptions, err := visualScriptServices(database, treeOps, nc, publisher)
 			if err != nil {
 				log.Printf("Warning: visual script tag subscription unavailable: %v", err)
 			}
-			if visualTagSubscription != nil {
-				defer visualTagSubscription.Unsubscribe()
+			for _, subscription := range visualTagSubscriptions {
+				defer subscription.Unsubscribe()
 			}
 			visualEngine := visualscripts.NewWithServices(visualStore, visualServices)
 			defer visualEngine.Close()

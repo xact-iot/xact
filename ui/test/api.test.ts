@@ -194,6 +194,14 @@ describe('REST API wrappers', () => {
     expect(lastFetch(fetchMock)[0]).toBe('/xact/api/v1/permissions/roles/Admin%2FUser');
   });
 
+  it('includes the server validation reason when dashboard saving fails', async () => {
+    stubFetch(mockResponse('map plugin layers are not supported on public dashboards\n', { ok: false, status: 400 }));
+    await expect(api.updateDashboard(166, { widgets: [] })).rejects.toMatchObject({
+      name: 'ApiError', status: 400,
+      message: 'Failed to update dashboard: 400 — map plugin layers are not supported on public dashboards',
+    });
+  });
+
   it('covers user and profile wrappers including JSON error bodies', async () => {
     const fetchMock = stubFetch(mockResponse([{ id: 1, loginName: 'admin' }]));
     await expect(api.listUsers()).resolves.toEqual([{ id: 1, loginName: 'admin' }]);

@@ -143,6 +143,17 @@ If your widget implements `getPropertySchema()`, the framework will generate a c
 
 Plugin widgets participate in the standard XACT permissions system. When registering a widget type, you can specify a required permission - users without that permission will not see the widget in the toolbar or on dashboards.
 
+## Public Bus Configuration
+
+The Public Bus Configuration widget can be filled in manually; a GTFS file is optional. Users need **read** permission to view records and **manage** permission to change them. The server stores records for each organisation and application scope in its configured SQL database.
+
+1. In **Bus Stops**, click **Add stop**, enter its ID and name, then click the map or drag the marker to set its location.
+2. In **Bus Routes**, click **Add route**. Click the map or an existing stop marker to add points in order; drag points to adjust the route.
+3. In **Schedule**, click **Add schedule entry**. Select existing route and stop IDs, enter a service date, stop sequence, and arrival and departure times in `HH:MM:SS` format.
+4. Use **Edit** and **Delete** in each table to maintain records. Delete dependent schedule entries before deleting a stop or route.
+
+**Import** accepts a local GTFS ZIP of up to 25 MiB. The importer reads at most 128 MiB from any supported GTFS table and 256 MiB across the tables it uses; unused files such as `shapes.txt` do not count toward that expanded limit. A new import replaces previous GTFS records while retaining manually entered records.
+
 ## Authentication Plugins
 
 Authentication plugins provide an alternative login mechanism. If an authentication plugin is present, it replaces the built-in username/password authentication.

@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -325,5 +326,113 @@ func TestManagerStopFinalSave(t *testing.T) {
 
 	if count := mdb.getSaveCount(); count != 1 {
 		t.Errorf("expected 1 save on stop, got %d", count)
+	}
+}
+
+type blockingConfigDB struct {
+	*mockDB
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (db *blockingConfigDB) SaveConfig(ctx context.Context, org, name string, config json.RawMessage) error {
+	db.entered <- struct{}{}
+	<-db.release
+	return db.mockDB.SaveConfig(ctx, org, name, config)
+}
+
+func TestManagerSerializesSavesAndRetainsChangesDuringSave(t *testing.T) {
+	db := &blockingConfigDB{newMockDB(), make(chan struct{}, 2), make(chan struct{}, 2)}
+	ops := tree.NewTreeWithOperations(nil)
+	mgr := NewManager(db, ops, "default", time.Hour)
+	mgr.MarkDirty()
+	finished := make(chan error, 2)
+	go func() { finished <- mgr.Save(context.Background()) }()
+	<-db.entered
+	mgr.MarkDirty()
+	go func() { finished <- mgr.Save(context.Background()) }()
+	select {
+	case <-db.entered:
+		t.Fatal("configuration saves overlapped")
+	case <-time.After(50 * time.Millisecond):
+	}
+	db.release <- struct{}{}
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-db.entered:
+	case <-time.After(time.Second):
+		t.Fatal("change made during save was lost")
+	}
+	db.release <- struct{}{}
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	if db.getSaveCount() != 2 {
+		t.Fatalf("expected two saves, got %d", db.getSaveCount())
+	}
+}
+
+func TestManagerBoundsCheckpointDelayDuringContinuousChanges(t *testing.T) {
+	db := newMockDB()
+	mgr := NewManager(db, tree.NewTreeWithOperations(nil), "default", 5*time.Millisecond)
+	defer mgr.Stop(context.Background())
+	// Dirty marks arrive more often than debounce, so an ordinary trailing-edge
+	// timer would never save until this stream stopped.
+	deadline := time.Now().Add(120 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		mgr.MarkDirty()
+		time.Sleep(time.Millisecond)
+	}
+	if db.getSaveCount() == 0 {
+		t.Fatal("continuous changes starved checkpoints")
+	}
+}
+
+func TestManagerLimitsSaveFrequencyAndFlushesOnStop(t *testing.T) {
+	db := newMockDB()
+	mgr := NewManager(db, tree.NewTreeWithOperations(nil), "default", 10*time.Millisecond)
+	mgr.MarkDirty()
+	if err := mgr.Save(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mgr.MarkDirty()
+	time.Sleep(25 * time.Millisecond)
+	if db.getSaveCount() != 1 {
+		t.Fatal("burst caused another full snapshot before minimum interval")
+	}
+	if err := mgr.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if db.getSaveCount() != 2 {
+		t.Fatal("shutdown did not flush pending changes")
+	}
+}
+
+type failOnceConfigDB struct {
+	*mockDB
+	failed bool
+}
+
+func (db *failOnceConfigDB) SaveConfig(ctx context.Context, org, name string, data json.RawMessage) error {
+	if !db.failed {
+		db.failed = true
+		return fmt.Errorf("temporary database failure")
+	}
+	return db.mockDB.SaveConfig(ctx, org, name, data)
+}
+func TestManagerRetriesDirtySnapshotAfterFailure(t *testing.T) {
+	db := &failOnceConfigDB{mockDB: newMockDB()}
+	mgr := NewManager(db, tree.NewTreeWithOperations(nil), "default", time.Hour)
+	mgr.MarkDirty()
+	if err := mgr.Save(context.Background()); err == nil {
+		t.Fatal("expected database failure")
+	}
+	if err := mgr.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if db.getSaveCount() != 1 {
+		t.Fatal("failed snapshot lost its dirty state")
 	}
 }

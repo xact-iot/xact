@@ -143,11 +143,13 @@ function toOrgRelativePath(path: string): string {
  * @param path Dotted path (e.g., 'building.floor1')
  * @param depth Optional: number of levels to fetch recursively (-1 for entire subtree)
  */
-export async function loadNode(path: string, depth?: number): Promise<any> {
+export async function loadNode(path: string, depth?: number, select?: string[], filter?: { search: string; status: string; limit?: number }): Promise<any> {
   let url = `${BASE_URL}/api/v1/nodes${toSlashPath(path)}`;
-  if (depth !== undefined) {
-    url += `?depth=${depth}`;
-  }
+  const query = new URLSearchParams();
+  if (depth !== undefined) query.set('depth', String(depth));
+  for (const path of select ?? []) query.append('select', path);
+  if (filter) { query.set('search', filter.search); query.set('status', filter.status); query.set('limit', String(filter.limit ?? 1000)); }
+  if (query.size) url += `?${query}`;
   const response = await fetch(url, {
     headers: getHeaders(),
   });
@@ -386,6 +388,7 @@ export interface DashboardMeta {
   variation: string;
   deviceType: string;
   permission: string;
+  isPublic: boolean;
   isCategory: boolean;
   parentId?: number | null;
   sortOrder: number;
@@ -452,7 +455,8 @@ export async function updateDashboard(id: number, dashboard: Partial<Dashboard>)
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to update dashboard: ${response.status}`);
+    const detail = (await response.text().catch(() => '')).trim();
+    throw new ApiError(`Failed to update dashboard: ${response.status}${detail ? ` — ${detail}` : ''}`, response.status);
   }
 }
 

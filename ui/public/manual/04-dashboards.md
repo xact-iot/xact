@@ -46,7 +46,16 @@ Each dashboard has the following configurable properties:
 | **Device Type** | Optional device type associated with this dashboard |
 | **Device Subtype** | Optional device subtype, also called variation, associated with this dashboard |
 | **Permission** | The permission key required to view this dashboard |
+| **Public dashboard** | Makes this dashboard available without login when its Permission field is blank |
 | **Sort Order** | Controls the display order within its category |
+
+### Public Dashboards
+
+To publish a dashboard, open its properties in the Dashboards configuration view, clear its **Permission** field, and enable **Public dashboard**. A published dashboard is read-only and appears at `/xact/public/<dashboard-id>` for the default organisation or `/xact/public/<org>/<dashboard-id>` for another organisation. `/xact/public` lists published dashboards in the default organisation; `/xact/public/<org>` lists them for a named organisation. The editor provides a direct link after the dashboard has been saved.
+
+Public dashboards currently support Text, Big Number, Gauge, and Area Map icon layers. Live tag values refresh every five seconds. Sparkline history, map zoom cards, map plugins, traffic overlays, custom HTML, and other widgets are not available in the public view. The server rejects publication while unsupported widgets are present. Remove them or use a separate dashboard for the public view.
+
+Turning **Public dashboard** off revokes anonymous access immediately. The public page does not show account, layout editing, configuration, or import/export controls.
 
 ### Device Subtype Variations
 

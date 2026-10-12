@@ -22,13 +22,23 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 func limitRequestBody(maxBytes int64) func(http.Handler) http.Handler {
+	return limitRequestBodyWithImport(maxBytes, 0)
+}
+
+func limitRequestBodyWithImport(maxBytes, importMaxBytes int64) func(http.Handler) http.Handler {
 	if maxBytes <= 0 {
 		maxBytes = 8 << 20
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			limit := maxBytes
+			if importMaxBytes > limit && r.Method == http.MethodPost &&
+				(strings.HasSuffix(r.URL.Path, "/api/v1/applications/public_bus/request/import_start") ||
+					strings.HasSuffix(r.URL.Path, "/api/v1/applications/public_bus/upload")) {
+				limit = importMaxBytes
+			}
 			if r.Body != nil {
-				r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+				r.Body = http.MaxBytesReader(w, r.Body, limit)
 			}
 			next.ServeHTTP(w, r)
 		})

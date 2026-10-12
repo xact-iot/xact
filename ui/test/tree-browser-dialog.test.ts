@@ -8,6 +8,7 @@ let treeCallback: ((path: string, data: any) => void) | undefined;
 const unsubscribeTree = vi.fn();
 
 const mockStore = {
+  ensureChildren: vi.fn(async () => {}),
   getOrg: vi.fn(() => 'default'),
   toAbsolute: vi.fn((path: string) => {
     if (!path) return '';

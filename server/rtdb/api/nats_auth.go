@@ -23,11 +23,12 @@ func (s *Server) AuthenticateNATS(ctx context.Context, bearer string) (nats.Brow
 	}
 	ctx = context.WithValue(ctx, claimsContextKey, claims)
 	return nats.BrowserSession{
-		Org:          claims.TenantID,
-		UserID:       claims.UserID,
-		ExpiresAt:    expires,
-		ReadTree:     s.checkUIPermission(ctx, "nodes", "read"),
-		ReadTags:     s.checkUIPermission(ctx, "tags", "read"),
-		SendCommands: parseAPIEnvBool(os.Getenv("NATS_BROWSER_ALLOW_COMMANDS"), false) && s.checkUIPermission(ctx, "tags", "write"),
+		ApplicationSubjects: s.applicationSubjects(ctx, claims),
+		Org:                 claims.TenantID,
+		UserID:              claims.UserID,
+		ExpiresAt:           expires,
+		ReadTree:            s.checkUIPermission(ctx, "nodes", "read"),
+		ReadTags:            s.checkUIPermission(ctx, "tags", "read"),
+		SendCommands:        parseAPIEnvBool(os.Getenv("NATS_BROWSER_ALLOW_COMMANDS"), false) && s.checkUIPermission(ctx, "tags", "write"),
 	}, true
 }

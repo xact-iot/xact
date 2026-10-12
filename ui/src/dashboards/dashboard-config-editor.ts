@@ -3,7 +3,7 @@ import { BaseComponent } from '../components/base-component';
 import { registerPermissions } from '../permissions/registry';
 import { can } from '../permissions/permissions';
 import { getIconSVG, preloadIconSet, loadIconSet } from '../utils/icons';
-import { showConfirm } from '../components/app-dialog';
+import { showAlert, showConfirm } from '../components/app-dialog';
 import '../components/icon-picker';
 
 registerPermissions('dashboards-setup', 'Dashboards Config Editor', [
@@ -21,6 +21,7 @@ export interface DashboardConfig {
   variation: string;
   deviceType: string;
   permission: string;     // required permission key to view this dashboard (e.g. 'site-a')
+  isPublic?: boolean;     // explicitly published for anonymous read-only access
   widgets?: any[];
   children?: DashboardConfig[];  // if present, this is a category
 }
@@ -212,6 +213,7 @@ export class DashboardConfigEditor extends BaseComponent {
             })()}
             <span class="${isCategory ? 'font-semibold uppercase text-xs tracking-wider' : 'font-medium'}">${escapeHtml(c.name)}</span>
             ${c.permission ? `<span class="text-xs px-1.5 py-0.5 rounded opacity-60" style="background-color: color-mix(in srgb, var(--border-color) 60%, transparent);">🔒 ${escapeHtml(c.permission)}</span>` : ''}
+            ${c.isPublic ? '<span class="text-xs px-1.5 py-0.5 rounded opacity-60">Public</span>' : ''}
           </div>
         </td>
         <td class="px-4 py-2.5 hidden md:table-cell">
@@ -302,6 +304,9 @@ export class DashboardConfigEditor extends BaseComponent {
                   style="background-color: var(--content-bg); border-color: var(--border-color); color: var(--content-text);">
                 <p class="mt-1 text-xs opacity-50">Restricts sidebar visibility. Creates a 'Sidebar Dashboard: &lt;key&gt;' entry in the Permissions manager.</p>
               </div>
+              <label class="flex items-center gap-2 text-sm"><input id="edit-public" type="checkbox" ${f.isPublic ? 'checked' : ''}> Public dashboard (read-only, no login)</label>
+              <p class="text-xs opacity-50">Supports Text, Big Number, Gauge, and Area Map icon layers. Live values refresh every 5 seconds. Map zoom cards, plugins, traffic, and custom HTML are unavailable publicly.</p>
+              ${f.isPublic && f.serverId ? `<a href="/xact/public/${f.serverId}" target="_blank" rel="noopener noreferrer" class="text-xs" style="color:var(--accent-color);">Open public dashboard ↗</a>` : ''}
             ` : ''}
 
             <div class="flex justify-end gap-2 pt-2">
@@ -538,6 +543,11 @@ export class DashboardConfigEditor extends BaseComponent {
     const variation = (this.modalEl.querySelector('#edit-variation') as HTMLInputElement)?.value || '';
     const deviceType = (this.modalEl.querySelector('#edit-deviceType') as HTMLInputElement)?.value || '';
     const permission = (this.modalEl.querySelector('#edit-permission') as HTMLInputElement)?.value.trim() || '';
+    const isPublic = (this.modalEl.querySelector('#edit-public') as HTMLInputElement)?.checked ?? false;
+    if (isPublic && permission) {
+      void showAlert('Clear the dashboard permission before making it public.');
+      return;
+    }
     const newParentId = (this.modalEl.querySelector('#edit-parent') as HTMLSelectElement)?.value || '';
 
     const found = this.findConfig(this.editingId);
@@ -548,6 +558,7 @@ export class DashboardConfigEditor extends BaseComponent {
       found.config.variation = variation;
       found.config.deviceType = deviceType;
       found.config.permission = permission;
+      found.config.isPublic = isPublic;
 
       if (permission) {
         registerDashboardPermission(permission);

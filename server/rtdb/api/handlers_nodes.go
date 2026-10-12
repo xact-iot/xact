@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -47,6 +48,7 @@ type NodeResponse struct {
 	Locked       bool        `json:"locked"`
 	IsArray      bool        `json:"isArray,omitempty"`
 	Children     []ChildInfo `json:"children,omitempty"`
+	Truncated    bool        `json:"truncated,omitempty"`
 }
 
 type UpdateNodeRequest struct {
@@ -230,7 +232,38 @@ func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
 	// Only include children if depth >= 0 (depth=0 means immediate children only)
 	// depth=-1 means entire subtree, which also should include children
 	if depth >= 0 || depth == -1 {
-		response.Children = s.buildChildren(node, depth)
+		if query, status := r.URL.Query().Get("search"), r.URL.Query().Get("status"); query != "" || status != "" {
+			limit := 1000
+			if requested, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && requested > 0 && requested <= 5000 {
+				limit = requested
+			}
+			remaining := limit
+			response.Children = s.buildMatchingChildren(node, pathToNatsSubject(path), strings.ToLower(query), status, &remaining)
+			response.Truncated = remaining == 0
+		} else if selects := r.URL.Query()["select"]; len(selects) > 0 {
+			if len(selects) > 128 {
+				http.Error(w, "too many selected paths", http.StatusBadRequest)
+				return
+			}
+			patterns := make([][]string, 0, len(selects))
+			for _, selection := range selects {
+				parts := strings.Split(selection, ".")
+				if len(parts) > 32 {
+					http.Error(w, "selected path too deep", http.StatusBadRequest)
+					return
+				}
+				for _, part := range parts {
+					if part == "" || strings.ContainsAny(part, "/>") {
+						http.Error(w, "invalid selected path", http.StatusBadRequest)
+						return
+					}
+				}
+				patterns = append(patterns, parts)
+			}
+			response.Children = s.buildSelectedChildren(node, patterns)
+		} else {
+			response.Children = s.buildChildren(node, depth)
+		}
 	}
 
 	json.NewEncoder(w).Encode(response)
@@ -408,4 +441,106 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// buildSelectedChildren projects only requested paths. A '*' selects one path
+// segment; selected array containers return a complete snapshot without creating
+// an additional metadata object for each coordinate. The normal node API still
+// exposes individually addressable array elements.
+func (s *Server) buildSelectedChildren(node *tree.Node, patterns [][]string) []ChildInfo {
+	children := node.GetChildren()
+	result := make([]ChildInfo, 0)
+	for name, child := range children {
+		var tails [][]string
+		selected := false
+		for _, pattern := range patterns {
+			if len(pattern) > 0 && (pattern[0] == name || pattern[0] == "*") {
+				if len(pattern) == 1 {
+					selected = true
+				} else {
+					tails = append(tails, pattern[1:])
+				}
+			}
+		}
+		if !selected && len(tails) == 0 {
+			continue
+		}
+		info := ChildInfo{Name: name}
+		if n, ok := child.(*tree.Node); ok {
+			info.Type, info.Description, info.IsArray = "node", n.GetDescription(), n.GetIsArray()
+			if selected && n.GetIsArray() {
+				elements := n.GetChildren()
+				indexes := make([]int, 0, len(elements))
+				for key := range elements {
+					if index, err := strconv.Atoi(key); err == nil && index >= 0 {
+						indexes = append(indexes, index)
+					}
+				}
+				sort.Ints(indexes)
+				values := make([]any, 0, len(indexes))
+				for _, index := range indexes {
+					if leaf, ok := elements[strconv.Itoa(index)].(tree.Leaf); ok {
+						values = append(values, leaf.GetAnyValue())
+					}
+				}
+				if len(values) == len(elements) {
+					info.Value = values
+				} else {
+					info.Children = s.buildChildren(n, -1)
+				}
+			} else if selected {
+				info.Children = s.buildChildren(n, -1)
+			} else {
+				info.Children = s.buildSelectedChildren(n, tails)
+			}
+		} else if leaf, ok := child.(tree.Leaf); ok {
+			if !selected {
+				continue
+			}
+			info.Type = "leaf"
+			config, shared := leaf.GetConfig(), buildTagSharedJSON(leaf)
+			info.Config, info.Shared = &config, &shared
+			info.Description, info.Value, info.ValueType = leaf.GetDescription(), leaf.GetAnyValue(), leaf.ValueType().String()
+			info.Status, info.Timestamp = leaf.GetState(), leaf.GetUpdatedTime().UnixMilli()
+		}
+		result = append(result, info)
+	}
+	return result
+}
+
+// Search runs on the server and returns only matching branches, with a bounded
+// result size. Browsing a large organisation does not require a browser mirror.
+func (s *Server) buildMatchingChildren(node *tree.Node, path, query, status string, remaining *int) []ChildInfo {
+	children := node.GetChildren()
+	names := make([]string, 0, len(children))
+	for name := range children {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	result := make([]ChildInfo, 0)
+	for _, name := range names {
+		if *remaining == 0 {
+			break
+		}
+		child := children[name]
+		childPath := path + "." + name
+		if n, ok := child.(*tree.Node); ok {
+			matches := s.buildMatchingChildren(n, childPath, query, status, remaining)
+			if len(matches) > 0 || (query != "" && status == "" && strings.Contains(strings.ToLower(childPath), query)) {
+				result = append(result, ChildInfo{Name: name, Type: "node", Description: n.GetDescription(), IsArray: n.GetIsArray(), Children: matches})
+			}
+		} else if leaf, ok := child.(tree.Leaf); ok {
+			if query != "" && !strings.Contains(strings.ToLower(childPath+" "+leaf.GetDescription()), query) {
+				continue
+			}
+			state := leaf.GetState()
+			if status != "" && !(status == "N" && state == "" || strings.Contains(state, status)) {
+				continue
+			}
+			config, shared := leaf.GetConfig(), buildTagSharedJSON(leaf)
+			result = append(result, ChildInfo{Name: name, Type: "leaf", Config: &config, Shared: &shared, Description: leaf.GetDescription(), Value: leaf.GetAnyValue(), ValueType: leaf.ValueType().String(), Status: state, Timestamp: leaf.GetUpdatedTime().UnixMilli()})
+			*remaining--
+		}
+	}
+	return result
 }

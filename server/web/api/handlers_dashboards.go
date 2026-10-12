@@ -32,6 +32,7 @@ type dashboardRequest struct {
 	Variation   string          `json:"variation"`
 	DeviceType  string          `json:"deviceType"`
 	Permission  string          `json:"permission"`
+	IsPublic    bool            `json:"isPublic"`
 	IsCategory  bool            `json:"isCategory"`
 	ParentID    *int            `json:"parentId,omitempty"`
 	SortOrder   int             `json:"sortOrder"`
@@ -137,6 +138,10 @@ func (h *DashboardHandlers) HandleCreateDashboard(w http.ResponseWriter, r *http
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
+	if req.IsPublic && (req.Permission != "" || req.IsCategory) {
+		http.Error(w, "public dashboards cannot have a permission or be a category", http.StatusBadRequest)
+		return
+	}
 
 	dashboard := &sqldb.Dashboard{
 		Name:        req.Name,
@@ -145,10 +150,18 @@ func (h *DashboardHandlers) HandleCreateDashboard(w http.ResponseWriter, r *http
 		Variation:   req.Variation,
 		DeviceType:  req.DeviceType,
 		Permission:  req.Permission,
+		IsPublic:    req.IsPublic,
 		IsCategory:  req.IsCategory,
 		ParentID:    req.ParentID,
 		SortOrder:   req.SortOrder,
 		Widgets:     req.Widgets,
+	}
+
+	if dashboard.IsPublic {
+		if _, err := sqldb.PublicDashboard(dashboard); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	if err := h.DB.CreateDashboard(r.Context(), org, dashboard); err != nil {
@@ -215,6 +228,9 @@ func (h *DashboardHandlers) HandleUpdateDashboard(w http.ResponseWriter, r *http
 	if v, ok := raw["permission"]; ok {
 		json.Unmarshal(v, &dashboard.Permission)
 	}
+	if v, ok := raw["isPublic"]; ok {
+		json.Unmarshal(v, &dashboard.IsPublic)
+	}
 	if v, ok := raw["isCategory"]; ok {
 		json.Unmarshal(v, &dashboard.IsCategory)
 	}
@@ -236,6 +252,18 @@ func (h *DashboardHandlers) HandleUpdateDashboard(w http.ResponseWriter, r *http
 			var parentID int
 			json.Unmarshal(v, &parentID)
 			dashboard.ParentID = &parentID
+		}
+	}
+
+	if dashboard.IsPublic && (dashboard.Permission != "" || dashboard.IsCategory) {
+		http.Error(w, "public dashboards cannot have a permission or be a category", http.StatusBadRequest)
+		return
+	}
+
+	if dashboard.IsPublic {
+		if _, err := sqldb.PublicDashboard(dashboard); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 	}
 

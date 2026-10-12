@@ -22,12 +22,15 @@ import (
 // processes the event through its own local pipeline.
 const IngestSubject = "xact.internal.ingest."
 const IngestRequestSubject = "xact.internal.ingest_request."
+const DeleteRequestSubject = "xact.internal.delete_request."
 
 const defaultIngestRelayQueueSize = 8196
 
 // IngestEvent carries the routing metadata and parsed tag data for one
 // device payload received by an ingress module.
 type IngestEvent struct {
+	Operation         string  `json:"operation,omitempty"`
+	Session           string  `json:"session,omitempty"`
 	Tenant            string  `json:"tenant"`
 	Zone              string  `json:"zone"`
 	DeviceType        string  `json:"device_type"`
@@ -247,11 +250,7 @@ func SubscribeIngestWithConfig(nc *natsgo.Conn, handler func(IngestEvent) error,
 	if err := coreSub.SetPendingLimits(cfg.NATSPendingMsgLimit, cfg.NATSPendingByteLimit); err != nil {
 		log.Printf("ingest relay: set pending limits: %v", err)
 	}
-	requestSub, err := nc.Subscribe(IngestRequestSubject+">", func(msg *natsgo.Msg) {
-		if cfg.DrainOnly {
-			replyIngest(msg, IngestResponse{Status: "accepted"})
-			return
-		}
+	handleRequest := func(msg *natsgo.Msg) {
 		var evt IngestEvent
 		if err := json.Unmarshal(msg.Data, &evt); err != nil {
 			replyIngest(msg, IngestResponse{Status: "error", Error: "malformed event: " + err.Error()})
@@ -262,21 +261,50 @@ func SubscribeIngestWithConfig(nc *natsgo.Conn, handler func(IngestEvent) error,
 				evt.PublishedUnixNano = time.Now().UnixNano()
 			}
 		}
+		if err := validateIngestRequest(msg.Subject, evt); err != nil {
+			replyIngest(msg, IngestResponse{Status: "error", Error: err.Error()})
+			return
+		}
+		if cfg.DrainOnly {
+			if evt.Operation == "delete" || evt.Session != "" {
+				replyIngest(msg, IngestResponse{Status: "busy", Error: "lifecycle processing disabled"})
+			} else {
+				replyIngest(msg, IngestResponse{Status: "accepted"})
+			}
+			return
+		}
 		ctx := context.Background()
 		var cancel context.CancelFunc
 		if cfg.EnqueueTimeout > 0 {
 			ctx, cancel = context.WithTimeout(ctx, cfg.EnqueueTimeout)
 			defer cancel()
 		}
-		if err := pool.SubmitContext(ctx, IngestWork{Event: evt, EnqueuedAt: time.Now()}); err != nil {
+		var done chan error
+		if evt.Operation == "delete" || evt.Session != "" {
+			done = make(chan error, 1)
+		}
+		if err := pool.SubmitContext(ctx, IngestWork{Event: evt, EnqueuedAt: time.Now(), Done: done}); err != nil {
 			replyIngest(msg, IngestResponse{Status: "busy", Error: err.Error()})
 			return
 		}
 		if !evt.MetricsRecorded {
 			SharedIngestMetrics().RecordExternalPublished()
 		}
+		if done != nil {
+			select {
+			case err := <-done:
+				if err != nil {
+					replyIngest(msg, IngestResponse{Status: "error", Error: err.Error()})
+					return
+				}
+			case <-ctx.Done():
+				replyIngest(msg, IngestResponse{Status: "busy", Error: ctx.Err().Error()})
+				return
+			}
+		}
 		replyIngest(msg, IngestResponse{Status: "accepted"})
-	})
+	}
+	requestSub, err := nc.Subscribe(IngestRequestSubject+">", handleRequest)
 	if err != nil {
 		coreSub.Unsubscribe()
 		if pool != nil {
@@ -287,7 +315,19 @@ func SubscribeIngestWithConfig(nc *natsgo.Conn, handler func(IngestEvent) error,
 	if err := requestSub.SetPendingLimits(cfg.NATSPendingMsgLimit, cfg.NATSPendingByteLimit); err != nil {
 		log.Printf("ingest relay: set request pending limits: %v", err)
 	}
-	return &IngestSubscription{coreSub: coreSub, requestSub: requestSub, pool: pool}, nil
+	deleteSub, err := nc.Subscribe(DeleteRequestSubject+">", handleRequest)
+	if err != nil {
+		coreSub.Unsubscribe()
+		requestSub.Unsubscribe()
+		if pool != nil {
+			pool.Stop(context.Background())
+		}
+		return nil, err
+	}
+	if err := deleteSub.SetPendingLimits(cfg.NATSPendingMsgLimit, cfg.NATSPendingByteLimit); err != nil {
+		log.Printf("ingest relay: delete limits: %v", err)
+	}
+	return &IngestSubscription{coreSub: coreSub, requestSub: requestSub, deleteSub: deleteSub, pool: pool}, nil
 }
 
 func replyIngest(msg *natsgo.Msg, resp IngestResponse) {
@@ -306,6 +346,7 @@ func replyIngest(msg *natsgo.Msg, resp IngestResponse) {
 type IngestSubscription struct {
 	coreSub    *natsgo.Subscription
 	requestSub *natsgo.Subscription
+	deleteSub  *natsgo.Subscription
 	pool       *IngestRelayPool
 }
 
@@ -314,7 +355,7 @@ func (s *IngestSubscription) Pending() (int, int, error) {
 		return 0, 0, nil
 	}
 	var totalMsgs, totalBytes int
-	for _, sub := range []*natsgo.Subscription{s.coreSub, s.requestSub} {
+	for _, sub := range []*natsgo.Subscription{s.coreSub, s.requestSub, s.deleteSub} {
 		if sub == nil {
 			continue
 		}
@@ -341,6 +382,11 @@ func (s *IngestSubscription) Unsubscribe() error {
 			err = subErr
 		}
 	}
+	if s.deleteSub != nil {
+		if subErr := s.deleteSub.Unsubscribe(); err == nil {
+			err = subErr
+		}
+	}
 	if s.pool != nil {
 		s.pool.Stop(context.Background())
 	}
@@ -360,6 +406,11 @@ func (s *IngestSubscription) Stop(ctx context.Context) error {
 			err = subErr
 		}
 	}
+	if s.deleteSub != nil {
+		if subErr := s.deleteSub.Unsubscribe(); err == nil {
+			err = subErr
+		}
+	}
 	if s.pool != nil {
 		s.pool.Stop(ctx)
 	}
@@ -374,6 +425,7 @@ func (s *IngestSubscription) SnapshotIngest() IngestSnapshot {
 }
 
 type IngestWork struct {
+	Done       chan error
 	Event      IngestEvent
 	EnqueuedAt time.Time
 }
@@ -524,6 +576,9 @@ func (p *IngestRelayPool) worker(queue <-chan IngestWork) {
 			p.metrics.IncrementActiveWorkers()
 			SharedIngestMetrics().RecordStart(work.Event.PublishedUnixNano, start.UnixNano())
 			err := p.handler(work.Event)
+			if work.Done != nil {
+				work.Done <- err
+			}
 			finished := time.Now()
 			SharedIngestMetrics().RecordFinish(work.Event.PublishedUnixNano, start.UnixNano(), finished.UnixNano(), err != nil)
 			p.metrics.RecordProcessing(finished.Sub(work.EnqueuedAt), finished.Sub(start))

@@ -3,12 +3,14 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xact-iot/xact/rtdb/blocks"
@@ -369,8 +371,11 @@ type NotificationResolver interface {
 
 // Processor writes device payload data into the RTDB.
 type Processor struct {
-	treeOps       *tree.TreeWithOperations
-	notifResolver NotificationResolver
+	treeOps        *tree.TreeWithOperations
+	notifResolver  NotificationResolver
+	lifecycleLocks [64]sync.Mutex
+	lifecycleStore LifecycleStore
+	retired        sync.Map
 }
 
 // NewProcessor returns a Processor backed by the given tree.
@@ -418,6 +423,18 @@ func (p *Processor) resolveLimitEvent(src *limitEventConfig, org string) *blocks
 // WriteDeviceData writes parsed tag data into the RTDB under the given device.
 // It is safe to call concurrently from multiple goroutines.
 func (p *Processor) WriteDeviceData(tenant, zone, deviceType, deviceName string, data TagData) error {
+	lock := p.lifecycleLock(tenant, zone, deviceType, deviceName)
+	lock.Lock()
+	defer lock.Unlock()
+	if retired, err := p.deviceRetired(tenant, zone, deviceType, deviceName); err != nil {
+		return err
+	} else if retired {
+		return fmt.Errorf("device session has retired")
+	}
+	return p.writeDeviceData(tenant, zone, deviceType, deviceName, data)
+}
+
+func (p *Processor) writeDeviceData(tenant, zone, deviceType, deviceName string, data TagData) (writeErr error) {
 	var devicePath, deviceTypePath string
 	if zone != "" {
 		devicePath = tenant + "." + zone + "." + deviceType + "." + deviceName
@@ -425,6 +442,14 @@ func (p *Processor) WriteDeviceData(tenant, zone, deviceType, deviceName string,
 	} else {
 		devicePath = tenant + "." + deviceType + "." + deviceName
 		deviceTypePath = tenant + "." + deviceType
+	}
+	if publisher, ok := tree.TagValuePublisher.(tree.TagValueBatchPublisher); ok {
+		finish := publisher.BeginTagValueBatch(devicePath)
+		defer func() {
+			if err := finish(); err != nil && writeErr == nil {
+				writeErr = err
+			}
+		}()
 	}
 	if err := p.treeOps.EnsureDeviceNode(tenant, deviceTypePath, devicePath); err != nil {
 		log.Printf("ingest:352 device node %s, %v\n", devicePath, err)
@@ -651,7 +676,11 @@ func (p *Processor) writeTag(
 	}
 
 	if extracted.history || extracted.limits != nil || extracted.persist || extracted.scaling != nil || extracted.staleTimeout != nil {
-		p.provisionPipeline(leaf, extracted, tenant)
+		if p.provisionPipeline(leaf, extracted, tenant) {
+			// Ingest can update an existing tag's pipeline without creating a
+			// node. Persist that configuration change and notify tree listeners.
+			p.treeOps.NotifyChange(rtdbPath, leaf)
+		}
 	}
 
 	if extracted.hasValue && extracted.value != nil {
@@ -682,7 +711,26 @@ func (p *Processor) writeArrayTag(
 	if node, err := p.treeOps.FindNode(arrayParentPath); err == nil {
 		node.SetIsArray(true)
 	}
+	// Mark the batch before its element publications, so consumers can retain
+	// the previous complete geometry even if an update pauses between points.
+	if tree.TagValuePublisher != nil {
+		scalar := true
+		for _, element := range elements {
+			if _, object := element.(map[string]any); object {
+				scalar = false
+				break
+			}
+		}
+		if scalar {
+			data, _ := json.Marshal(map[string]tree.TagValue{tagName: {Type: "array-start", Timestamp: unixMilli}})
+			subject := "tagvalue." + strings.Trim(strings.ReplaceAll(arrayParentPath, "/", "."), ".")
+			if err := tree.TagValuePublisher.TagValuePublish(subject, data); err != nil {
+				log.Printf("ingest: begin array snapshot %s: %v", arrayParentPath, err)
+			}
+		}
+	}
 
+	complete := true
 	for i, elem := range elements {
 		idxStr := strconv.Itoa(i)
 
@@ -722,6 +770,7 @@ func (p *Processor) writeArrayTag(
 					elemTagGroup = tagName + "/" + idxStr
 				}
 				if err := p.writeTag(leafPath, elemTagGroup, fieldName, extracted, templateName, tenant, unixMilli); err != nil {
+					complete = false
 					log.Printf("ingest:548 %s: %v", leafPath, err)
 				}
 			}
@@ -743,9 +792,57 @@ func (p *Processor) writeArrayTag(
 				elemTagGroup = tagName
 			}
 			if err := p.writeTag(leafPath, elemTagGroup, idxStr, extracted, templateName, tenant, unixMilli); err != nil {
+				complete = false
 				log.Printf("ingest:568 %s: %v", leafPath, err)
 			}
 		}
+	}
+	if complete {
+		p.publishArraySnapshot(arrayParentPath, tagGroup, tagName, len(elements), unixMilli)
+	}
+}
+
+// publishArraySnapshot publishes one complete scalar-array value after all its
+// numbered leaves have been written. Consumers can keep the previous snapshot
+// visible while individual element updates are still arriving.
+func (p *Processor) publishArraySnapshot(path, tagGroup, tagName string, count int, timestamp int64) {
+	if tree.TagValuePublisher == nil {
+		return
+	}
+	values := make([]any, count)
+	for i := range values {
+		leaf, err := p.treeOps.FindLeaf(path + "/" + strconv.Itoa(i))
+		if err != nil {
+			return // Object arrays have child nodes, rather than scalar leaves.
+		}
+		published := false
+		for _, block := range leaf.GetPipeline() {
+			if block.GetType() == "publish" {
+				published = true
+				break
+			}
+		}
+		if !published {
+			return // Do not expose elements whose publication is disabled.
+		}
+		values[i] = leaf.GetAnyValue()
+	}
+	metric := strings.ReplaceAll(strings.Trim(tagGroup+"/"+tagName, "/"), "/", ".")
+	subject := "tagvalue." + strings.Trim(strings.ReplaceAll(path, "/", "."), ".")
+	if publisher, ok := tree.TagValuePublisher.(tree.TypedTagValuePublisher); ok {
+		if err := publisher.PublishTagValue(subject, tree.TagValue{Type: "value", Value: values, Timestamp: timestamp}); err != nil {
+			log.Printf("ingest: publish array snapshot %s: %v", path, err)
+		}
+		return
+	}
+	data, err := json.Marshal(map[string]tree.TagValue{metric: {
+		Type: "value", Value: values, Timestamp: timestamp,
+	}})
+	if err != nil {
+		return
+	}
+	if err := tree.TagValuePublisher.TagValuePublish(subject, data); err != nil {
+		log.Printf("ingest: publish array snapshot %s: %v", path, err)
 	}
 }
 
@@ -790,14 +887,13 @@ func insertOrdered(pipeline []tree.ProcessBlock, block tree.ProcessBlock) []tree
 
 // provisionPipeline adds or updates historyrecorder / limitcheck blocks on the
 // leaf's local pipeline. New blocks are inserted at their canonical position.
-func (p *Processor) provisionPipeline(leaf tree.Leaf, extracted expandedTagValue, tenant string) {
+func (p *Processor) provisionPipeline(leaf tree.Leaf, extracted expandedTagValue, tenant string) bool {
 	shared := leaf.GetShared()
 	pipeline := shared.Pipeline
 
 	changed := false
 
 	if extracted.history {
-		changed = true
 		if findBlockIndex(pipeline, "historyrecorder") < 0 {
 			block, err := tree.NewProcessBlockByType("historyrecorder")
 			if err != nil {
@@ -805,6 +901,7 @@ func (p *Processor) provisionPipeline(leaf tree.Leaf, extracted expandedTagValue
 			} else {
 				block.Init(leaf)
 				pipeline = insertOrdered(pipeline, block)
+				changed = true
 			}
 		}
 	}
@@ -819,8 +916,9 @@ func (p *Processor) provisionPipeline(leaf tree.Leaf, extracted expandedTagValue
 			"lowEvent": p.resolveLimitEvent(&lm.LowEvent, tenant),
 		})
 		if idx := findBlockIndex(pipeline, "limitcheck"); idx >= 0 {
+			previous := pipeline[idx].GetParameters()
 			if err := pipeline[idx].SetParameters(params); err == nil {
-				changed = true
+				changed = changed || !bytes.Equal(previous, pipeline[idx].GetParameters())
 			}
 		} else {
 			block, err := tree.NewProcessBlockByType("limitcheck")
@@ -849,8 +947,9 @@ func (p *Processor) provisionPipeline(leaf tree.Leaf, extracted expandedTagValue
 		sc := extracted.scaling
 		params, _ := json.Marshal(sc)
 		if idx := findBlockIndex(pipeline, "scaling"); idx >= 0 {
+			previous := pipeline[idx].GetParameters()
 			if err := pipeline[idx].SetParameters(params); err == nil {
-				changed = true
+				changed = changed || !bytes.Equal(previous, pipeline[idx].GetParameters())
 			}
 		} else {
 			block, err := tree.NewProcessBlockByType("scaling")
@@ -869,8 +968,9 @@ func (p *Processor) provisionPipeline(leaf tree.Leaf, extracted expandedTagValue
 		timeout := time.Duration(timeoutSecs) * time.Second
 		params, _ := json.Marshal(map[string]any{"timeout": timeout})
 		if idx := findBlockIndex(pipeline, "stalecheck"); idx >= 0 {
+			previous := pipeline[idx].GetParameters()
 			if err := pipeline[idx].SetParameters(params); err == nil {
-				changed = true
+				changed = changed || !bytes.Equal(previous, pipeline[idx].GetParameters())
 			}
 		} else {
 			block, err := tree.NewProcessBlockByType("stalecheck")
@@ -899,6 +999,7 @@ func (p *Processor) provisionPipeline(leaf tree.Leaf, extracted expandedTagValue
 		shared.Pipeline = pipeline
 		leaf.SetShared(shared)
 	}
+	return changed
 }
 
 // findBlockIndex returns the index of the first block with the given type, or -1.

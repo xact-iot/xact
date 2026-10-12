@@ -74,6 +74,9 @@ export class TreeBrowserDialog extends BaseComponent {
 
     this.pendingLeafPath = null;
     this.isOpen = true;
+    void Promise.all([...this.expandedNodes].map(path => store.ensureChildren(path))).then(() => {
+      if (this.isOpen) this.rerender();
+    });
 
     if (this.treeUnsubscribe) this.treeUnsubscribe();
     this.treeUnsubscribe = store.subscribeToTreeChanges(effectiveRoot, () => {
@@ -379,7 +382,10 @@ export class TreeBrowserDialog extends BaseComponent {
     // For non-leaf nodes, clicking anywhere else on the row toggles expand/collapse
     if (!isLeaf) {
       if (this.expandedNodes.has(path)) this.expandedNodes.delete(path);
-      else this.expandedNodes.add(path);
+      else {
+        this.expandedNodes.add(path);
+        void store.ensureChildren(path).then(() => { if (this.isOpen) this.rerender(); });
+      }
       this.rerender();
       return;
     }
