@@ -236,6 +236,7 @@ describe('area-map-widget coordinate loading', () => {
           bindPopup: vi.fn().mockReturnThis(),
           closePopup: vi.fn(),
           setLatLng: vi.fn(),
+          setZIndexOffset: vi.fn(),
           setIcon: vi.fn((icon) => {
             marker.options.icon = icon;
             el.innerHTML = icon?.options?.html ?? '';
@@ -1304,6 +1305,107 @@ describe('area-map-widget coordinate loading', () => {
     expect(markerEl.querySelector('.xact-map-dw-body test-map-child')).toBe(entry.divWidgetEl);
   });
 
+  function createHoverPopupGeometry(widgetType = 'test-map-child') {
+    const devicePath = 'default.Buses.Stop';
+    const widget = document.createElement('area-map-widget') as any;
+    widget.innerHTML = '<div id="xact-map"></div>';
+    widget.map = createMapMock();
+    const container = widget.querySelector('#xact-map')!;
+    let mapRect = new DOMRect(100, 100, 800, 600);
+    vi.spyOn(container, 'getBoundingClientRect').mockImplementation(() => mapRect);
+    const popupLayer = { ...layer, zoomWidgetType: widgetType, divWidgetWidth: 280 };
+    const markerEl = document.createElement('div');
+    markerEl.innerHTML = widget.makeIconHtml(null, popupLayer, devicePath);
+    container.appendChild(markerEl);
+    const root = markerEl.querySelector<HTMLElement>('.xact-map-marker-root')!;
+    const tip = markerEl.querySelector<HTMLElement>('.xact-map-hover-widget')!;
+    const card = tip.querySelector<HTMLElement>('.xact-map-dw-card')!;
+    let anchor = new DOMRect(488, 500, 24, 24);
+    let contentHeight = 200;
+    vi.spyOn(root, 'getBoundingClientRect').mockImplementation(() => anchor);
+    vi.spyOn(tip, 'getBoundingClientRect').mockImplementation(() => new DOMRect(
+      anchor.left + parseFloat(tip.style.left || '0'),
+      anchor.top + parseFloat(tip.style.top || '0'),
+      Math.min(280, parseFloat(tip.style.maxWidth) || Infinity),
+      Math.min(contentHeight, parseFloat(card.style.maxHeight) || Infinity) + 9,
+    ));
+    const entry = { marker: { getElement: () => markerEl }, layer: popupLayer, hovered: true, unsubs: [] };
+    widget.devices.set(devicePath, entry);
+    return {
+      widget, devicePath, tip, card,
+      setAnchor: (x: number, y: number) => { anchor = new DOMRect(x, y, 24, 24); },
+      setMapRect: (rect: DOMRect) => { mapRect = rect; },
+      setContentHeight: (height: number) => { contentHeight = height; },
+    };
+  }
+
+  it.each([
+    { x: 488, y: 500, height: 200, placement: 'above', left: 360, top: 291 },
+    { x: 488, y: 110, height: 200, placement: 'below', left: 360, top: 134 },
+    { x: 105, y: 500, height: 200, placement: 'above', left: 108, top: 291 },
+    { x: 870, y: 500, height: 200, placement: 'above', left: 612, top: 291 },
+    { x: 488, y: 390, height: 500, placement: 'overlap', left: 360, top: 108 },
+  ])('keeps hover widgets visible with $placement placement at ($x, $y)', (scenario) => {
+    const popup = createHoverPopupGeometry();
+    popup.setAnchor(scenario.x, scenario.y);
+    popup.setContentHeight(scenario.height);
+    popup.widget.mountHoverWidget(popup.devicePath);
+    expect(popup.tip.dataset.placement).toBe(scenario.placement);
+    const rect = popup.tip.getBoundingClientRect();
+    expect(rect.left).toBe(scenario.left);
+    expect(rect.top).toBe(scenario.top);
+    expect(rect.right).toBeLessThanOrEqual(892);
+    expect(rect.bottom).toBeLessThanOrEqual(692);
+    popup.widget.destroyMap();
+  });
+
+  it.each(['test-map-child', 'test-device-watch-child'])('constrains oversized %s popups to the visible map and allows scrolling', (type) => {
+    const popup = createHoverPopupGeometry(type);
+    popup.setMapRect(new DOMRect(-100, -50, 300, 250));
+    popup.setAnchor(180, 80);
+    popup.setContentHeight(1000);
+    popup.widget.mountHoverWidget(popup.devicePath);
+    const rect = popup.tip.getBoundingClientRect();
+    expect(rect.left).toBe(8);
+    expect(rect.top).toBe(8);
+    expect(rect.right).toBe(192);
+    expect(rect.bottom).toBe(192);
+    expect(popup.card.style.overflow).toBe('auto');
+    expect(popup.tip.querySelector(type)).not.toBeNull();
+    popup.widget.destroyMap();
+  });
+
+  it('repositions live popup content and disconnects observers when hover ends or the map is destroyed', () => {
+    const resized: Array<() => void> = [];
+    const disconnect = vi.fn();
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resized.push(callback); }
+      observe() {}
+      disconnect = disconnect;
+    });
+    try {
+      const popup = createHoverPopupGeometry();
+      popup.widget.mountHoverWidget(popup.devicePath);
+      expect(popup.tip.dataset.placement).toBe('above');
+      popup.setContentHeight(500);
+      resized[0]();
+      expect(popup.tip.getBoundingClientRect().top).toBe(108);
+      expect(popup.tip.dataset.placement).toBe('overlap');
+      popup.setMapRect(new DOMRect(100, 100, 800, 400));
+      popup.widget.refreshHoverPopups();
+      expect(popup.tip.getBoundingClientRect().bottom).toBeLessThanOrEqual(492);
+      popup.widget.unmountHoverWidget(popup.devicePath);
+      expect(disconnect).toHaveBeenCalledOnce();
+      expect(popup.widget.hoverPopups.size).toBe(0);
+      popup.widget.mountHoverWidget(popup.devicePath);
+      popup.widget.destroyMap();
+      expect(disconnect).toHaveBeenCalledTimes(2);
+      expect(popup.widget.hoverPopups.size).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('refreshes selection styling only on the marker whose icon is updated', async () => {
     const widget = document.createElement('area-map-widget') as any;
     widget.map = createMapMock();
@@ -1644,6 +1746,53 @@ describe('area-map-widget coordinate loading', () => {
     expect(widget.map.panes['xact-device-layer-lower'].style.zIndex).toBe('890');
   });
 
+  it('dismisses a hover popup with Escape until the icon is hovered again', async () => {
+    mockStore.getNodeValue.mockImplementation((path: string) => path.endsWith('.lat') ? 49.28 : -123.12);
+    const widget = document.createElement('area-map-widget') as any;
+    const popupLayer = { ...layer, zoomWidgetType: 'test-map-child' };
+    widget.map = createMapMock();
+    widget.config.layers = [popupLayer];
+    widget.ensureDeviceLayerPanes();
+    const path = 'default.Buses.Stop';
+    await widget.addDevice(popupLayer, path);
+    const entry = widget.devices.get(path);
+    const marker = entry.marker;
+    marker.handlers.mouseover();
+    const child = entry.divWidgetEl;
+    expect(child).not.toBeNull();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(entry.divWidgetEl).toBe(child);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(entry.divWidgetEl).toBeNull();
+    expect(entry.hovered).toBe(false);
+    expect(marker.getElement().querySelector('.xact-map-hover-dismissed')).not.toBeNull();
+    expect(marker.setZIndexOffset).toHaveBeenLastCalledWith(0);
+    expect(widget.map.panes['xact-device-layer-aq'].style.zIndex).toBe('900');
+    expect(widget.hoverPopups.size).toBe(0);
+    widget.updateDeviceMarker(path);
+    expect(entry.divWidgetEl).toBeNull();
+    expect(marker.getElement().querySelector('.xact-map-hover-dismissed')).not.toBeNull();
+    // A fresh icon DOM must remain dismissed after a live rule update.
+    entry.layer.defaultColor = '#00ff00';
+    widget.updateDeviceMarker(path);
+    expect(marker.getElement().querySelector('.xact-map-hover-dismissed')).not.toBeNull();
+    expect(entry.divWidgetEl).toBeNull();
+
+    marker.handlers.mouseover();
+    expect(entry.divWidgetEl).toBeNull();
+    // Removing popup content can emit mouseout while the icon is still hovered.
+    vi.spyOn(marker.getElement(), 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 100, 24, 24));
+    marker.handlers.mouseout({ originalEvent: new MouseEvent('mouseout', { clientX: 110, clientY: 110 }) });
+    expect(marker.getElement().querySelector('.xact-map-hover-dismissed')).not.toBeNull();
+    marker.handlers.mouseout({ originalEvent: new MouseEvent('mouseout', { clientX: 200, clientY: 200 }) });
+    marker.handlers.mouseover();
+    expect(entry.divWidgetEl).not.toBeNull();
+    expect(marker.getElement().querySelector('.xact-map-hover-dismissed')).toBeNull();
+    widget.destroyMap();
+    expect(marker.setZIndexOffset).toHaveBeenLastCalledWith(0);
+  });
+
   it('raises a hovered marker layer above other device layers while showing hover widgets', async () => {
     mockStore.getNodeValue.mockImplementation((path: string) => {
       if (path.endsWith('.meta.lat')) return 33.7701;
@@ -1673,12 +1822,14 @@ describe('area-map-widget coordinate loading', () => {
 
     expect(widget.map.panes['xact-device-layer-lower'].style.zIndex).toBe('950');
     expect(widget.map.panes['xact-device-layer-top'].style.zIndex).toBe('900');
+    expect(marker.setZIndexOffset).toHaveBeenLastCalledWith(1000000);
     expect(marker.getElement().querySelector('.xact-map-hover-body test-map-child')).not.toBeNull();
 
     marker.handlers.mouseout();
 
     expect(widget.map.panes['xact-device-layer-top'].style.zIndex).toBe('900');
     expect(widget.map.panes['xact-device-layer-lower'].style.zIndex).toBe('890');
+    expect(marker.setZIndexOffset).toHaveBeenLastCalledWith(0);
   });
 
   it('refreshes layers by clearing existing devices/plugins/subscriptions and skipping disabled layers', async () => {

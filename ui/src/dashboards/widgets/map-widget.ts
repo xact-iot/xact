@@ -153,6 +153,7 @@ interface DeviceEntry {
   /** Mounted zoom widget in the marker or its hover card. */
   divWidgetEl?: HTMLElement | null;
   hovered?: boolean;
+  hoverDismissed?: boolean;
 }
 
 interface RouteEntry {
@@ -210,9 +211,17 @@ function ensureAnimStyles(): void {
     .xact-map-hover-tip { display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: 9px; pointer-events: none; z-index: 9999; }
     .xact-map-marker-root:hover .xact-map-hover-tip,
     .xact-map-hover-tip.xact-map-tooltip-permanent { display: block; }
+    .xact-map-marker-root.xact-map-hover-dismissed .xact-map-hover-widget { display: none; }
     .xact-map-hover-tip.xact-map-hover-widget { margin-bottom: 0; padding-bottom: 9px; pointer-events: auto; }
     .xact-map-hover-tip.xact-map-hover-widget::after { top: calc(100% - 9px); }
     .xact-map-hover-tip.xact-map-hover-widget::before { top: calc(100% - 2px); }
+    .xact-map-hover-widget[data-placement="below"] { padding-top: 9px; padding-bottom: 0; }
+    .xact-map-hover-widget[data-placement="below"]::after { top: 0; }
+    .xact-map-hover-widget[data-placement="below"]::before { top: 0; }
+    .xact-map-hover-tip.xact-map-hover-widget::after,
+    .xact-map-hover-tip.xact-map-hover-widget::before { left: var(--xact-map-link-left, 50%); }
+    .xact-map-hover-widget[data-placement="overlap"]::after,
+    .xact-map-hover-widget[data-placement="overlap"]::before { display: none; }
     .xact-map-device-label { display: block; background: #e5e7eb; color: #000; border: 1px solid #cbd0d5; border-radius: 4px; padding: 2px 6px; white-space: nowrap; font-size: 11px; line-height: 1.2; box-shadow: 0 1px 4px rgba(0,0,0,0.16); }
     .xact-map-hover-tip::after { content: ''; position: absolute; top: 100%; left: 50%; width: 1px; height: 9px; transform: translateX(-50%); background: var(--xact-map-link-color, var(--accent-color, #f59e0b)); opacity: 0.65; }
     .xact-map-hover-tip::before { content: ''; position: absolute; top: calc(100% + 7px); left: 50%; width: 3px; height: 3px; transform: translateX(-50%); border-radius: 50%; background: var(--xact-map-link-color, var(--accent-color, #f59e0b)); opacity: 0.65; }
@@ -257,6 +266,7 @@ const MAP_CONFIG_OVERLAY_Z_INDEX = 19000;
 const DEVICE_LAYER_TOP_Z_INDEX = 900;
 const DEVICE_LAYER_STEP_Z_INDEX = 10;
 const DEVICE_LAYER_HOVER_Z_INDEX = 950;
+const DEVICE_MARKER_HOVER_Z_INDEX_OFFSET = 1000000;
 const DEFAULT_DEVICE_POSITION_ANIMATION_MS = 2000;
 const ROUTE_WIDTH_GROWTH_PER_ZOOM = 0.25;
 const ROUTE_TAG_DEFAULTS = {
@@ -439,6 +449,24 @@ export class AreaMapWidget extends BaseComponent {
   private mapGeneration = 0;
   private _resizeObserver: ResizeObserver | null = null;
   private _mutationObserver: MutationObserver | null = null;
+  private hoverPopups = new Map<string, { tip: HTMLElement; observer: ResizeObserver | null; zIndexOffset: number }>();
+  private refreshHoverPopups = (): void => {
+    for (const devicePath of this.hoverPopups.keys()) this.positionHoverPopup(devicePath);
+  };
+  private dismissHoverPopups = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || this.hoverPopups.size === 0) return;
+    for (const devicePath of this.hoverPopups.keys()) {
+      const entry = this.devices.get(devicePath);
+      if (entry) {
+        entry.hovered = false;
+        entry.hoverDismissed = true;
+        this.setHoverRaisedLayer(entry.layer, false);
+      }
+      this.unmountHoverWidget(devicePath);
+      this.applySelectedMarker(devicePath);
+    }
+    event.preventDefault();
+  };
 
 
   // Config panel state
@@ -663,6 +691,9 @@ export class AreaMapWidget extends BaseComponent {
 
   private destroyMap(): void {
     this.mapGeneration++;
+    this.clearHoverPopups();
+    window.removeEventListener('resize', this.refreshHoverPopups);
+    window.removeEventListener('scroll', this.refreshHoverPopups, true);
     // Disconnect layout observers
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
@@ -753,6 +784,9 @@ export class AreaMapWidget extends BaseComponent {
     // Zoom change → update div icons and zoom indicator
     this.map.on('zoomend', () => this.onZoomChange());
     this.map.on('moveend', () => this.refreshDenseIconLayers());
+    this.map.on('move zoom', this.refreshHoverPopups);
+    window.addEventListener('resize', this.refreshHoverPopups);
+    window.addEventListener('scroll', this.refreshHoverPopups, true);
 
     // Wait one paint frame so GridStack has applied the widget's CSS dimensions.
     // Without this, the container may still be 0×0 and fitBounds forces maxZoom (19).
@@ -781,6 +815,7 @@ export class AreaMapWidget extends BaseComponent {
     // Invalidate map size when the widget container is resized (covers GridStack resize/drag).
     this._resizeObserver = new ResizeObserver(() => {
       if (this.map) this.map.invalidateSize(false);
+      this.refreshHoverPopups();
     });
     this._resizeObserver.observe(container);
 
@@ -790,6 +825,7 @@ export class AreaMapWidget extends BaseComponent {
     if (gsItem) {
       this._mutationObserver = new MutationObserver(() => {
         if (this.map) this.map.invalidateSize(false);
+        this.refreshHoverPopups();
       });
       this._mutationObserver.observe(gsItem, { attributes: true, attributeFilter: ['style'] });
     }
@@ -833,6 +869,7 @@ export class AreaMapWidget extends BaseComponent {
     this.ensureDeviceLayerPanes();
 
     // Clear existing device layers
+    this.clearHoverPopups();
     for (const unsubs of this.pendingDeviceUnsubs.values()) {
       unsubs.forEach(fn => fn());
     }
@@ -1408,16 +1445,31 @@ export class AreaMapWidget extends BaseComponent {
     if (this.isLayerVisible(layer)) marker.addTo(this.map);
     marker.on('click', () => this.onDeviceClick(devicePath));
     marker.on('mouseover', () => {
-      this.setHoverRaisedLayer(layer, true);
       const entry = this.devices.get(devicePath);
-      if (entry) entry.hovered = true;
+      if (entry?.hoverDismissed) return;
+      this.setHoverRaisedLayer(layer, true);
+      if (entry) {
+        entry.hovered = true;
+      }
+      this.applySelectedMarker(devicePath);
       this.mountHoverWidget(devicePath);
     });
-    marker.on('mouseout', () => {
+    marker.on('mouseout', (event: any) => {
       this.setHoverRaisedLayer(layer, false);
       const entry = this.devices.get(devicePath);
-      if (entry) entry.hovered = false;
+      if (entry) {
+        entry.hovered = false;
+        // Hiding an overlapping popup can emit mouseout/mouseover without
+        // the pointer leaving the icon. Keep Escape dismissal in that case.
+        const pointer = event?.originalEvent as MouseEvent | undefined;
+        const bounds = marker.getElement()?.getBoundingClientRect();
+        if (!pointer || !bounds || pointer.clientX < bounds.left || pointer.clientX >= bounds.right
+          || pointer.clientY < bounds.top || pointer.clientY >= bounds.bottom) {
+          entry.hoverDismissed = false;
+        }
+      }
       this.unmountHoverWidget(devicePath);
+      this.applySelectedMarker(devicePath);
     });
 
     const unsubs: Array<() => void> = [];
@@ -1544,6 +1596,7 @@ export class AreaMapWidget extends BaseComponent {
     if (duration === 0) {
       entry.displayedPosition = position;
       entry.marker.setLatLng(position);
+      this.positionHoverPopup(devicePath);
       return;
     }
 
@@ -1560,6 +1613,7 @@ export class AreaMapWidget extends BaseComponent {
       ];
       entry.displayedPosition = current;
       entry.marker.setLatLng(current);
+      this.positionHoverPopup(devicePath);
       if (progress < 1) {
         animation.frame = requestAnimationFrame(tick);
       } else {
@@ -1580,6 +1634,7 @@ export class AreaMapWidget extends BaseComponent {
   }
 
   private removeDevice(devicePath: string): void {
+    this.stopHoverPopup(devicePath);
     if (this.selectedDevicePath === devicePath) {
       this.selectedDevicePath = null;
       this.clearClickPanelWidget();
@@ -1710,20 +1765,96 @@ export class AreaMapWidget extends BaseComponent {
 
   private mountHoverWidget(devicePath: string): void {
     const entry = this.devices.get(devicePath);
-    if (!entry?.hovered || !this.hasZoomWidget(entry.layer) || entry.layer.showZoomedTooltipAlways) return;
+    if (!entry?.hovered || entry.hoverDismissed || !this.hasZoomWidget(entry.layer) || entry.layer.showZoomedTooltipAlways) return;
     if ((this.map?.getZoom() ?? 0) >= (entry.layer.zoomThreshold ?? 13)) return;
     const body = (entry.marker.getElement() as HTMLElement | null)?.querySelector<HTMLElement>('.xact-map-hover-body');
-    if (!body || (entry.divWidgetEl && body.contains(entry.divWidgetEl))) return;
-    const widget = this.createZoomWidget(entry.layer, devicePath);
-    if (!widget) return;
-    body.replaceChildren(widget);
-    entry.divWidgetEl = widget;
+    if (!body) return;
+    if (!entry.divWidgetEl || !body.contains(entry.divWidgetEl)) {
+      const widget = this.createZoomWidget(entry.layer, devicePath);
+      if (!widget) return;
+      body.replaceChildren(widget);
+      entry.divWidgetEl = widget;
+    }
+    const tip = body.closest<HTMLElement>('.xact-map-hover-widget');
+    if (!tip) return;
+    // Keep the card visible while measuring and when setIcon replaces hovered DOM.
+    tip.style.display = 'block';
+    if (this.hoverPopups.get(devicePath)?.tip !== tip) {
+      this.stopHoverPopup(devicePath);
+      const observer = typeof ResizeObserver === 'undefined' ? null
+        : new ResizeObserver(() => this.positionHoverPopup(devicePath));
+      const zIndexOffset = entry.marker.options?.zIndexOffset ?? 0;
+      this.hoverPopups.set(devicePath, { tip, observer, zIndexOffset });
+      // A popup inherits its marker's stacking context. Raise the marker above
+      // other icons and clusters in the same pane, as well as raising its layer.
+      entry.marker.setZIndexOffset?.(DEVICE_MARKER_HOVER_Z_INDEX_OFFSET);
+      window.addEventListener('keydown', this.dismissHoverPopups);
+      observer?.observe(tip);
+    }
+    this.positionHoverPopup(devicePath);
+  }
+
+  private positionHoverPopup(devicePath: string): void {
+    const popup = this.hoverPopups.get(devicePath);
+    if (!popup) return;
+    const container = this.querySelector<HTMLElement>('#xact-map');
+    const root = popup.tip.parentElement;
+    if (!container || !root) return;
+    const mapRect = container.getBoundingClientRect();
+    // The map itself may be partially outside the browser viewport.
+    const left = Math.max(0, mapRect.left) + 8;
+    const top = Math.max(0, mapRect.top) + 8;
+    const right = Math.min(document.documentElement.clientWidth || window.innerWidth, mapRect.right) - 8;
+    const bottom = Math.min(document.documentElement.clientHeight || window.innerHeight, mapRect.bottom) - 8;
+    if (right <= left || bottom <= top) return;
+
+    const { tip } = popup;
+    const card = tip.querySelector<HTMLElement>('.xact-map-dw-card');
+    tip.style.maxWidth = `${right - left}px`;
+    tip.style.boxSizing = 'border-box';
+    if (card) {
+      card.style.boxSizing = 'border-box';
+      card.style.maxHeight = `${Math.max(0, bottom - top - 9)}px`;
+      card.style.overflow = 'auto';
+    }
+    const anchor = root.getBoundingClientRect();
+    const size = tip.getBoundingClientRect();
+    const above = anchor.top - size.height;
+    const below = anchor.bottom;
+    const fitsAbove = above >= top && anchor.top <= bottom;
+    const fitsBelow = below >= top && below + size.height <= bottom;
+    const y = fitsAbove ? above : fitsBelow ? below
+      : Math.max(top, Math.min(above, bottom - size.height));
+    const center = (anchor.left + anchor.right) / 2;
+    const x = Math.max(left, Math.min(center - size.width / 2, right - size.width));
+    tip.dataset.placement = fitsAbove ? 'above' : fitsBelow ? 'below' : 'overlap';
+    tip.style.bottom = 'auto';
+    tip.style.top = `${y - anchor.top}px`;
+    tip.style.left = `${x - anchor.left}px`;
+    tip.style.transform = 'none';
+    tip.style.setProperty('--xact-map-link-left', `${center - x}px`);
+  }
+
+  private stopHoverPopup(devicePath: string): void {
+    const popup = this.hoverPopups.get(devicePath);
+    popup?.observer?.disconnect();
+    if (popup) {
+      popup.tip.style.removeProperty('display');
+      this.devices.get(devicePath)?.marker.setZIndexOffset?.(popup.zIndexOffset);
+    }
+    this.hoverPopups.delete(devicePath);
+    if (this.hoverPopups.size === 0) window.removeEventListener('keydown', this.dismissHoverPopups);
+  }
+
+  private clearHoverPopups(): void {
+    for (const devicePath of this.hoverPopups.keys()) this.stopHoverPopup(devicePath);
   }
 
   private unmountHoverWidget(devicePath: string): void {
+    this.stopHoverPopup(devicePath);
     const entry = this.devices.get(devicePath);
     if (!entry) return;
-    const body = (entry.marker.getElement() as HTMLElement | null)?.querySelector<HTMLElement>('.xact-map-hover-body');
+    const body = (entry.marker.getElement?.() as HTMLElement | null)?.querySelector<HTMLElement>('.xact-map-hover-body');
     if (!body) return;
     body.replaceChildren();
     entry.divWidgetEl = null;
@@ -1746,6 +1877,7 @@ export class AreaMapWidget extends BaseComponent {
       return;
     }
     entry.lastIconHtml = iconHtml;
+    this.stopHoverPopup(devicePath);
     entry.divWidgetEl = null;
     const { iconSize, iconAnchor } = this.getIconGeometry(rule, entry.layer);
     entry.marker.setIcon(L.divIcon({
@@ -2150,7 +2282,10 @@ export class AreaMapWidget extends BaseComponent {
     for (const [path, entry] of entries) {
       const markerEl = entry.marker?.getElement?.() as HTMLElement | null;
       const root = markerEl?.querySelector<HTMLElement>('.xact-map-marker-root');
-      if (root) root.classList.toggle('xact-map-marker-selected', path === this.selectedDevicePath);
+      if (root) {
+        root.classList.toggle('xact-map-marker-selected', path === this.selectedDevicePath);
+        root.classList.toggle('xact-map-hover-dismissed', !!entry.hoverDismissed);
+      }
     }
   }
 
@@ -2387,6 +2522,8 @@ export class AreaMapWidget extends BaseComponent {
         entry.lastIconHtml = '';
         this.updateDeviceMarker(devicePath);
       } else {
+        entry.hovered = false;
+        this.unmountHoverWidget(devicePath);
         entry.marker.remove();
       }
     }

@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const tabs = [['stops','Bus Stops'],['routes','Bus Routes'],['schedule','Schedule'],['sources','Data Sources']];
+  const tabs = [['stops','Bus Stops'],['routes','Bus Routes'],['schedule','Schedule'],['drivers','Drivers']];
   const validArea = area => area && [area.north,area.south,area.east,area.west].every(Number.isFinite) && area.north>area.south && area.east>area.west && area.north<=90 && area.south>=-90 && area.east<=180 && area.west>=-180;
   class PublicBusConfig extends HTMLElement {
     constructor() {
@@ -10,15 +10,16 @@
       this.tab='stops'; this.modal=null; this.editorPortal=null; this.editorMap=null; this.editorMarkers=[]; this.routePath=[]; this.offset=0; this.rows=[]; this.total=0; this.revision=0;
       this.status=null; this.permissions={}; this.busy=false; this.message='Connecting to the public bus application…'; this.error=false;
       this.filter={query:'',route_id:'',stop_id:'',date:''}; this.generation=0;this.assignmentDraft={};this.assignmentRoutes=[];this.tripChoices=[];this.tripTotal=0;this.tripOffset=0;this.choiceGeneration=0;
+      this.enrollmentDraft={id:''};this.enrollmentCredential=null;this.pendingEnrollment=null;
     }
     static getPropertySchema() { return [{name:'scope',type:'string',label:'Application scope',default:'default'}]; }
     setConfig(config) { this.config={scope:'default',...config}; if(this.isConnected) this.refresh(); }
     getConfig() { return {...this.config}; }
     connectedCallback() { this.render(); this.refresh(); this.timer=setInterval(()=>this.refresh(false),15000); }
-    disconnectedCallback() { clearInterval(this.timer); this.generation++;this.shadowRoot.querySelector('dialog[open]')?.close();this.closeEditor(); }
-    async request(operation,payload={},write=false) {
+    disconnectedCallback() { clearInterval(this.timer); this.generation++;this.enrollmentCredential=null;this.pendingEnrollment=null;this.shadowRoot.querySelector('dialog[open]')?.close();this.closeEditor(); }
+    async request(operation,payload={},write=false,requestId) {
       if(!window.XACT?.applications) throw new Error('XACT application integration is not installed.');
-      const result=await window.XACT.applications.request('public_bus',operation,payload,{scope:this.config.scope,revision:write?this.revision:undefined});
+      const result=await window.XACT.applications.request('public_bus',operation,payload,{scope:this.config.scope,revision:write?this.revision:undefined,requestId});
       if(Number.isFinite(result.revision)) this.revision=result.revision;
       return result.data;
     }
@@ -34,12 +35,12 @@
         const status=await this.request('get_status'); if(generation!==this.generation) return;
         this.status=status; this.revision=status.state.revision;
         if(this.selectedDataset && !(status.datasets||[]).some(d=>d.id===this.selectedDataset)) this.selectedDataset='';
-        if(this.tab!=='sources') {
+        if(this.tab!=='drivers') {
           const data=await this.request(`list_${this.tab}`,{...this.filter,dataset_id:this.selectedDataset||'',offset:this.offset,limit:50});
           if(generation!==this.generation) return;
           this.rows=data.rows||[]; this.total=data.total||0;
         }
-        if(this.tab==='sources') await this.loadAssignmentChoices();
+        if(this.tab==='drivers') await this.loadAssignmentChoices();
         this.message=status.active?'Configuration connected':'Import a schedule, review it, then activate it.'; this.error=false;
       } catch(error) { if(generation!==this.generation) return; this.message=error.message;this.error=true; }
       finally { if(generation===this.generation) { this.busy=false;if(showBusy||!this.modal) this.render(); } }
@@ -74,11 +75,11 @@
         <div class="actions" aria-label="Bus configuration actions"><button data-action="schedule-dialog" ${disabled}>Schedules</button><button data-action="import-dialog" ${!manage?'disabled':''}>Import</button><button data-action="refresh" ${disabled}>Refresh</button></div>
         ${this.error||!this.status?.active? `<div class="notice ${this.error?'error':''}" role="status" aria-live="polite">${escape(this.message)}</div>`:''}
         <div class="tabs" role="tablist" aria-label="Bus configuration tabs">${tabs.map(([id,label])=>`<button role="tab" id="tab-${id}" aria-controls="panel" aria-selected="${this.tab===id}" tabindex="${this.tab===id?'0':'-1'}" data-tab="${id}" ${disabled}>${label}</button>`).join('')}</div>
-        ${this.tab==='sources'? `<div class="table-wrap source-panel" id="panel" role="tabpanel" aria-labelledby="tab-sources">${this.sourcePanel(manage)}</div>`:`
+        ${this.tab==='drivers'? `<div class="table-wrap source-panel" id="panel" role="tabpanel" aria-labelledby="tab-drivers">${this.driverPanel(manage)}</div>`:`
           <div class="filters"><label class="grow">Search<input data-field="query" value="${escape(this.filter.query)}" placeholder="Name or ID" ${disabled}></label>${this.tab!=='routes'?`<label>Route ID<input data-field="route_id" value="${escape(this.filter.route_id)}" ${disabled}></label>`:''}${this.tab==='schedule'?`<label>Service date<input type="date" data-field="date" value="${escape(this.filter.date)}" ${disabled}></label><label>Stop ID<input data-field="stop_id" value="${escape(this.filter.stop_id)}" ${disabled}></label>`:''}<button data-action="search" ${disabled}>Apply filters</button><button class="primary" data-action="add-record" ${!editActive?'disabled':''}>Add ${this.tab==='stops'?'stop':this.tab==='routes'?'route':'schedule entry'}</button></div>
           <div class="table-wrap" id="panel" role="tabpanel" aria-labelledby="tab-${this.tab}">${this.table(editActive)}</div>
           <div class="pager"><span class="muted">${this.total?this.offset+1:0}–${Math.min(this.offset+this.rows.length,this.total)} of ${this.total}</span><div><button data-action="previous" ${this.offset===0||this.busy?'disabled':''}>Previous</button> <button data-action="next" ${this.offset+50>=this.total||this.busy?'disabled':''}>Next</button></div></div>`}
-        ${feeds.some(f=>f.id==='translink')?'<p class="footnote">Route and arrival data used in this product or service is provided by permission of TransLink. TransLink assumes no responsibility for the accuracy or currency of the Data used in this product or service.</p>':''}
+        ${[...new Set(feeds.map(f=>f.attribution).filter(Boolean))].map(text=>`<p class="footnote">${escape(text)}</p>`).join('')}
       </div>
       <dialog data-dialog="schedule" aria-label="Schedules">${this.schedulePanel(selected,state,manage)}</dialog>
       <dialog data-dialog="import" aria-label="Import schedule">${this.importPanel(manage)}</dialog>`;
@@ -128,14 +129,21 @@
     }
     tripChoiceKey(choice){return [choice.trip.trip_id,choice.trip.service_date,choice.trip.start_time||''].join('/');}
     localDateTime(at){const d=new Date(at);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}
-    sourcePanel(manage) {
+    driverPanel(manage) {
       const draft=this.assignmentDraft;const disabled=!manage?'disabled':'';
       const input=(key,label,type='text',readonly='')=>`<label>${label}<input data-assignment="${key}" type="${type}" value="${escape(draft[key]||'')}" ${readonly} ${disabled}></label>`;
       const reporters=(this.status?.reporters||[]).filter(r=>r.enabled);
-      return `<div>${(this.status?.sources||[]).map(s=>`<div class="source-row">${escape(s.id)} <span class="badge">${escape(s.kind)} · ${escape(s.purpose)}</span> ${s.enabled?'Enabled':'Disabled'} <button data-source="${escape(s.id)}" ${disabled}>${s.enabled?'Disable':'Enable'}</button></div>`).join('')||'<p class="empty">No sources enrolled. Configure the application bootstrap file.</p>'}</div>
+      const phone=this.enrollmentDraft;const credential=this.enrollmentCredential;
+      return `${this.permissions.manage?`<p><strong>Enroll driver phone</strong></p>
+      <p class="muted">Copy the Device ID from the phone. The driver chooses a bus when starting each trip. Enrollment generates a token automatically.</p>
+      <div class="toolbar"><label>Device ID<input data-enrollment="id" value="${escape(phone.id)}" ${disabled}></label>
+      <button data-action="enroll-phone" ${disabled}>Enroll phone</button></div>
+      ${credential?`<div class="notice"><p>Phone ${escape(credential.id)} enrolled. Give this token to the driver; it cannot be retrieved later.</p>
+      <label>Enrollment token<input readonly data-enrollment-token value="${escape(credential.token)}" autocomplete="off" spellcheck="false"></label>
+      <button data-action="copy-enrollment-token" ${disabled}>Copy token</button> <button data-action="hide-enrollment-token" ${disabled}>Hide token</button></div>`:''}`:''}
       <div class="toolbar">${input('id','Assignment ID')}
-      <label>Driver phone<select data-assignment="reporter_id" ${disabled}><option value="">Choose reporter</option>${reporters.map(r=>`<option value="${escape(r.id)}" ${draft.reporter_id===r.id?'selected':''}>${escape(r.id)} · ${escape(r.vehicle_id)}</option>`).join('')}</select></label>
-      ${input('vehicle_id','Vehicle','text','readonly')}
+      <label>Driver phone<select data-assignment="reporter_id" ${disabled}><option value="">Choose reporter</option>${reporters.map(r=>`<option value="${escape(r.id)}" ${draft.reporter_id===r.id?'selected':''}>${escape(r.id)}</option>`).join('')}</select></label>
+      ${input('vehicle_id','Bus ID')}
       <label>Route<select data-assignment="route_id" ${disabled}>${this.assignmentRoutes.map(r=>`<option value="${escape(r.id)}" ${draft.route_id===r.id?'selected':''}>${escape(r.short_name||r.id)} · ${escape(r.name)}</option>`).join('')}</select></label>
       ${input('service_date','Service date','date')}
       <label>Scheduled departure<select data-assignment="trip_key" ${disabled}><option value="">Choose trip</option>${this.tripChoices.map(t=>`<option value="${escape(this.tripChoiceKey(t))}" ${draft.trip_key===this.tripChoiceKey(t)?'selected':''}>${escape(t.departure)} · ${escape(t.destination)} · ${escape(t.trip.trip_id)}</option>`).join('')}</select></label>
@@ -155,14 +163,21 @@
       root.querySelectorAll('[data-delete]').forEach(b=>b.onclick=()=>this.deleteRecord(this.rows[Number(b.dataset.delete)]));
       root.querySelectorAll('[data-toggle]').forEach(b=>b.onchange=()=>this.override(Number(b.dataset.toggle)));
       root.querySelectorAll('[data-assignment]').forEach(el=>el.onchange=()=>this.assignmentChanged(el));
+      root.querySelectorAll('[data-enrollment]').forEach(el=>el.oninput=()=>{this.enrollmentDraft[el.dataset.enrollment]=el.value.trim();});
       root.querySelectorAll('[data-end-assignment]').forEach(el=>el.onclick=()=>this.mutate('end_assignment',{id:el.dataset.endAssignment}));
-      root.querySelectorAll('[data-source]').forEach(b=>b.onclick=()=>{const s=this.status.sources.find(s=>s.id===b.dataset.source);this.mutate('set_source',{...s,enabled:!s.enabled});});
       root.querySelectorAll('.filters input').forEach(i=>i.onkeydown=e=>{if(e.key==='Enter') this.action('search');});
       root.querySelectorAll('dialog').forEach(d=>d.onclose=()=>{if(d.isConnected&&this.modal===d.dataset.dialog) this.modal=null;});
     }
     closeModal() { this.modal=null;this.render(); }
     override(index) {const row=this.rows[index];this.mutate('set_override',{kind:this.tab==='stops'?'stop':'route',id:row.id,name:this.shadowRoot.querySelector(`[data-name="${index}"]`).value,enabled:this.shadowRoot.querySelector(`[data-toggle="${index}"]`).checked});}
     action(name) {
+      if(name==='enroll-phone')return this.enrollPhone();
+      if(name==='hide-enrollment-token'){this.enrollmentCredential=null;this.render();return;}
+      if(name==='copy-enrollment-token'){
+        const field=this.shadowRoot.querySelector('[data-enrollment-token]');field?.select();
+        if(navigator.clipboard?.writeText&&this.enrollmentCredential)navigator.clipboard.writeText(this.enrollmentCredential.token).catch(()=>{});
+        return;
+      }
       if(name==='schedule-dialog'||name==='import-dialog'){this.modal=name==='schedule-dialog'?'schedule':'import';this.render();return;}
       if(name==='close-dialog')return this.closeModal();
       if(name==='refresh')return this.refresh();if(name==='previous'){this.offset=Math.max(0,this.offset-50);return this.refresh();}if(name==='next'){this.offset+=50;return this.refresh();}
@@ -171,11 +186,30 @@
       if(name==='import')return this.importFile();
       if(name==='add-record')return this.openEditor();
       if(name==='trip-previous'||name==='trip-next'){this.tripOffset=Math.max(0,this.tripOffset+(name==='trip-next'?100:-100));this.loadAssignmentChoices().then(()=>this.render()).catch(error=>{this.message=error.message;this.error=true;this.render();});return;}
-      if(name==='assignment'){try{const fields=this.assignmentDraft;const choice=this.tripChoices.find(t=>this.tripChoiceKey(t)===fields.trip_key);if(!choice||!fields.reporter_id)throw new Error('Choose a driver phone and scheduled departure.');return this.mutate('set_assignment',{id:fields.id||'assignment_'+crypto.randomUUID(),reporter_id:fields.reporter_id,vehicle_id:fields.vehicle_id,trip:choice.trip,valid_from:new Date(fields.valid_from).toISOString(),valid_to:new Date(fields.valid_to).toISOString()});}catch(error){this.message=error.message||'Enter valid assignment dates and times.';this.error=true;this.render();}}
+      if(name==='assignment'){try{const fields=this.assignmentDraft;const choice=this.tripChoices.find(t=>this.tripChoiceKey(t)===fields.trip_key);if(!choice||!fields.reporter_id||!/^[A-Za-z0-9_-]{1,64}$/.test(fields.vehicle_id||''))throw new Error('Choose a driver phone, enter a valid bus ID and select a scheduled departure.');return this.mutate('set_assignment',{id:fields.id||'assignment_'+crypto.randomUUID(),reporter_id:fields.reporter_id,vehicle_id:fields.vehicle_id,trip:choice.trip,valid_from:new Date(fields.valid_from).toISOString(),valid_to:new Date(fields.valid_to).toISOString()});}catch(error){this.message=error.message||'Enter valid assignment dates and times.';this.error=true;this.render();}}
+    }
+    async enrollPhone() {
+      if(this.busy||!this.permissions.manage)return;
+      const draft={id:this.enrollmentDraft.id.trim()};
+      this.enrollmentCredential=null;this.busy=true;this.render();
+      try {
+        if(!/^[A-Za-z0-9_-]{1,128}$/.test(draft.id))throw new Error('Enter the phone Device ID using letters, digits, underscores or hyphens.');
+        if(!crypto.subtle||!crypto.getRandomValues)throw new Error('Phone enrollment requires HTTPS or localhost.');
+        const previous=this.pendingEnrollment;
+        const same=previous&&previous.id===draft.id;
+        const token=same?previous.token:
+          Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');
+        const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token));
+        const token_hash=Array.from(new Uint8Array(hash),b=>b.toString(16).padStart(2,'0')).join('');
+        const requestId=same?previous.requestId:crypto.randomUUID();
+        this.pendingEnrollment={...draft,token,requestId};
+        await this.request('enroll_reporter',{...draft,token_hash},true,requestId);
+        this.enrollmentCredential={...draft,token};this.pendingEnrollment=null;this.enrollmentDraft={id:''};
+        this.busy=false;await this.refresh();
+      } catch(error) {this.message=error.message;this.error=true;this.busy=false;this.render();}
     }
     async assignmentChanged(el) {
       const key=el.dataset.assignment;this.assignmentDraft[key]=el.value.trim();
-      if(key==='reporter_id'){const reporter=(this.status?.reporters||[]).find(r=>r.id===el.value);this.assignmentDraft.vehicle_id=reporter?.vehicle_id||'';this.render();}
       if(key==='trip_key'){const choice=this.tripChoices.find(t=>this.tripChoiceKey(t)===el.value);if(choice){this.assignmentDraft.valid_from=this.localDateTime(choice.departure_at-3600000);this.assignmentDraft.valid_to=this.localDateTime(choice.end_at+7200000);}this.render();}
       if(key==='route_id'||key==='service_date'){this.tripOffset=0;this.assignmentDraft.trip_key='';try{await this.loadAssignmentChoices();this.render();}catch(error){this.message=error.message;this.error=true;this.render();}}
     }
@@ -183,7 +217,7 @@
       return `<label>${escape(label)}<input name="${name}" type="${type}" value="${escape(value)}" ${attributes}></label>`;
     }
     openEditor(row=null) {
-      if(!this.permissions.manage||this.busy||this.tab==='sources'||this.selectedDataset&&this.selectedDataset!==this.status?.state?.active_dataset||row?.origin==='gtfs'&&this.tab==='schedule') return;
+      if(!this.permissions.manage||this.busy||this.tab==='drivers'||this.selectedDataset&&this.selectedDataset!==this.status?.state?.active_dataset||row?.origin==='gtfs'&&this.tab==='schedule') return;
       this.closeEditor();
       const kind=this.tab==='stops'?'stop':this.tab==='routes'?'route':'schedule';
       this.editorKind=kind;this.editorOriginal=row;

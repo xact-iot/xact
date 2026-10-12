@@ -10,11 +10,11 @@
     "permissions": [
       {
         "name": "read",
-        "description": "View stops, routes, schedules and source status"
+        "description": "View stops, routes, schedules and driver status"
       },
       {
         "name": "manage",
-        "description": "Import/activate schedules and manage sources and assignments"
+        "description": "Import/activate schedules and manage phone enrollments and assignments"
       }
     ]
   },
@@ -28,7 +28,7 @@
     "activate",
     "rollback",
     "set_override",
-    "set_source",
+    "enroll_reporter",
     "set_assignment",
     "create_stop",
     "update_stop",
