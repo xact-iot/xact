@@ -28,17 +28,17 @@ test('startup displays static widgets while data, timezone, live connection, and
     contentType: 'text/javascript',
     body: `window.XACT.registerWidget({ type: 'startup-test-widget', name: 'Startup test', icon: '', defaultW: 24, defaultH: 3 }, class extends HTMLElement { connectedCallback() { this.textContent = 'Plugin ready'; } });`,
   }));
-  let snapshotRoute: Route | undefined;
   let healthRoute: Route | undefined;
   let pluginsRoute: Route | undefined;
-  await page.route('**/xact/api/v1/nodes**', route => { snapshotRoute = route; });
+  // Startup no longer loads a full tree snapshot; widgets hydrate their own branches on mount.
+  await page.route('**/xact/api/v1/nodes**', route => fulfillJSON(route, { name: 'default', type: 'Organisation', children: [] }));
   await page.route('**/xact/health', route => { healthRoute = route; });
   await page.route('**/xact/api/v1/plugins/widgets', route => { pluginsRoute = route; });
   // Leave credentials pending throughout initial display and refresh.
   await page.route('**/xact/api/v1/system/nats-config', () => {});
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    snapshotRoute = healthRoute = pluginsRoute = undefined;
+    healthRoute = pluginsRoute = undefined;
     if (attempt === 0) await page.goto('./');
     else await page.reload();
     await expect(page.locator('app-sidebar nav')).toContainText('Welcome');
@@ -47,8 +47,7 @@ test('startup displays static widgets while data, timezone, live connection, and
     await expect(page.locator('#loading')).toBeHidden();
     await expect(page.locator('status-table-widget')).toHaveCount(0);
     await expect(page.locator('startup-test-widget')).toHaveCount(0);
-    await expect.poll(() => Boolean(snapshotRoute && healthRoute && pluginsRoute)).toBe(true);
-    await fulfillJSON(snapshotRoute!, { name: 'default', type: 'Organisation', children: [] });
+    await expect.poll(() => Boolean(healthRoute && pluginsRoute)).toBe(true);
     await fulfillJSON(healthRoute!, { status: 'ok', timezone: 'UTC' });
     await expect(page.locator('status-table-widget')).toBeVisible();
     await expect(page.locator('startup-test-widget')).toHaveCount(0);

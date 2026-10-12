@@ -214,6 +214,18 @@ func jsonRequestBody(v any) map[string]any {
 	return openapischema.JSONRequestBody(v)
 }
 
+// binaryRequestBody documents a raw (non-JSON) request body such as an uploaded file.
+func binaryRequestBody(contentType string) map[string]any {
+	return map[string]any{
+		"required": true,
+		"content": map[string]any{
+			contentType: map[string]any{
+				"schema": map[string]any{"type": "string", "format": "binary"},
+			},
+		},
+	}
+}
+
 func responseSchema(status int, v any) map[string]any {
 	return openapischema.ResponseSchema(status, v)
 }

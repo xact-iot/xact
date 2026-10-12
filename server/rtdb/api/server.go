@@ -419,7 +419,9 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 		// Generic extension discovery and current session permissions.
 		api.Get("/api/v1/applications", handlerWithSchema(s.handleApplications, nil, []map[string]any{}, "applications"))
 		api.Get("/api/v1/applications/{application}/session", handlerWithSchema(s.handleApplicationSession, nil, map[string]any{}, "applications"))
-		api.Post("/api/v1/applications/public_bus/upload", handlerWithSchema(s.handlePublicBusUpload, nil, map[string]string{}, "applications"))
+		publicBusUpload := handlerWithSchema(s.handlePublicBusUpload, nil, map[string]string{}, "applications")
+		publicBusUpload.RequestBody = binaryRequestBody("application/zip")
+		api.Post("/api/v1/applications/public_bus/upload", publicBusUpload)
 		api.Post("/api/v1/applications/public_bus/request/{operation}", handlerWithSchema(s.handlePublicBusRequest, map[string]any{}, map[string]any{}, "applications"))
 		// Auth helpers
 		api.Get("/api/v1/auth/my-orgs", s.handleMyOrgsWithSchema())
