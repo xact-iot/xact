@@ -331,14 +331,16 @@ test('tabs widget hides child configure gear for widgets without properties', as
 
   await installAppMocks(page, api, calls);
   await page.goto(`./#${api.dashboard(name)!.id}`);
-  await expect(page.locator('dashboard-container')).toBeVisible();
+  // Wait for the dashboard to finish loading (permissions resolved, widgets mounted)
+  // before switching modes; earlier mode changes are ignored or reset by the load.
+  await expect(page.locator('.tw-tab-active')).toContainText('Organisations');
 
   await page.evaluate(async () => {
     const dashboard = document.querySelector('dashboard-container') as any;
     await dashboard.setDashboardMode('edit');
   });
 
-  await expect(page.locator('.tw-tab-active')).toContainText('Organisations');
+  await expect(page.locator('.tw-tab-remove')).toHaveCount(2);
   await expect(page.locator('.tw-tab-active .tw-child-cfg')).toHaveCount(0);
 
   await page.locator('.tw-tab', { hasText: 'HTML' }).click();
