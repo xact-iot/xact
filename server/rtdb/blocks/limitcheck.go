@@ -43,14 +43,19 @@ type LimitCheckBlock struct {
 	RtnEvent EventConfig `json:"rtnEvent"` // Return to Normal
 	LowEvent EventConfig `json:"lowEvent"`
 
-	// runtime state - not serialised
-	mu               sync.Mutex
-	wasInAlarm       bool
-	stateInitialized bool
-	lastValue        *float64
-	hiLock           xnats.PubLock
-	rtnLock          xnats.PubLock
-	lowLock          xnats.PubLock
+	// runtime state - not serialised. Template-linked leaves share this block,
+	// so alarm transitions and deadband state are tracked per leaf.
+	mu      sync.Mutex
+	states  map[string]*limitLeafState
+	hiLock  xnats.PubLock
+	rtnLock xnats.PubLock
+	lowLock xnats.PubLock
+}
+
+type limitLeafState struct {
+	leaf       tree.Leaf
+	wasInAlarm bool
+	lastValue  *float64
 }
 
 func (b *LimitCheckBlock) GetType() string { return "limitcheck" }
@@ -77,8 +82,8 @@ func (b *LimitCheckBlock) Process(leaf tree.Leaf, value any) (any, error) {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.initializeStateLocked(leaf)
-	if b.withinDeadbandLocked(leaf, v) {
+	state := b.stateLocked(leaf)
+	if state.withinDeadband(leaf, v) {
 		return value, nil
 	}
 
@@ -102,61 +107,65 @@ func (b *LimitCheckBlock) Process(leaf tree.Leaf, value any) (any, error) {
 		device := leaf.GetTreeDevice()
 		units := leaf.GetShared().Units
 		switch {
-		case !b.wasInAlarm && hiBreached:
+		case !state.wasInAlarm && hiBreached:
 			log.Printf("limitcheck: hi breach transition, emitting event")
 			b.emitEvent(&b.hiLock, b.HiEvent, orgName, device, v, units)
-		case !b.wasInAlarm && lowBreached:
+		case !state.wasInAlarm && lowBreached:
 			log.Printf("limitcheck: lo breach transition, emitting event")
 			b.emitEvent(&b.lowLock, b.LowEvent, orgName, device, v, units)
-		case b.wasInAlarm && !inAlarm:
+		case state.wasInAlarm && !inAlarm:
 			log.Printf("limitcheck: return to normal, emitting event")
 			b.emitEvent(&b.rtnLock, b.RtnEvent, orgName, device, v, units)
 		}
 	}
 
-	b.wasInAlarm = inAlarm
-	b.setLastValueLocked(v)
+	state.wasInAlarm = inAlarm
+	state.lastValue = &v
 	return value, nil // pass value through unchanged
 }
 
 func (b *LimitCheckBlock) initializeState(leaf tree.Leaf) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.initializeStateLocked(leaf)
+	b.stateLocked(leaf)
 }
 
-func (b *LimitCheckBlock) initializeStateLocked(leaf tree.Leaf) {
-	if b.stateInitialized {
-		return
-	}
+// stateLocked returns the transition state for leaf. A leaf recreated at the
+// same path (for example a device deleted and provisioned again) starts from
+// its own alarm state rather than inheriting the previous leaf's.
+func (b *LimitCheckBlock) stateLocked(leaf tree.Leaf) *limitLeafState {
+	key := ""
 	if leaf != nil {
-		b.wasInAlarm = strings.Contains(leaf.GetState(), tree.StatusAlarm)
+		key = tagPath(leaf)
+	}
+	if state := b.states[key]; state != nil && state.leaf == leaf {
+		return state
+	}
+	state := &limitLeafState{leaf: leaf}
+	if leaf != nil {
+		state.wasInAlarm = strings.Contains(leaf.GetState(), tree.StatusAlarm)
 		if !leaf.GetUpdatedTime().IsZero() {
-			v, err := toFloat64(leaf.GetAnyValue())
-			if err != nil {
-				b.stateInitialized = true
-				return
+			if v, err := toFloat64(leaf.GetAnyValue()); err == nil {
+				state.lastValue = &v
 			}
-			b.setLastValueLocked(v)
 		}
 	}
-	b.stateInitialized = true
+	if b.states == nil {
+		b.states = map[string]*limitLeafState{}
+	}
+	b.states[key] = state
+	return state
 }
 
-func (b *LimitCheckBlock) withinDeadbandLocked(leaf tree.Leaf, value float64) bool {
-	if leaf == nil || b.lastValue == nil {
+func (s *limitLeafState) withinDeadband(leaf tree.Leaf, value float64) bool {
+	if leaf == nil || s.lastValue == nil {
 		return false
 	}
 	deadband := leaf.GetShared().Deadband
 	if deadband <= 0 {
 		return false
 	}
-	return math.Abs(value-*b.lastValue) <= deadband
-}
-
-func (b *LimitCheckBlock) setLastValueLocked(value float64) {
-	v := value
-	b.lastValue = &v
+	return math.Abs(value-*s.lastValue) <= deadband
 }
 
 // emitEvent publishes an event using the distributed lock to deduplicate across

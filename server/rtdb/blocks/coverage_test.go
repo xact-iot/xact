@@ -141,14 +141,14 @@ func TestLimitCheckInitializesFromExistingAlarm(t *testing.T) {
 	b := &LimitCheckBlock{HiLimit: ptrFloat(100)}
 	b.Init(leaf)
 
-	if !b.wasInAlarm {
+	if !limitWasInAlarm(b, leaf) {
 		t.Fatal("expected limitcheck to initialize from existing alarm state")
 	}
 	if _, err := b.Process(leaf, 150.0); err != nil {
 		t.Fatal(err)
 	}
-	if !b.wasInAlarm || leaf.GetState() != tree.StatusAlarm {
-		t.Fatalf("alarm state changed unexpectedly: wasInAlarm=%v state=%q", b.wasInAlarm, leaf.GetState())
+	if !limitWasInAlarm(b, leaf) || leaf.GetState() != tree.StatusAlarm {
+		t.Fatalf("alarm state changed unexpectedly: wasInAlarm=%v state=%q", limitWasInAlarm(b, leaf), leaf.GetState())
 	}
 }
 
@@ -162,15 +162,37 @@ func TestLimitCheckDeadbandSuppressesAlarmTransitions(t *testing.T) {
 	if _, err := b.Process(leaf, 100.2); err != nil {
 		t.Fatal(err)
 	}
-	if leaf.GetState() == tree.StatusAlarm || b.wasInAlarm {
-		t.Fatalf("within-deadband threshold crossing should not alarm: state=%q wasInAlarm=%v", leaf.GetState(), b.wasInAlarm)
+	if leaf.GetState() == tree.StatusAlarm || limitWasInAlarm(b, leaf) {
+		t.Fatalf("within-deadband threshold crossing should not alarm: state=%q wasInAlarm=%v", leaf.GetState(), limitWasInAlarm(b, leaf))
 	}
 
 	if _, err := b.Process(leaf, 101.0); err != nil {
 		t.Fatal(err)
 	}
-	if leaf.GetState() != tree.StatusAlarm || !b.wasInAlarm {
-		t.Fatalf("outside-deadband threshold crossing should alarm: state=%q wasInAlarm=%v", leaf.GetState(), b.wasInAlarm)
+	if leaf.GetState() != tree.StatusAlarm || !limitWasInAlarm(b, leaf) {
+		t.Fatalf("outside-deadband threshold crossing should alarm: state=%q wasInAlarm=%v", leaf.GetState(), limitWasInAlarm(b, leaf))
+	}
+}
+
+// Template-linked device leaves share the template's block instance.
+func TestLimitCheckTracksTransitionsPerLeaf(t *testing.T) {
+	a := tree.NewFloatLeaf("a", tree.TagConfig{Name: "a", Type: tree.TypeFloat})
+	other := tree.NewFloatLeaf("b", tree.TagConfig{Name: "b", Type: tree.TypeFloat})
+	b := &LimitCheckBlock{HiLimit: ptrFloat(100)}
+
+	b.Process(a, 150.0)
+	b.Process(other, 50.0)
+	if !limitWasInAlarm(b, a) || limitWasInAlarm(b, other) {
+		t.Fatalf("alarm state leaked between leaves: a=%v b=%v", limitWasInAlarm(b, a), limitWasInAlarm(b, other))
+	}
+	if a.GetState() != tree.StatusAlarm || other.GetState() != "" {
+		t.Fatalf("leaf states: a=%q b=%q", a.GetState(), other.GetState())
+	}
+
+	// A device recreated at the same path must not inherit the old alarm.
+	recreated := tree.NewFloatLeaf("a", tree.TagConfig{Name: "a", Type: tree.TypeFloat})
+	if limitWasInAlarm(b, recreated) {
+		t.Fatal("recreated leaf inherited the previous leaf's alarm")
 	}
 }
 
@@ -404,4 +426,10 @@ func TestHistoryRecorderGetSetParameters(t *testing.T) {
 	if err := b2.SetParameters(params); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func limitWasInAlarm(b *LimitCheckBlock, leaf tree.Leaf) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.stateLocked(leaf).wasInAlarm
 }
