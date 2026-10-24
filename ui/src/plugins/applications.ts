@@ -1,9 +1,21 @@
 import { getAuthHeaders, getAuthToken, getCurrentUser } from '../auth';
 import { getMirrorStore } from '../store/store';
 import { registerPermissions } from '../permissions/registry';
-export interface ApplicationManifest { id: string; name: string; widgets: string[]; operations: string[]; resource: { id: string; description: string; permissions: Array<{name: string; description: string}> } }
+export interface ApplicationHTTP { prefix: string; max_body_mb?: number; websocket_paths?: string[] }
+export interface ApplicationManifest { id: string; name: string; widgets: string[]; operations: string[]; resource: { id: string; description: string; permissions: Array<{name: string; description: string}> }; http?: ApplicationHTTP }
 const manifests = new Map<string,ApplicationManifest>();
 const token = /^[A-Za-z0-9_-]{1,128}$/;
+const BASE_URL = '/xact';
+// Resolves a path below the application's proxy prefix; the result must stay inside it.
+function proxyLocation(applicationId: string, path: string): {url: URL; websocket: boolean} {
+ const prefix=manifests.get(applicationId)?.http?.prefix;
+ if(!prefix) throw new Error('Application has no HTTP proxy');
+ if(typeof path!=='string'||!path.startsWith('/')) throw new Error('Application path must start with /');
+ const root=`${BASE_URL}/${prefix}`, url=new URL(root+path,window.location.origin);
+ if(url.origin!==window.location.origin||(url.pathname!==root&&!url.pathname.startsWith(root+'/'))) throw new Error('Application path leaves the application prefix');
+ const relative=url.pathname.slice(root.length);
+ return {url,websocket:!!manifests.get(applicationId)?.http?.websocket_paths?.includes(relative)};
+}
 export async function loadApplications(): Promise<void> {
  manifests.clear();
  const r=await fetch('/xact/api/v1/applications',{headers:getAuthHeaders(),cache:'no-store'});
@@ -29,6 +41,20 @@ export const applications = {
   if(!r.ok) throw new Error(response?.error?.message||`GTFS upload failed (${r.status})`);
   if(typeof response.archive!=='string') throw new Error('Invalid GTFS upload response');
   return response;
+ },
+ /** Absolute URL for a proxied path; ws(s) for the application's WebSocket paths, http(s) otherwise. */
+ proxyUrl(applicationId: string, path: string): string {
+  const {url,websocket}=proxyLocation(applicationId,path);
+  if(websocket) url.protocol=url.protocol==='https:'?'wss:':'ws:';
+  return url.href;
+ },
+ /** fetch() through the application proxy with the current XACT session. Resolves with the Response, as fetch does. */
+ async fetch(applicationId: string, path: string, init: RequestInit={}): Promise<Response> {
+  const {url}=proxyLocation(applicationId,path), bearer=getAuthToken();
+  if(!bearer) throw new Error('Session expired');
+  const headers=new Headers(init.headers);
+  headers.set('Authorization',`Bearer ${bearer}`);
+  return globalThis.fetch(url.href,{cache:'no-store',...init,headers,credentials:'omit'});
  },
  async request(applicationId: string, operation: string, payload: unknown={}, options: {scope?: string; requestId?: string; revision?: number; timeoutMs?: number}={}): Promise<any> {
   const m=manifests.get(applicationId), bearer=getAuthToken(), user=getCurrentUser();

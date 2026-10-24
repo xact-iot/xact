@@ -35,6 +35,7 @@ type Manifest struct {
 	Resource   Resource  `json:"resource"`
 	Operations []string  `json:"operations"`
 	Services   []Service `json:"services,omitempty"`
+	HTTP       *HTTP     `json:"http,omitempty"`
 }
 
 func ValidToken(s string) bool { return token.MatchString(s) }
@@ -50,6 +51,7 @@ func Load(root string) ([]Manifest, error) {
 	seen := map[string]bool{}
 	users := map[string]bool{}
 	resources := map[string]bool{}
+	prefixes := map[string]bool{}
 	for _, f := range files {
 		b, e := os.ReadFile(f)
 		if e != nil {
@@ -113,6 +115,15 @@ func Load(root string) ([]Manifest, error) {
 					return nil, fmt.Errorf("manifest %s: service %q: invalid service subscribe subject %q", filepath.Base(f), s.Username, subject)
 				}
 			}
+		}
+		if m.HTTP != nil {
+			if e = validateHTTP(m.HTTP); e != nil {
+				return nil, fmt.Errorf("manifest %s: %w", filepath.Base(f), e)
+			}
+			if prefixes[m.HTTP.Prefix] {
+				return nil, fmt.Errorf("manifest %s: http prefix %q is already used by another application", filepath.Base(f), m.HTTP.Prefix)
+			}
+			prefixes[m.HTTP.Prefix] = true
 		}
 		out = append(out, m)
 	}
