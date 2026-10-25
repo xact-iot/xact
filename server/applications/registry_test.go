@@ -166,3 +166,23 @@ func TestManifestHTTPProxyConfiguration(t *testing.T) {
 		t.Fatalf("distinct prefixes rejected: %v", err)
 	}
 }
+
+func TestServiceEventSubjectBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name, subject string
+		publish, want bool
+	}{
+		{"own application", "xact.internal.event_request.default.public_bus", true, true},
+		{"other application", "xact.internal.event_request.default.traffic", true, false},
+		{"wildcard application", "xact.internal.event_request.default.*", true, false},
+		{"wildcard tenant", "xact.internal.event_request.*.public_bus", true, false},
+		{"subscribe", "xact.internal.event_request.default.public_bus", false, false},
+		{"extra token", "xact.internal.event_request.default.public_bus.x", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := validServiceSubject(tc.subject, "public_bus", "app:public_bus", tc.publish); got != tc.want {
+				t.Fatalf("validServiceSubject(%q, publish=%v) = %v, want %v", tc.subject, tc.publish, got, tc.want)
+			}
+		})
+	}
+}

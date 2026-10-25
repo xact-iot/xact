@@ -155,6 +155,11 @@ func validServiceSubject(subject, app, user string, publish bool) bool {
 	if len(parts) == 8 && parts[0] == "xact" && parts[1] == "app" && parts[2] == "v1" && ValidToken(parts[3]) && parts[4] == app && (ValidToken(parts[5]) || parts[5] == "*") && (parts[6] == "request" || parts[6] == "ingest") && (ValidToken(parts[7]) || parts[7] == "*") {
 		return true
 	}
+	// Application events: publish-only, exactly the service's own
+	// application token, so the relay can trust it.
+	if publish && len(parts) == 5 && parts[0] == "xact" && parts[1] == "internal" && parts[2] == "event_request" && ValidToken(parts[3]) && parts[4] == app {
+		return true
+	}
 	if publish && len(parts) >= 5 && parts[0] == "xact" && parts[1] == "internal" && (parts[2] == "ingest_request" || parts[2] == "delete_request") && ValidToken(parts[3]) {
 		for _, p := range parts[4:] {
 			if p == "*" {
