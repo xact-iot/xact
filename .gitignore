@@ -70,3 +70,4 @@ AirQuality/AirQuality
 
 plugins/widgets/*
 !plugins/widgets/bignumber.js
+plugins/map-layer/traffic-live.js
