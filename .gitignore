@@ -67,3 +67,6 @@ build_and_setup.sh
 architecture/
 profiling/
 AirQuality/AirQuality
+
+plugins/widgets/*
+!plugins/widgets/bignumber.js
