@@ -1,0 +1,75 @@
+{
+  "id": "traffic",
+  "name": "Traffic Simulation Studio",
+  "widgets": [
+    "traffic-studio"
+  ],
+  "resource": {
+    "id": "traffic-studio",
+    "description": "Traffic simulation, control and digital twin",
+    "permissions": [
+      {
+        "name": "view",
+        "description": "View networks, scenarios, runs, results and live data"
+      },
+      {
+        "name": "operate",
+        "description": "Run simulations and control running sessions"
+      },
+      {
+        "name": "engineer",
+        "description": "Import and edit networks, scenarios and timing defaults"
+      },
+      {
+        "name": "admin",
+        "description": "Delete networks, view the audit log, manage adapters and data sources"
+      }
+    ]
+  },
+  "operations": [
+    "cancel_import",
+    "control_session",
+    "delete_network",
+    "delete_run",
+    "get_audit",
+    "get_intersection",
+    "get_job",
+    "get_network",
+    "get_run",
+    "get_scenario",
+    "get_status",
+    "import_network",
+    "list_intersections",
+    "list_networks",
+    "list_profiles",
+    "list_runs",
+    "list_scenarios",
+    "open_stream",
+    "start_session",
+    "update_network",
+    "update_scenario"
+  ],
+  "services": [
+    {
+      "username": "app:traffic",
+      "password_env": "TRAFFIC_NATS_PASSWORD",
+      "publish": [
+        "xact.internal.ingest_request.default.TRAFFIC.>",
+        "xact.internal.delete_request.default.TRAFFIC.>"
+      ],
+      "subscribe": [
+        "xact.app.v1.default.traffic.default.request.*",
+        "_INBOX.app_traffic.>"
+      ]
+    }
+  ],
+  "http": {
+    "prefix": "traffic",
+    "upstream": "http://127.0.0.1:8093",
+    "max_body_mb": 210,
+    "timeout_seconds": 120,
+    "websocket_paths": [
+      "/ws"
+    ]
+  }
+}
