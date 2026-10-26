@@ -515,6 +515,84 @@ area-map-widget {
   color: var(--widget-icon-hover);
 }
 
+/* ── Widget full screen ──
+   Widgets whose dashboard allows it get an expand button in the top-right
+   corner, shown on hover (always on touch screens). The card goes full
+   screen with the Fullscreen API, or is maximised over the page where that
+   is not available. */
+.wc-fs-toggle.wc-on,
+.wc-fs-toggle.wc-on:hover {
+  opacity: 1;
+  color: var(--accent-color);
+}
+
+.wc-expand {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  z-index: 110;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  border: 1px solid var(--widget-border);
+  border-radius: 0.375rem;
+  background: color-mix(in srgb, var(--widget-bg) 88%, transparent);
+  color: var(--content-text);
+  box-shadow: 0 1px 4px var(--widget-shadow);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.wc-expand[hidden] {
+  display: none;
+}
+
+widget-card:hover .wc-expand,
+.wc-expand:focus-visible,
+widget-card.wc-fullscreen .wc-expand {
+  opacity: 0.85;
+}
+
+.wc-expand:hover {
+  opacity: 1;
+  color: var(--widget-icon-hover);
+}
+
+@media (hover: none) {
+  .wc-expand {
+    opacity: 0.7;
+  }
+}
+
+.widget-card:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  border: none;
+}
+
+.widget-card:fullscreen::backdrop {
+  background: var(--widget-bg);
+}
+
+/* In-page fallback: the card covers the window. Its grid item is raised
+   above the other items so nothing on the dashboard shows through. */
+.grid-stack > .grid-stack-item.wc-maximised-item {
+  z-index: 10000 !important;
+}
+
+widget-card.wc-maximised > .widget-card {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  border-radius: 0;
+  border: none;
+}
+
 .widget-toolbar {
   background-color: var(--widget-header-bg);
   border-bottom: 1px solid var(--widget-border);

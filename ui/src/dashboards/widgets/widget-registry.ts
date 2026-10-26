@@ -11,6 +11,9 @@ export interface WidgetTypeMeta {
   defaultH: number;
   minW?: number;
   minH?: number;
+  /** Default for "allow full screen" on newly placed and existing widgets
+   *  of this type; a dashboard can override it per widget. */
+  fullscreen?: boolean;
   load?: () => Promise<unknown>;
 }
 

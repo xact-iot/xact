@@ -348,6 +348,66 @@ test('tabs widget hides child configure gear for widgets without properties', as
   await expect(page.locator('.tw-tab-active .tw-child-cfg')).toHaveCount(1);
 });
 
+test('widgets can be expanded to full screen when allowed per widget', async ({ page }) => {
+  const api = new MockDashboardAPI();
+  const calls: string[] = [];
+  api.seedDashboard({ name: 'Ops', widgets: [
+    { id: 'live', type: 'fs-test-widget', x: 0, y: 0, w: 12, h: 6, config: {} },
+    { id: 'note', type: 'text-widget', x: 12, y: 0, w: 12, h: 6, config: { text: 'Note' } },
+  ] });
+  await installAppMocks(page, api, calls);
+  await page.unroute('**/xact/api/v1/plugins/widgets');
+  await page.route('**/xact/api/v1/plugins/widgets', route => fulfillJSON(route, [{ name: 'fs-test', url: '/plugins/fs-test.js' }]));
+  // A plugin type that defaults to full screen allowed and reports the hook.
+  await page.route('**/xact/plugins/fs-test.js', route => route.fulfill({
+    contentType: 'text/javascript',
+    body: `window.__fs = [];
+      window.XACT.registerWidget({ type: 'fs-test-widget', name: 'Live', icon: '', defaultW: 12, defaultH: 6, fullscreen: true },
+        class extends HTMLElement { connectedCallback() { this.textContent = 'Live view'; } setFullscreen(v) { window.__fs.push(v); } });`,
+  }));
+  await page.goto(`./#${api.dashboard('Ops')!.id}`);
+  await expect(page.locator('fs-test-widget')).toHaveText('Live view');
+
+  const liveCard = page.locator('[gs-id="live"] widget-card');
+  const noteCard = page.locator('[gs-id="note"] widget-card');
+  await expect(noteCard.locator('.wc-expand')).toBeHidden();
+  await liveCard.hover();
+  const expand = liveCard.locator('.wc-expand');
+  await expect(expand).toBeVisible();
+
+  await expand.click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement?.parentElement?.closest('[gs-id]')?.getAttribute('gs-id') ?? null)).toBe('live');
+  const box = await liveCard.locator('.widget-card').boundingBox();
+  const viewport = page.viewportSize()!;
+  expect(Math.round(box!.width)).toBe(viewport.width);
+  expect(Math.round(box!.height)).toBe(viewport.height);
+  await expect(liveCard.locator('.wc-expand')).toHaveAttribute('title', /Exit full screen/);
+  await liveCard.locator('.wc-expand').click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement === null)).toBe(true);
+  expect(await page.evaluate(() => (window as any).__fs)).toEqual([true, false]);
+
+  // Edit mode: allow it on the text widget too and save.
+  await page.evaluate(async () => {
+    await (document.querySelector('dashboard-container') as any).setDashboardMode('edit');
+  });
+  await expect(liveCard.locator('.wc-expand')).toBeHidden();
+  const toggle = noteCard.locator('.wc-fs-toggle');
+  await expect(toggle).toBeVisible();
+  await expect(liveCard.locator('.wc-fs-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('#pc-save').click();
+  await expect.poll(() => api.dashboard('Ops')?.widgets.find((w: any) => w.id === 'note')?.fullscreen).toBe(true);
+  expect(api.dashboard('Ops')?.widgets.find((w: any) => w.id === 'live')?.fullscreen).toBeUndefined();
+
+  // Back in view mode the text widget can be expanded.
+  await page.evaluate(async () => {
+    await (document.querySelector('dashboard-container') as any).setDashboardMode('view');
+  });
+  await noteCard.hover();
+  await expect(noteCard.locator('.wc-expand')).toBeVisible();
+});
+
 async function installAppMocks(page: Page, api: MockDashboardAPI, calls: string[]) {
   await page.addInitScript(() => {
     const payload = btoa(JSON.stringify({
