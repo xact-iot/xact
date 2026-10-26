@@ -399,6 +399,9 @@ test('widgets can be expanded to full screen when allowed per widget', async ({ 
   await page.locator('#pc-save').click();
   await expect.poll(() => api.dashboard('Ops')?.widgets.find((w: any) => w.id === 'note')?.fullscreen).toBe(true);
   expect(api.dashboard('Ops')?.widgets.find((w: any) => w.id === 'live')?.fullscreen).toBeUndefined();
+  // The server sees the save before the client clears its dirty state; leaving edit
+  // mode while still dirty would open an unsaved-changes prompt.
+  await expect(page.locator('#pc-save')).toHaveCount(0);
 
   // Back in view mode the text widget can be expanded.
   await page.evaluate(async () => {
