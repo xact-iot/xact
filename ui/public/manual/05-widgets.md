@@ -18,10 +18,17 @@ Widgets are the building blocks of XACT dashboards. Each widget displays data or
 
 Most widgets display a header bar showing the widget title. In edit mode the header also shows:
 
+- **Full-screen icon** (⤢) - allows viewers to expand this widget to full screen; highlighted when allowed
 - **Gear icon** - opens the widget configuration dialog
 - **X icon** - removes the widget from the dashboard (with confirmation)
 
 Some widgets (Text, Tabs, Help Manual) hide their header for a full-bleed appearance.
+
+### Full Screen
+
+A widget can be allowed to go full screen, one widget at a time. In edit mode, click the full-screen icon in the widget's header and save the dashboard. Some widget types, such as Traffic Studio, allow it by default; the icon turns it off for one widget.
+
+When it is allowed, an expand button appears in the widget's top-right corner when you point at it (it is always shown on touch screens). Click it to fill the screen with the widget; press **Esc** or click the button again to return. The widget keeps running while it is expanded, so live views and maps carry on where they were. Where the browser cannot go full screen (for example on an iPhone, or a dashboard embedded in another page), the widget fills the browser window instead.
 
 ### Resizing
 

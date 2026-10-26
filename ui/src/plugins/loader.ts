@@ -86,6 +86,13 @@ export interface XACTBridge {
    *
    *   rerender(): void   (optional)
    *     Called after setConfig() when properties are updated live.
+   *
+   *   setFullscreen(fullscreen: boolean): void   (optional)
+   *     Called when a viewer expands the widget to full screen or leaves
+   *     it. The window also receives a 'resize' event afterwards.
+   *
+   * meta.fullscreen: true makes "allow full screen" the default for the
+   * widget type; dashboard editors can still turn it off per widget.
    */
   registerWidget(meta: Omit<WidgetTypeMeta, 'category'>, klass: CustomElementConstructor): void;
 

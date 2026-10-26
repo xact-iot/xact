@@ -31,6 +31,14 @@ export interface WidgetData {
   w: number;
   h: number;
   config: Record<string, any>;
+  /** Viewers may expand the widget to full screen. Unset: the widget
+   *  type's default (WidgetTypeMeta.fullscreen), else off. */
+  fullscreen?: boolean;
+}
+
+/** Whether a widget may be expanded to full screen. */
+export function fullscreenAllowed(widget: WidgetData): boolean {
+  return widget.fullscreen ?? getWidgetMeta(widget.type)?.fullscreen ?? false;
 }
 
 interface DashboardTransientState {
@@ -402,6 +410,7 @@ export class DashboardContainer extends BaseComponent {
     const card = document.createElement('widget-card') as WidgetCard;
     card.setWidgetId(data.id);
     card.setMode(this.mode);
+    card.setFullscreenAllowed(fullscreenAllowed(data));
     contentEl.appendChild(card);
 
     // Now that the card is in the DOM, set title and append widget
@@ -420,6 +429,8 @@ export class DashboardContainer extends BaseComponent {
       if (!this.isConnected || this.grid !== grid || !card.isConnected) return;
       body.innerHTML = '';
       card.setTitle(getWidgetMeta(data.type)?.name || data.type);
+      // Plugin widget types register (with their defaults) only now.
+      card.setFullscreenAllowed(fullscreenAllowed(data));
       if (!customElements.get(data.type)) {
         body.innerHTML = `<div class="p-3 text-xs opacity-60">Unable to load widget "${escapeHtml(data.type)}".</div>`;
         card.setHasProperties(false);
@@ -480,6 +491,11 @@ export class DashboardContainer extends BaseComponent {
     card.addEventListener('widget-configure', ((e: CustomEvent) => {
       this.showWidgetProperties(e.detail.widgetId);
     }) as EventListener);
+
+    // Listen for the full-screen permission toggle (edit mode)
+    card.addEventListener('widget-fullscreen-allowed', ((e: CustomEvent) => {
+      this.setWidgetFullscreenAllowed(e.detail.widgetId, !!e.detail.allowed);
+    }) as EventListener);
   }
 
   private async duplicateWidget(widgetId: string): Promise<void> {
@@ -519,6 +535,17 @@ export class DashboardContainer extends BaseComponent {
       this.dirty = true;
       this.updateSaveButton();
     }
+  }
+
+  private setWidgetFullscreenAllowed(widgetId: string, allowed: boolean): void {
+    if (this.mode !== 'edit') return;
+    const widgetData = this.widgets.find(w => w.id === widgetId);
+    if (!widgetData) return;
+    widgetData.fullscreen = allowed;
+    const card = this.querySelector(`[gs-id="${widgetId}"] widget-card`) as WidgetCard | null;
+    card?.setFullscreenAllowed(allowed);
+    this.dirty = true;
+    this.updateSaveButton();
   }
 
   private removeWidget(widgetId: string): void {
@@ -752,6 +779,7 @@ export class DashboardContainer extends BaseComponent {
         w: node.w ?? 4,
         h: node.h ?? 2,
         config: existing?.config || {},
+        ...(existing?.fullscreen !== undefined ? { fullscreen: existing.fullscreen } : {}),
       });
     }
     return inLayoutOrder(savedWidgets);
@@ -835,6 +863,7 @@ export class DashboardContainer extends BaseComponent {
         w: node.w ?? 4,
         h: node.h ?? 2,
         config: existing?.config || {},
+        ...(existing?.fullscreen !== undefined ? { fullscreen: existing.fullscreen } : {}),
       });
     }
     const json = JSON.stringify({ dashboardName: this.dashboardName, widgets: inLayoutOrder(exportWidgets) }, null, 2);
