@@ -1,11 +1,13 @@
 // @vitest-environment node
-import { test } from 'vitest';
+import { test as baseTest } from 'vitest';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Window } from 'happy-dom';
 
 const widgetFile = fileURLToPath(new URL('../../plugins/widgets/public-bus-config.js', import.meta.url));
+// The widget ships with the public-bus app and is gitignored, so only test it where it is installed.
+const test = baseTest.skipIf(!existsSync(widgetFile));
 
 test('manual bus editors capture stop location, route path, and schedule fields', async () => {
   const window = new Window({ url: 'http://localhost' });
