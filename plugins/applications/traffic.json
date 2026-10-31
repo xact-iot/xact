@@ -1,0 +1,139 @@
+{
+  "id": "traffic",
+  "name": "Traffic Simulation Studio",
+  "widgets": [
+    "traffic-studio",
+    "traffic-intersection-status",
+    "traffic-corridor-time",
+    "traffic-network-kpis",
+    "traffic-time-space"
+  ],
+  "resource": {
+    "id": "traffic-studio",
+    "description": "Traffic simulation, control and digital twin",
+    "permissions": [
+      {
+        "name": "view",
+        "description": "View networks, scenarios, runs, results and live data"
+      },
+      {
+        "name": "operate",
+        "description": "Run simulations and control running sessions"
+      },
+      {
+        "name": "engineer",
+        "description": "Import and edit networks, scenarios and timing defaults"
+      },
+      {
+        "name": "admin",
+        "description": "Delete networks, view the audit log, manage adapters and data sources"
+      }
+    ]
+  },
+  "operations": [
+    "apply_incident_template",
+    "apply_offsets",
+    "apply_optimizer",
+    "apply_promotion",
+    "calibrate_demand",
+    "calibration_report",
+    "cancel_batch",
+    "cancel_import",
+    "compare_runs",
+    "control_session",
+    "copy_intersection",
+    "create_adapter",
+    "create_corridor",
+    "create_scenario",
+    "dashboard",
+    "delete_adapter",
+    "delete_comparison",
+    "delete_corridor",
+    "delete_incident_template",
+    "delete_network",
+    "delete_run",
+    "delete_scenario",
+    "discard_draft",
+    "edit_intersection",
+    "export_package",
+    "fork_run",
+    "get_audit",
+    "get_batch",
+    "get_edge",
+    "get_intersection",
+    "get_job",
+    "get_network",
+    "get_od",
+    "get_results",
+    "get_run",
+    "get_scenario",
+    "get_status",
+    "get_storage",
+    "green_wave",
+    "import_counts",
+    "import_network",
+    "incident",
+    "intersection_details",
+    "list_adapters",
+    "list_batches",
+    "list_comparisons",
+    "list_incident_templates",
+    "list_intersections",
+    "list_networks",
+    "list_profiles",
+    "list_promotions",
+    "list_runs",
+    "list_scenarios",
+    "list_versions",
+    "open_stream",
+    "optimizer_results",
+    "patch_network",
+    "pin_run",
+    "promotion_dry_run",
+    "publish_version",
+    "purge_run_outputs",
+    "refresh_network",
+    "regenerate_demand",
+    "rerun",
+    "rollback_promotion",
+    "rotate_adapter_key",
+    "save_comparison",
+    "save_incident_template",
+    "save_run_incidents",
+    "save_state",
+    "signal_command",
+    "start_batch",
+    "start_optimizer",
+    "start_session",
+    "update_adapter",
+    "update_network",
+    "update_od",
+    "update_scenario"
+  ],
+  "services": [
+    {
+      "username": "app:traffic",
+      "password_env": "TRAFFIC_NATS_PASSWORD",
+      "publish": [
+        "xact.internal.ingest_request.default.TRAFFIC.>",
+        "xact.internal.delete_request.default.TRAFFIC.>",
+        "xact.app.v1.default.traffic.default.request.*",
+        "xact.internal.event_request.default.traffic"
+      ],
+      "subscribe": [
+        "xact.app.v1.default.traffic.default.request.*",
+        "xact.app.v1.default.traffic.default.ingest.*",
+        "_INBOX.app_traffic.>"
+      ]
+    }
+  ],
+  "http": {
+    "prefix": "traffic",
+    "upstream": "http://127.0.0.1:8093",
+    "max_body_mb": 210,
+    "timeout_seconds": 120,
+    "websocket_paths": [
+      "/ws"
+    ]
+  }
+}

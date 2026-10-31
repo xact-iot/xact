@@ -105,6 +105,7 @@ type Server struct {
 	eventPublisher       *events.Publisher
 	openapi              *openAPIRegistry
 	openAPIRoutes        []openAPIRouteSpec
+	appProxies           map[string]*appProxy
 }
 
 // NewServer creates a new API server.
@@ -294,6 +295,7 @@ func NewServer(config ServerConfig, treeOps *tree.TreeWithOperations, treeSync *
 		}
 	}
 
+	s.appProxies = s.loadAppProxies()
 	s.setupRoutes()
 	return s
 }
@@ -304,7 +306,7 @@ func (s *Server) setupRoutes() {
 	s.openAPIRoutes = nil
 
 	s.router.Use(securityHeaders)
-	s.router.Use(limitRequestBodyWithImport(s.maxRequestBodyBytes(), maxBusGTFSRequestBytes))
+	s.router.Use(s.exemptAppProxies(limitRequestBodyWithImport(s.maxRequestBodyBytes(), maxBusGTFSRequestBytes)))
 	if len(s.config.AllowedOrigins) > 0 {
 		s.router.Use(cors.Handler(cors.Options{
 			AllowedOrigins:   s.config.AllowedOrigins,
@@ -409,6 +411,11 @@ func (s *Server) buildRoutes(r chi.Router, prefix string) {
 			r.Get("/", s.serveIndexFallback)
 		}
 	})
+
+	// Application proxies (XP-1): {prefix}/* is forwarded to the application.
+	// HTTP requests authenticate inside the handler; responses keep the
+	// application's content type, so these routes sit outside JSONContentType.
+	s.registerAppProxies(r)
 
 	// Protected routes (JWT required)
 	r.Group(func(r chi.Router) {

@@ -35,6 +35,7 @@ type Manifest struct {
 	Resource   Resource  `json:"resource"`
 	Operations []string  `json:"operations"`
 	Services   []Service `json:"services,omitempty"`
+	HTTP       *HTTP     `json:"http,omitempty"`
 }
 
 func ValidToken(s string) bool { return token.MatchString(s) }
@@ -50,6 +51,7 @@ func Load(root string) ([]Manifest, error) {
 	seen := map[string]bool{}
 	users := map[string]bool{}
 	resources := map[string]bool{}
+	prefixes := map[string]bool{}
 	for _, f := range files {
 		b, e := os.ReadFile(f)
 		if e != nil {
@@ -114,6 +116,15 @@ func Load(root string) ([]Manifest, error) {
 				}
 			}
 		}
+		if m.HTTP != nil {
+			if e = validateHTTP(m.HTTP); e != nil {
+				return nil, fmt.Errorf("manifest %s: %w", filepath.Base(f), e)
+			}
+			if prefixes[m.HTTP.Prefix] {
+				return nil, fmt.Errorf("manifest %s: http prefix %q is already used by another application", filepath.Base(f), m.HTTP.Prefix)
+			}
+			prefixes[m.HTTP.Prefix] = true
+		}
 		out = append(out, m)
 	}
 	return out, nil
@@ -142,6 +153,11 @@ func validServiceSubject(subject, app, user string, publish bool) bool {
 		return true
 	}
 	if len(parts) == 8 && parts[0] == "xact" && parts[1] == "app" && parts[2] == "v1" && ValidToken(parts[3]) && parts[4] == app && (ValidToken(parts[5]) || parts[5] == "*") && (parts[6] == "request" || parts[6] == "ingest") && (ValidToken(parts[7]) || parts[7] == "*") {
+		return true
+	}
+	// Application events: publish-only, exactly the service's own
+	// application token, so the relay can trust it.
+	if publish && len(parts) == 5 && parts[0] == "xact" && parts[1] == "internal" && parts[2] == "event_request" && ValidToken(parts[3]) && parts[4] == app {
 		return true
 	}
 	if publish && len(parts) >= 5 && parts[0] == "xact" && parts[1] == "internal" && (parts[2] == "ingest_request" || parts[2] == "delete_request") && ValidToken(parts[3]) {

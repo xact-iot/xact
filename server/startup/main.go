@@ -216,6 +216,11 @@ func main() {
 
 	// Wire the events publisher into the processing blocks package
 	blocks.SetEventsPublisher(publisher)
+	// Events raised by application services (for example Traffic Studio
+	// incidents and adapter fallbacks).
+	if _, err := publisher.ServeApplicationEvents(nc); err != nil {
+		log.Printf("Warning: application events unavailable: %v", err)
+	}
 
 	console.Info("nats", "", "NATS server started", "addr", fmt.Sprintf("nats://%s:%d", natsHost, natsPort))
 	if enableHTTPS {

@@ -8,6 +8,7 @@ Plugins are stored in a directory tree at the root of the XACT installation:
 
 ```
 plugins/
+├── applications/       Application manifests (JSON)
 ├── authentication/     Server-side authentication plugins
 ├── widgets/            Custom dashboard widgets (JavaScript)
 ├── map widgets/        Custom map item types (future)
@@ -117,6 +118,9 @@ Plugin widgets have access to the `window.XACT` bridge object, which provides:
 | `XACT.registerWidgetType(metadata)` | Register a new widget type with the toolbar. |
 | `XACT.registerMapItemType(name, renderer)` | Register a custom map item type (for map plugins). |
 | `XACT.getMapItemType(name)` | Retrieve a registered map item type. |
+| `XACT.applications.request(appId, operation, payload)` | Call an application operation over NATS. See [Applications](#applications). |
+| `XACT.applications.fetch(appId, path, init)` | Call an application's REST endpoint through the XACT proxy with the current session. |
+| `XACT.applications.proxyUrl(appId, path)` | Absolute URL of an application path behind the proxy; `ws://` or `wss://` for its WebSocket paths. |
 
 ### Widget Lifecycle
 
@@ -142,6 +146,48 @@ If your widget implements `getPropertySchema()`, the framework will generate a c
 ### Permissions
 
 Plugin widgets participate in the standard XACT permissions system. When registering a widget type, you can specify a required permission - users without that permission will not see the widget in the toolbar or on dashboards.
+
+## Applications
+
+An application is a separate service, such as Traffic Simulation Studio or public bus tracking, that extends XACT. An administrator installs it by placing a manifest in `plugins/applications/<id>.json`. The manifest names the application's widgets, the permissions it adds to **Users & Permissions**, the operations browsers may call over NATS, and the NATS identities its services use. XACT reads manifests when it starts.
+
+### HTTP and WebSocket proxy
+
+An application can also accept REST requests and WebSockets through XACT, for uploads, large downloads and live streams. Add an `http` block to its manifest:
+
+```json
+"http": {
+  "prefix": "traffic",
+  "upstream": "http://127.0.0.1:8093",
+  "max_body_mb": 200,
+  "websocket_paths": ["/ws"]
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `prefix` | Path segment under `/xact`, unique to the application. Lowercase letters, digits, `-` and `_`. XACT's own paths such as `api`, `plugins` and `public`, and names starting with `ws`, cannot be used. |
+| `upstream` | Address of the application's own listener, for example `http://127.0.0.1:8093`, with no path. |
+| `max_body_mb` | Largest upload in MiB, from 1 to 2048. Default 8. |
+| `timeout_seconds` | Optional. How long a request may make no progress before XACT gives up, from 1 to 3600 seconds. Default 60. Long transfers continue as long as data keeps moving. |
+| `websocket_paths` | Optional. Paths, relative to the prefix, that accept WebSocket connections. |
+
+XACT removes only `/xact` from the path, so `/xact/traffic/api/v1/networks` is forwarded to `http://127.0.0.1:8093/traffic/api/v1/networks`. Restart XACT after changing an `http` block.
+
+- REST requests need a signed-in XACT user. XACT forwards the user's Bearer token so the application can check the session and permissions. Cookies are removed.
+- WebSocket connections on the listed paths are passed to the application, which must check them itself, for example with a one-time ticket. XACT accepts them only from pages on XACT's own address, or from an address in `CORS_ALLOWED_ORIGINS`.
+- If the application is not running, requests fail with **502 Bad Gateway**.
+
+A reverse proxy in front of XACT must pass WebSocket upgrades through for `/xact/*`. The bundled Caddy configuration already does.
+
+In a widget, use the bridge helpers instead of building URLs by hand:
+
+```js
+const res = await XACT.applications.fetch('traffic', '/api/v1/networks', { method: 'GET' });
+const socket = new WebSocket(XACT.applications.proxyUrl('traffic', '/ws?ticket=' + encodeURIComponent(ticket)));
+```
+
+`fetch` adds the current session token and returns the normal `Response`. `proxyUrl` returns an absolute address, using `wss://` on HTTPS sites for WebSocket paths. Both reject paths that do not start with `/` or that try to leave the application's prefix.
 
 ## Public Bus Configuration
 

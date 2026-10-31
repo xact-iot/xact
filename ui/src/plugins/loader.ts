@@ -64,6 +64,13 @@ const mapLayerPlugins = new Map<string, MapLayerPlugin>();
  * Plugin scripts (plain JS) access this after the loader has initialised it.
  */
 export interface XACTBridge {
+  /**
+   * Registered applications. Besides list(), session(), request() and upload():
+   *   proxyUrl(appId, path)    - absolute URL of `path` behind the application's
+   *                              proxy prefix; ws(s) for its WebSocket paths.
+   *   fetch(appId, path, init) - fetch() through the proxy with the current
+   *                              Bearer token; resolves with the Response.
+   */
   applications: typeof applications;
   loadLeaflet: typeof loadLeaflet;
   getOrganisationArea(): Promise<OrgArea | null>;

@@ -26,6 +26,10 @@ func (s *Server) handleApplications(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := range all {
 		all[i].Services = nil
+		// Browsers need the proxy prefix and limits, not the internal upstream.
+		if h := all[i].HTTP; h != nil {
+			all[i].HTTP = &applications.HTTP{Prefix: h.Prefix, MaxBodyMB: h.MaxBodyMB, WebSocketPaths: h.WebSocketPaths}
+		}
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(all)
