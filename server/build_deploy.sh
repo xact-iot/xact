@@ -559,20 +559,26 @@ create_docker_deploy_package() {
     rm -rf "$PACKAGE_ROOT"
     mkdir -p "$PACKAGE_ROOT"
 
-    awk -v image="$DOCKER_IMAGE" '
-        BEGIN { replaced = 0 }
-        /^XACT_IMAGE=/ {
-            print "XACT_IMAGE=" image
-            replaced = 1
-            next
-        }
-        { print }
-        END {
-            if (!replaced) {
+    # Without --docker no image is built locally, so keep the registry image
+    # named in the template rather than blanking XACT_IMAGE.
+    if [ -n "$DOCKER_IMAGE" ]; then
+        awk -v image="$DOCKER_IMAGE" '
+            BEGIN { replaced = 0 }
+            /^XACT_IMAGE=/ {
                 print "XACT_IMAGE=" image
+                replaced = 1
+                next
             }
-        }
-    ' "$ENV_SRC" > "$PACKAGE_ROOT/.env.example"
+            { print }
+            END {
+                if (!replaced) {
+                    print "XACT_IMAGE=" image
+                }
+            }
+        ' "$ENV_SRC" > "$PACKAGE_ROOT/.env.example"
+    else
+        cp "$ENV_SRC" "$PACKAGE_ROOT/.env.example"
+    fi
     cp "$COMPOSE_SRC" "$PACKAGE_ROOT/docker-compose.yml"
     cp "$RESTORE_SRC" "$PACKAGE_ROOT/restore"
     cp -r "$DEPLOY_DIR/linux/xact-linux-$ARCH/mobile" "$PACKAGE_ROOT/mobile"
