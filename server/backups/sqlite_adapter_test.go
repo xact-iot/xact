@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -84,5 +85,39 @@ func TestRestoreRejectsInvalidArchives(t *testing.T) {
 	}
 	if err := Restore(ctx, adapter, strings.NewReader("not gzip")); err == nil {
 		t.Fatal("expected invalid gzip error")
+	}
+}
+
+func TestSQLiteAdapterExportSchemaSkipsExpressionIndexes(t *testing.T) {
+	ctx := context.Background()
+	// File-backed: nested PRAGMA queries use a second pooled connection,
+	// which would see an empty database with :memory:.
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, stmt := range []string{
+		`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL, login TEXT NOT NULL)`,
+		`CREATE UNIQUE INDEX idx_users_email_ci ON users(lower(email))`,
+		`CREATE INDEX idx_users_login ON users(login)`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	adapter := &SQLiteAdapter{DB: db}
+
+	schema, err := adapter.ExportSchema(ctx)
+	if err != nil {
+		t.Fatalf("ExportSchema: %v", err)
+	}
+	indexes := schema.Tables["users"].Indexes
+	if len(indexes) != 1 || len(indexes[0].Columns) != 1 || indexes[0].Columns[0] != "login" {
+		t.Fatalf("indexes = %#v", indexes)
+	}
+	var archive bytes.Buffer
+	if err := Backup(ctx, adapter, &archive); err != nil {
+		t.Fatalf("Backup: %v", err)
 	}
 }

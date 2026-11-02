@@ -270,11 +270,17 @@ func (s *SQLiteAdapter) indexColumns(ctx context.Context, indexName string) ([]s
 	var columns []string
 	for rows.Next() {
 		var seqno, cid int
-		var name string
+		var name sql.NullString
 		if err := rows.Scan(&seqno, &cid, &name); err != nil {
 			return nil, err
 		}
-		columns = append(columns, name)
+		// Expression index columns (e.g. lower(email)) have a NULL name.
+		// Skip the whole index, matching the Postgres adapter; migrations
+		// recreate such indexes.
+		if !name.Valid {
+			return nil, nil
+		}
+		columns = append(columns, name.String)
 	}
 	return columns, rows.Err()
 }
