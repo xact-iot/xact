@@ -192,6 +192,15 @@ if ! command -v flutter >/dev/null 2>&1; then
     exit 1
 fi
 
+ANDROID_SIGNING_ENV="${XACT_ANDROID_SIGNING_ENV:-$HOME/.config/xact/android-signing/signing.env}"
+if [ -z "$XACT_ANDROID_KEYSTORE" ] && [ ! -f "$MOBILE_DIR/android/key.properties" ] && [ -f "$ANDROID_SIGNING_ENV" ]; then
+    echo -e "${YELLOW}Loading Android signing settings from $ANDROID_SIGNING_ENV${NC}"
+    set -a
+    # shellcheck disable=SC1090
+    . "$ANDROID_SIGNING_ENV"
+    set +a
+fi
+
 echo -e "${YELLOW}Building Android mobile app...${NC}"
 cd "$MOBILE_DIR"
 flutter pub get
