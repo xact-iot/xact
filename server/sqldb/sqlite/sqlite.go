@@ -27,6 +27,10 @@ type SQLiteDB struct {
 	metricOrgIDs        sync.Map
 	metricDeviceIDs     sync.Map
 	metricDefinitionIDs sync.Map
+
+	metricsPurgeMu   sync.Mutex
+	metricsPurgeStop chan struct{}
+	metricsPurgeDone chan struct{}
 }
 
 // NewSQLiteDB opens an SQLite database at path and returns a ready-to-use instance.
@@ -65,6 +69,7 @@ func sqliteOpenPath(path string) string {
 
 // Close releases the database connection.
 func (db *SQLiteDB) Close() {
+	db.stopMetricsPurger()
 	db.db.Close()
 }
 
@@ -481,6 +486,10 @@ func (db *SQLiteDB) Migrate(ctx context.Context) error {
 		if announce {
 			log.Printf("SQLite migration finished in %s: %s", time.Since(start).Round(time.Millisecond), sqliteMigrationPreview(stmt))
 		}
+	}
+
+	if err := db.dropRedundantRestoreIndexes(ctx, "device_metrics", "idx_device_metrics_lookup"); err != nil {
+		return fmt.Errorf("dropping redundant device_metrics indexes: %w", err)
 	}
 
 	if err := db.ensureEventsIntegerPrimaryKey(ctx); err != nil {

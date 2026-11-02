@@ -386,11 +386,6 @@ func (db *SQLiteDB) QueryMetricsSince(ctx context.Context, orgName, deviceName s
 	return scanMetricSeries(rows)
 }
 
-// ConfigureMetricsRetention is a no-op for SQLite (no TimescaleDB).
-func (db *SQLiteDB) ConfigureMetricsRetention(_ context.Context, _ time.Duration) error {
-	return nil
-}
-
 // scanMetricSeries reads rows of (time TEXT, name TEXT, value REAL) and groups by name.
 func scanMetricSeries(rows *sql.Rows) ([]sqldb.MetricSeries, error) {
 	seriesMap := make(map[string]*sqldb.MetricSeries)

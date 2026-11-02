@@ -25,6 +25,7 @@ Review these `.env` settings before exposing XACT beyond localhost:
 | `EXPOSE_NATS_INTERNAL_CONFIG` | Keep `no`. Only enable for controlled test harness use; the route still requires `SystemAdmin`. |
 | `NATS_BROWSER_ALLOW_COMMANDS` | Keep `no` to use the server-mediated command endpoint. If enabled, direct publishing is limited to the current organisation and users with tag-write permission. |
 | `EVENT_RETENTION_DAYS` | Production default is `0`, which disables application-side audit/event purging. Set a positive value only when retention policy allows deletion. |
+| `METRICS_RETENTION_DAYS` | Days of tag history (`device_metrics`) to keep. Defaults to `180`. On PostgreSQL this sets a TimescaleDB retention policy; on SQLite the server deletes older rows hourly. Deleted SQLite rows free space for reuse but do not shrink the file; run `VACUUM` during a maintenance window to reclaim disk. |
 
 API keys for REST and embedded MQTT ingest are stored as keyed hashes. The full raw key is shown only when it is created; later list views show masked metadata. Store new keys in your device secret manager when they are issued.
 
@@ -109,7 +110,7 @@ DATABASE_URL=postgres://xact:replace-with-a-strong-password@127.0.0.1:5432/xact?
 
 When XACT starts, it connects to `DATABASE_URL`, creates the TimescaleDB extension if the database user has permission, runs schema migrations, creates Timescale hypertables for events and device metrics, and configures the metric retention policy. If you create the extension as the PostgreSQL administrator first, the XACT database user does not need extension-management privileges during normal operation.
 
-For production, prefer local socket or private-network access to PostgreSQL, restrict PostgreSQL listener addresses and firewall rules, and use TLS or a trusted private network when the database is not on the same host. Set `METRICS_RETENTION_DAYS` to match your storage and compliance needs; the default is 180 days for PostgreSQL/TimescaleDB metrics.
+For production, prefer local socket or private-network access to PostgreSQL, restrict PostgreSQL listener addresses and firewall rules, and use TLS or a trusted private network when the database is not on the same host. Set `METRICS_RETENTION_DAYS` to match your storage and compliance needs; the default is 180 days.
 
 ## Scheduler Security
 

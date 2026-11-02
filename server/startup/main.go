@@ -260,18 +260,6 @@ func main() {
 			}
 			console.Info("db", "", "PostgreSQL connected and migrated")
 			database = pgDB
-
-			// Configure time-series retention (default 180 days, PostgreSQL/TimescaleDB only)
-			retentionDays := 180
-			if v := os.Getenv("METRICS_RETENTION_DAYS"); v != "" {
-				if n, err := strconv.Atoi(v); err == nil && n > 0 {
-					retentionDays = n
-				}
-			}
-			if err := pgDB.ConfigureMetricsRetention(ctx,
-				time.Duration(retentionDays)*24*time.Hour); err != nil {
-				console.Warn("db", "", "Metrics retention policy not configured", "error", err)
-			}
 		} else {
 			sqlDB, err := sqlite.NewSQLiteDB(ctx, sqlitePath)
 			if err != nil {
@@ -283,6 +271,21 @@ func main() {
 			}
 			console.Info("db", "", "SQLite connected and migrated", "path", sqlitePath)
 			database = sqlDB
+		}
+
+		// Configure time-series retention (default 180 days). PostgreSQL uses a
+		// TimescaleDB policy; SQLite runs an hourly purge in the application.
+		retentionDays := 180
+		if v := os.Getenv("METRICS_RETENTION_DAYS"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				retentionDays = n
+			}
+		}
+		if err := database.ConfigureMetricsRetention(ctx,
+			time.Duration(retentionDays)*24*time.Hour); err != nil {
+			console.Warn("db", "", "Metrics retention policy not configured", "error", err)
+		} else {
+			console.Info("db", "", "Metrics retention configured", "retentionDays", retentionDays)
 		}
 
 		// Register HistoryRecorder processing block

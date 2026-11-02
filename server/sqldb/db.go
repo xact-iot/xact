@@ -205,7 +205,8 @@ type DB interface {
 	QueryMetricsSince(ctx context.Context, orgName, deviceName string,
 		metrics []string, startMetric string, startTime time.Time) ([]MetricSeries, error)
 
-	// ConfigureMetricsRetention updates the TimescaleDB data retention policy.
+	// ConfigureMetricsRetention sets how long device_metrics rows are kept
+	// (a TimescaleDB policy on PostgreSQL, a background purge on SQLite).
 	ConfigureMetricsRetention(ctx context.Context, retention time.Duration) error
 
 	// ListTagCalcs returns all tag calcs for an organisation.
